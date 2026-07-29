@@ -1,0 +1,14 @@
+streamlit
+pandapower
+numpy
+pandas
+scikit-learn
+torch --index-url https://download.pytorch.org/whl/cpu
+gymnasium
+stable-baselines3
+shap
+lime
+matplotlib
+plotly
+jinja2
+weasyprint

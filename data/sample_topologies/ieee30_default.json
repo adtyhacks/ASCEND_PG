@@ -1,0 +1,5 @@
+{
+  "name": "IEEE 30-Bus (Larger Grid)",
+  "pandapower_case": "case30",
+  "description": "Standard 30-bus test network — larger, more substations."
+}

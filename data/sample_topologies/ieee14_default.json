@@ -1,0 +1,5 @@
+{
+  "name": "IEEE 14-Bus (Default)",
+  "pandapower_case": "case14",
+  "description": "Standard 14-bus test network — 5 generators, 11 loads."
+}
