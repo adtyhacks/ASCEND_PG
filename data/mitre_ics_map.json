@@ -1,0 +1,6 @@
+{
+    "FDI":    {"stage": "Impact", "technique_id": "T0836", "technique_name": "Modify Parameter"},
+    "DoS":    {"stage": "Impact", "technique_id": "T0814", "technique_name": "Denial of Service"},
+    "Replay": {"stage": "Execution", "technique_id": "T0863", "technique_name": "User Execution"},
+    "MITM":   {"stage": "Lateral Movement", "technique_id": "T0830", "technique_name": "Man in the Middle"}
+  }
