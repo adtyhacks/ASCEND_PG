@@ -12,7 +12,7 @@ Holding registers here represent sensor/actuator values that the
 SCADA client polls and that your FDI attack script will later write
 to directly (that write IS the False Data Injection attack).
 """
-from pymodbus import ModbusDeviceIdentification
+
 import argparse
 import logging
 
