@@ -1,6 +1,80 @@
 {
-    "FDI":    {"stage": "Impact", "technique_id": "T0836", "technique_name": "Modify Parameter"},
-    "DoS":    {"stage": "Impact", "technique_id": "T0814", "technique_name": "Denial of Service"},
-    "Replay": {"stage": "Execution", "technique_id": "T0863", "technique_name": "User Execution"},
-    "MITM":   {"stage": "Lateral Movement", "technique_id": "T0830", "technique_name": "Man in the Middle"}
-  }
+    "Recon_NetworkScan": {
+        "stage": "Discovery",
+        "technique_id": "T0846",
+        "technique_name": "Remote System Discovery",
+        "description": "Network/port scanning to discover ICS assets (nmap sweep for Modbus port 502)"
+    },
+    "Recon_DeviceID": {
+        "stage": "Discovery",
+        "technique_id": "T0888",
+        "technique_name": "Remote System Information Discovery",
+        "description": "Modbus Read Device Identification (FC 0x2B/0x0E) to fingerprint PLCs"
+    },
+    "Recon_FCScan": {
+        "stage": "Discovery",
+        "technique_id": "T0840",
+        "technique_name": "Network Sniffing",
+        "description": "Function code scanning (FC 1-127) to fingerprint supported PLC capabilities"
+    },
+    "FDI": {
+        "stage": "Impact",
+        "technique_id": "T0836",
+        "technique_name": "Modify Parameter",
+        "description": "False Data Injection — writing falsified sensor/measurement values to holding registers"
+    },
+    "NaiveResponseInjection": {
+        "stage": "Impact",
+        "technique_id": "T0836",
+        "technique_name": "Modify Parameter",
+        "description": "Naive response injection — constant, clearly out-of-range values to registers"
+    },
+    "ComplexResponseInjection": {
+        "stage": "Impact",
+        "technique_id": "T0836",
+        "technique_name": "Modify Parameter",
+        "description": "Complex response injection — realistic-but-drifted values (offset/scale/ramp/random)"
+    },
+    "CmdInjectCoil": {
+        "stage": "Impair Process Control",
+        "technique_id": "T0855",
+        "technique_name": "Unauthorized Command Message",
+        "description": "Command injection via coil writes (FC05/FC15) — toggling actuators/breakers/relays"
+    },
+    "CmdInjectRegister": {
+        "stage": "Impair Process Control",
+        "technique_id": "T0855",
+        "technique_name": "Unauthorized Command Message",
+        "description": "Command injection via register writes (FC06/FC16) — modifying control setpoints"
+    },
+    "MaliciousFC": {
+        "stage": "Impair Process Control",
+        "technique_id": "T0855",
+        "technique_name": "Unauthorized Command Message",
+        "description": "Malicious function codes (FC07/FC08) — diagnostics restart, exception status leak, counter clear"
+    },
+    "DoS": {
+        "stage": "Impact",
+        "technique_id": "T0814",
+        "technique_name": "Denial of Service",
+        "description": "Modbus request flood — raw-socket fire-and-forget Modbus read requests"
+    },
+    "DoS_ConnExhaust": {
+        "stage": "Impact",
+        "technique_id": "T0814",
+        "technique_name": "Denial of Service",
+        "description": "TCP connection exhaustion — opening max connections without closing them"
+    },
+    "Replay": {
+        "stage": "Execution",
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of Control",
+        "description": "Scapy-based packet replay — capture then retransmit legitimate Modbus frames"
+    },
+    "MITM": {
+        "stage": "Collection",
+        "technique_id": "T0830",
+        "technique_name": "Man in the Middle",
+        "description": "Transparent TCP proxy — intercepts and modifies Modbus FC03 responses in transit"
+    }
+}

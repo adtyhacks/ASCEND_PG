@@ -12,3 +12,4 @@ matplotlib
 plotly
 jinja2
 weasyprint
+pymodbus==3.14.*

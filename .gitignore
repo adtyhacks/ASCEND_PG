@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ASCEND-PG testbed runtime artifacts
+#   Written by scripts/run_cycle.py, read by app/pages/3_Live_Battle.py.
+#   Machine/run-specific — regenerated on every cycle, so not tracked.
+data/log_store.json
+data/cycle_report.json
