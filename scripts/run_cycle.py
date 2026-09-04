@@ -71,6 +71,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "recon_step.py"),
         "args": ["--subnet", "10.0.0.0/24", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000004],
+        "timeout": 180,     # nmap over Mininet vnet can be slow even with T4
     },
     {
         "name": "recon_fc_scan",
@@ -78,6 +79,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "fc_scan.py"),
         "args": ["--target", "10.0.0.1", "--safe", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000005, 9000006],
+        "timeout": 45,      # 24 FCs × 0.5s timeout + overhead
     },
 
     # === RESPONSE / MEASUREMENT INJECTION (T0836) ===
@@ -157,6 +159,7 @@ STEPS = [
         "args": ["--target", "10.0.0.1", "--connections", "30",
                   "--hold-time", "10", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000002, 9000010],
+        "timeout": 60,      # 10s hold + socket overhead for 30 connections
     },
 
     # === REPLAY (T0832) ===
@@ -168,6 +171,7 @@ STEPS = [
                   "--capture-time", "3", "--replay-count", "1",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [],  # Replay is signature-invisible — trained detectors only
+        "timeout": 120,     # 3s capture + replay + scapy init overhead
     },
 ]
 
@@ -202,12 +206,28 @@ def run_step(step: dict) -> dict:
         "action": "step_start",
     })
 
+    # Per-step timeout: steps can declare their own "timeout" key (seconds).
+    # Nmap recon needs ~60s; fc_scan needs ~30s; dos_conn_exhaust holds
+    # connections for 10s + overhead. Default is 90s which covers most attacks.
+    step_timeout = step.get("timeout", 90)
+
     # sys.executable (not bare "python3") so the step scripts run under the
     # same interpreter/venv as the runner — the one that has pymodbus installed.
-    result = subprocess.run(
-        [sys.executable, step["script"], *step["args"]],
-        capture_output=True, text=True, timeout=150,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, step["script"], *step["args"]],
+            capture_output=True, text=True, timeout=step_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"[run_cycle] WARNING: {step['name']} timed out after {step_timeout}s — skipping")
+        log_event({
+            "stage": step["name"], "technique": "+".join(step["techniques"]),
+            "action": "step_timeout", "timeout_sec": step_timeout,
+        })
+        end = datetime.now(timezone.utc)
+        return {"name": step["name"], "start": start, "end": end,
+                "detect_sids": step["detect_sids"], "techniques": step["techniques"]}
+
     if result.stdout:
         print(result.stdout.strip())
     if result.returncode != 0:

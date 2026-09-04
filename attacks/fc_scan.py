@@ -300,8 +300,8 @@ def scan_function_codes(
     device_id: int = 1,
     safe_mode: bool = True,
     start_fc: int = 1,
-    end_fc: int = 127,
-    timeout: float = 2.0,
+    end_fc: int = 24,       # 1-24 covers all standard Modbus FCs; bump to 127 for full scan
+    timeout: float = 0.5,   # per-probe socket timeout — 0.5s × 24 FCs = ~12s max
     log_path: Optional[Path] = None,
 ) -> List[Dict]:
     """
@@ -460,10 +460,13 @@ def main():
         "--start-fc", type=int, default=1, help="Starting function code to scan (default: 1)"
     )
     parser.add_argument(
-        "--end-fc", type=int, default=127, help="Ending function code to scan (default: 127)"
+        "--end-fc", type=int, default=24,
+        help="Ending function code to scan (default: 24 — covers all standard "
+             "Modbus FCs; use 127 for a full vendor-FC sweep)"
     )
     parser.add_argument(
-        "--timeout", type=float, default=2.0, help="Per-probe socket timeout in seconds (default: 2.0)"
+        "--timeout", type=float, default=0.5,
+        help="Per-probe socket timeout in seconds (default: 0.5)"
     )
     parser.add_argument(
         "--safe",

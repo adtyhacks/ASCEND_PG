@@ -73,15 +73,40 @@ def log_event(log_path: Path, event: dict):
 
 def nmap_sweep(subnet: str, log_path: Path) -> list:
     """Real nmap TCP sweep for port 502 across the given subnet.
-    Returns list of IPs found with Modbus port open."""
+    Returns list of IPs found with Modbus port open.
+
+    In Mininet, the virtual network only has 7 hosts (PLCs + SCADA +
+    attacker on .1–.7). Scanning a full /24 means nmap waits on 247
+    non-existent hosts. We auto-detect the /24 case and restrict the
+    scan to .1–.7, or use whatever range was explicitly passed in.
+    """
     print(f"[recon] nmap sweep of {subnet} for open Modbus port {MODBUS_PORT} ...")
     log_event(log_path, {
         "stage": "recon", "technique": "T0846",
         "action": "nmap_sweep_start", "subnet": subnet,
     })
 
+    # For a /24 input restrict to .1–.7 (the 7 Mininet hosts).
+    # For anything more specific (e.g. 10.0.0.1-7) use as-is.
+    if subnet.endswith("/24"):
+        base = subnet.rsplit(".", 1)[0]
+        scan_target = f"{base}.1-7"
+        print(f"[recon] /24 detected — restricting scan to {scan_target} "
+              "(Mininet has 7 hosts)")
+    else:
+        scan_target = subnet
+
     result = subprocess.run(
-        ["nmap", "-p", str(MODBUS_PORT), "--open", "-oG", "-", subnet],
+        [
+            "nmap",
+            "-p", str(MODBUS_PORT),
+            "--open",           # only report open ports
+            "-T4",              # aggressive timing (faster in virtual nets)
+            "--host-timeout", "10s",   # give up on any host after 10 s
+            "--max-retries", "1",      # 1 retry per probe (default is 6)
+            "-oG", "-",         # greppable output on stdout
+            scan_target,
+        ],
         capture_output=True, text=True, timeout=120,
     )
 
@@ -97,6 +122,7 @@ def nmap_sweep(subnet: str, log_path: Path) -> list:
     })
     print(f"[recon] found {len(found)} host(s) with Modbus open: {found}")
     return found
+
 
 
 def read_device_identification(ip: str, log_path: Path):
