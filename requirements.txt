@@ -1,5 +1,7 @@
 streamlit
 pandapower
+pyvis
+pymodbus
 numpy
 pandas
 scikit-learn
