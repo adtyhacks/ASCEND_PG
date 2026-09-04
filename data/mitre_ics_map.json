@@ -1,6 +1,104 @@
 {
-    "FDI":    {"stage": "Impact", "technique_id": "T0836", "technique_name": "Modify Parameter"},
-    "DoS":    {"stage": "Impact", "technique_id": "T0814", "technique_name": "Denial of Service"},
-    "Replay": {"stage": "Execution", "technique_id": "T0863", "technique_name": "User Execution"},
-    "MITM":   {"stage": "Lateral Movement", "technique_id": "T0830", "technique_name": "Man in the Middle"}
+  "T0886": {
+    "tactic": "Initial Access",
+    "technique_name": "Remote Services",
+    "stage": 0,
+    "description": "Unauthorized TCP connect to open Modbus port 502"
+  },
+  "T0846": {
+    "tactic": "Discovery",
+    "technique_name": "Remote System Discovery",
+    "stage": 0,
+    "description": "Nmap host sweep and Modbus port probe across ICS subnet"
+  },
+  "T0888": {
+    "tactic": "Discovery",
+    "technique_name": "Remote System Information Discovery",
+    "stage": 0,
+    "description": "Modbus Read Device Identification (Function Code 0x2B)"
+  },
+  "T0842": {
+    "tactic": "Discovery",
+    "technique_name": "Network Sniffing",
+    "stage": 0,
+    "description": "Passive packet capture on OT network segment"
+  },
+  "T0830": {
+    "tactic": "Lateral Movement",
+    "technique_name": "Adversary-in-the-Middle",
+    "stage": 1,
+    "description": "ARP cache poisoning between SCADA client and PLC servers"
+  },
+  "T0801": {
+    "tactic": "Collection",
+    "technique_name": "Monitor Process State",
+    "stage": 1,
+    "description": "Scripted repeated polling of power grid telemetry registers"
+  },
+  "T0802": {
+    "tactic": "Collection",
+    "technique_name": "Automated Collection",
+    "stage": 1,
+    "description": "Full register-range sweep across all 5 emulated PLCs"
+  },
+  "T0869": {
+    "tactic": "Command and Control",
+    "technique_name": "Standard Application Layer Protocol",
+    "stage": 1,
+    "description": "Attacker traffic disguised as legitimate Modbus TCP polling"
+  },
+  "T0814": {
+    "tactic": "Inhibit Response Function",
+    "technique_name": "Denial of Service",
+    "stage": 2,
+    "description": "SYN/UDP flood directed against PLC communication interfaces"
+  },
+  "T0878": {
+    "tactic": "Inhibit Response Function",
+    "technique_name": "Alarm Suppression",
+    "stage": 2,
+    "description": "Modbus write to alarm-setpoint and trip threshold registers"
+  },
+  "T0816": {
+    "tactic": "Inhibit Response Function",
+    "technique_name": "Device Restart/Shutdown",
+    "stage": 2,
+    "description": "Modbus write to simulated restart/reset coil"
+  },
+  "T0881": {
+    "tactic": "Inhibit Response Function",
+    "technique_name": "Service Stop",
+    "stage": 2,
+    "description": "Malformed Modbus frame to crash or hang PLC server process"
+  },
+  "T0836": {
+    "tactic": "Impair Process Control",
+    "technique_name": "Modify Parameter",
+    "stage": 2,
+    "description": "False Data Injection (FDI) modifying generator voltage setpoints"
+  },
+  "T0835": {
+    "tactic": "Impair Process Control",
+    "technique_name": "Manipulate I/O Image",
+    "stage": 2,
+    "description": "Direct coil/holding-register writes overriding safety logic"
+  },
+  "T0806": {
+    "tactic": "Impair Process Control",
+    "technique_name": "Brute Force I/O",
+    "stage": 2,
+    "description": "Rapid sequential writes across full I/O address range"
+  },
+  "T0832": {
+    "tactic": "Impact",
+    "technique_name": "Manipulation of View",
+    "stage": 3,
+    "description": "Replay of recorded normal telemetry to mask ongoing grid faults"
+  },
+  "T0815": {
+    "tactic": "Impact",
+    "technique_name": "Denial of View",
+    "stage": 3,
+    "description": "Block SCADA polling responses so HMI displays stale measurements"
   }
+}
