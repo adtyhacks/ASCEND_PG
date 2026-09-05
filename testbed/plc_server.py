@@ -2,7 +2,7 @@
 ASCEND-PG testbed/plc_server.py
 
 Real Modbus TCP PLC server, built directly on pymodbus (3.14.x API),
-NOT on minicps.devices.PLC — MiniCPS's bundled Modbus wrapper is
+NOT on minicps.devices.PLC -- MiniCPS's bundled Modbus wrapper is
 Python-2-only and targets a pymodbus API that no longer exists in 3.x.
 
 Run this on a Mininet-emulated PLC host, e.g.:
@@ -11,6 +11,8 @@ Run this on a Mininet-emulated PLC host, e.g.:
 Holding registers here represent sensor/actuator values that the
 SCADA client polls and that your FDI attack script will later write
 to directly (that write IS the False Data Injection attack).
+Coils represent binary control outputs (e.g., breaker trip/close commands)
+that command injection attacks will toggle directly.
 """
 
 import argparse
@@ -30,16 +32,21 @@ log = logging.getLogger("plc_server")
 
 def build_context(num_registers=100):
     """
-    All holding registers start at 0. In your real topology, seed
-    these with realistic starting values per PLC (voltage, current,
-    breaker state, etc.) based on your IEEE-14 bus mapping.
+    All holding registers, coils, discrete inputs, and input registers
+    start at address 1 initialized to 0 in their own dedicated data blocks.
+    In your real topology, seed these with realistic starting values per
+    PLC (voltage, current, breaker state, etc.) based on your IEEE-14 bus mapping.
     """
-    block = ModbusSequentialDataBlock(0, [0] * num_registers)
+    di_block = ModbusSequentialDataBlock(1, [0] * num_registers)
+    co_block = ModbusSequentialDataBlock(1, [0] * num_registers)
+    ir_block = ModbusSequentialDataBlock(1, [0] * num_registers)
+    hr_block = ModbusSequentialDataBlock(1, [0] * num_registers)
+
     device = ModbusDeviceContext(
-        di=block,   # discrete inputs
-        co=block,   # coils
-        ir=block,   # input registers
-        hr=block,   # holding registers -- this is what FDI attacks target
+        di=di_block,   # discrete inputs
+        co=co_block,   # coils -- what command injection attacks will toggle
+        ir=ir_block,   # input registers
+        hr=hr_block,   # holding registers -- this is what FDI attacks target
     )
     # single=True means one logical device behind this server (device_id 1)
     return ModbusServerContext(devices=device, single=True)

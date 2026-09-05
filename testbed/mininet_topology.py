@@ -1,12 +1,12 @@
 """
 ASCEND-PG testbed/mininet_topology.py
 
-Defines the emulated ICS network per the project architecture (SS5):
+Defines the emulated ICS network per the project architecture (§5):
 5 PLC/RTU hosts, 1 SCADA polling client, 1 attacker host, all on one
 switch (flat network -- matches how the real attack tools such as
 arpspoof expect to operate on a shared L2 segment).
 
-Follows the same Topo-subclass pattern MiniCPS's own examples use
+Follow the same Topo-subclass pattern MiniCPS's own examples use
 (examples/toy/topo.py), but written independently -- this file has
 no dependency on minicps.devices, only on mininet.topo.
 

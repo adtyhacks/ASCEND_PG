@@ -1,9 +1,12 @@
 streamlit
 pandapower
+pyvis
+pymodbus
 numpy
 pandas
 scikit-learn
-torch --index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch
 gymnasium
 stable-baselines3
 shap
@@ -12,3 +15,4 @@ matplotlib
 plotly
 jinja2
 weasyprint
+pymodbus==3.14.*

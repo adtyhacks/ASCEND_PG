@@ -8,14 +8,14 @@ a live attack/defense state.
 from pyvis.network import Network
 
 DEVICE_STYLE = {
-    "generation_substation":   {"color": "#f5a623", "emoji": "🏭"},
-    "distribution_substation": {"color": "#4a90d9", "emoji": "🏢"},
-    "pmu":                     {"color": "#7ed321", "emoji": "📡"},
-    "rtu":                     {"color": "#9013fe", "emoji": "🔌"},
-    "scada_server":            {"color": "#d0021b", "emoji": "🖥️"},
-    "historian":               {"color": "#50e3c2", "emoji": "💾"},
-    "hmi":                     {"color": "#f8e71c", "emoji": "🖱️"},
-    "firewall":                {"color": "#333333", "emoji": "🛡️"},
+    "generation_substation":   {"image": "https://upload.wikimedia.org/wikipedia/commons/3/30/Router_symbol.svg"},
+    "distribution_substation": {"image": "https://upload.wikimedia.org/wikipedia/commons/8/80/Switch_symbol.svg"},
+    "pmu":                     {"image": "https://upload.wikimedia.org/wikipedia/commons/3/30/Router_symbol.svg"},
+    "rtu":                     {"image": "https://upload.wikimedia.org/wikipedia/commons/8/80/Switch_symbol.svg"},
+    "scada_server":            {"image": "https://upload.wikimedia.org/wikipedia/commons/a/a3/Server_symbol.svg"},
+    "historian":               {"image": "https://upload.wikimedia.org/wikipedia/commons/1/18/Database.svg"},
+    "hmi":                     {"image": "https://upload.wikimedia.org/wikipedia/commons/a/a5/Laptop_Flat_Icon_Vector.svg"},
+    "firewall":                {"image": "https://upload.wikimedia.org/wikipedia/commons/8/82/Firewall_%28computing%29.svg"},
 }
 
 
@@ -28,8 +28,8 @@ def render_topology(nodes, edges, compromised_ids=None, detected_ids=None):
     net_viz.barnes_hut()  # physics layout — nodes auto-arrange and can be dragged
 
     for n in nodes:
-        style = DEVICE_STYLE.get(n["type"], {"color": "#888888", "emoji": "❓"})
-        border = "#ffffff"
+        style = DEVICE_STYLE.get(n["type"], {"image": "https://upload.wikimedia.org/wikipedia/commons/a/a3/Server_symbol.svg"})
+        border = "rgba(0,0,0,0)"
         if n["id"] in compromised_ids:
             border = "#ff3b30"   # red ring = currently under attack
         elif n["id"] in detected_ids:
@@ -37,11 +37,13 @@ def render_topology(nodes, edges, compromised_ids=None, detected_ids=None):
 
         net_viz.add_node(
             n["id"],
-            label=f"{style['emoji']} {n['label']}",
-            shape="box",
-            color={"background": style["color"], "border": border},
-            borderWidth=4 if n["id"] in (compromised_ids | detected_ids) else 1,
+            label=n["label"],
+            shape="circularImage" if n["id"] in (compromised_ids | detected_ids) else "image",
+            image=style["image"],
+            color={"border": border, "background": "#2b2b2b"},
+            borderWidth=5 if n["id"] in (compromised_ids | detected_ids) else 0,
             title=n["label"],
+            size=30,
         )
 
     for e in edges:

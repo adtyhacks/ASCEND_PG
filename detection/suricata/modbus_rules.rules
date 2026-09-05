@@ -1,0 +1,69 @@
+# modbus_rules.rules — ASCEND-PG v2 testbed (Suricata IDS detection layer)
+# Custom Suricata rules for detecting the testbed's recon + attack traffic.
+# Syntax verified against Suricata's documented `modbus` keyword — test with
+# `sudo suricata -T -c /etc/suricata/suricata.yaml -v` before relying on it,
+# since exact behavior can still vary slightly by Suricata version.
+#
+# REQUIRES: app-layer.protocols.modbus.enabled: yes and
+#           detection-ports.dp: 502 set in suricata.yaml (see docs/suricata_setup.md)
+#
+# NOTE: Suricata is the detection component for this real-testbed checkpoint.
+# The project's trained LSTM/Autoencoder detectors (detection/lstm_detector.py,
+# autoencoder_detector.py, fusion.py — §5 of the master file) remain the final
+# deliverable; these signatures give a working, real-IDS ground truth now.
+#
+# SID allocation: 9000001–9000019 reserved for ASCEND-PG testbed rules.
+
+# ===== FDI / RESPONSE INJECTION (T0836) — writes to holding registers =====
+# Flags any write to a Holding Register — matches fdi_attack.py,
+# naive_response_injection.py, and complex_response_injection.py.
+alert modbus any any -> any 502 (msg:"ASCEND-PG FDI - Holding Register Write (T0836)"; modbus: access write holding; classtype:attempted-admin; sid:9000001; rev:2;)
+
+# ===== DoS (T0814) — Modbus request flood =====
+# Suricata ships a built-in Modbus flood event (modbus.flooded) — reuse it.
+# Detects both dos_attack.py (request flood) and sustained connection exhaustion.
+alert modbus any any -> any any (msg:"ASCEND-PG DoS - Modbus Request Flood (T0814)"; flow:to_server; app-layer-event:modbus.flooded; classtype:attempted-dos; sid:9000002; rev:1;)
+
+# ===== RECON — Device ID Query (T0888) =====
+# Function 43 (0x2B) = Read Device Identification — rare in normal polling.
+alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Modbus Device ID Query (T0888)"; modbus: function 43; classtype:attempted-recon; sid:9000004; rev:2;)
+
+# ===== RECON — Function Code Scan (T0840) =====
+# Rapid sequence of different function codes from the same source indicates
+# function code scanning/fingerprinting. Detecting FC07 (Read Exception Status)
+# and FC08 (Diagnostics) — both are uncommon in normal SCADA polling.
+alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Read Exception Status FC07 (T0840)"; modbus: function 7; classtype:attempted-recon; sid:9000005; rev:1;)
+alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Diagnostics FC08 (T0840)"; modbus: function 8; classtype:attempted-recon; sid:9000006; rev:1;)
+
+# ===== COMMAND INJECTION — Coil Writes (T0855) =====
+# Any write to coils — matches cmd_inject_coil.py (FC05/FC15).
+# In a normal SCADA polling cycle, coil writes are rare and indicate
+# unauthorized actuator control.
+alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Coil Write (T0855)"; modbus: access write coils; classtype:attempted-admin; sid:9000007; rev:1;)
+
+# ===== COMMAND INJECTION — Malicious Function Codes (T0855) =====
+# FC08 sub-function 0x0001 (Restart Communications) is a diagnostic
+# function that can reset PLC comms — highly suspicious in production.
+# (FC08 generic already caught by sid:9000006 above, this is the
+# specific dangerous sub-function)
+alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Diagnostics Restart FC08 (T0855)"; modbus: function 8, subfunction 1; classtype:attempted-admin; sid:9000008; rev:1;)
+alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Diagnostics Clear Counters FC08 (T0855)"; modbus: function 8, subfunction 10; classtype:attempted-admin; sid:9000009; rev:1;)
+
+# ===== MITM (T0830) — not rule-detectable =====
+# CORRECTED: Suricata does NOT support `arp` as an alertable protocol.
+# A transparent TCP proxy (mitm_proxy.py on :503) is invisible to a
+# signature-based IDS on the wire — the modified responses are valid
+# Modbus frames. Real detection requires sequence/timing anomaly logic
+# in the trained detectors, or arpwatch for ARP-level MITM.
+
+# ===== REPLAY (T0832) — not rule-detectable =====
+# Replayed Modbus traffic is byte-identical to legitimate traffic at the
+# signature level. Detection requires sequence-number/timing anomaly
+# analysis — exactly the kind of case the trained LSTM/Autoencoder
+# detectors are meant to cover.
+
+# ===== DoS — Connection Exhaustion (T0814) =====
+# Many simultaneous TCP connections without Modbus requests trigger
+# Suricata's connection tracking limits. The modbus.flooded event
+# (sid:9000002) may also fire. Additional TCP-level detection:
+alert tcp any any -> any 502 (msg:"ASCEND-PG DoS - Rapid TCP SYN to Modbus (T0814)"; flags:S; threshold:type both, track by_src, count 20, seconds 5; classtype:attempted-dos; sid:9000010; rev:1;)
