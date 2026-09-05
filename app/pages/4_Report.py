@@ -29,12 +29,12 @@ def _evaluation_from_campaigns(campaigns: list, plateau_detected: bool) -> dict:
         "avg_evasion_rate": float(np.mean([campaign["evasion_rate"] for campaign in campaigns])),
         "completion_count": sum(campaign["campaign_complete"] for campaign in campaigns),
         "completion_rate": float(np.mean([campaign["campaign_complete"] for campaign in campaigns])),
-        "max_stages_reached": [campaign["max_stage"] for campaign in campaigns],
-        "avg_max_stage": float(np.mean([campaign["max_stage"] for campaign in campaigns])),
+        "max_stages_reached": [campaign.get("max_stage", 0) for campaign in campaigns],
+        "avg_max_stage": float(np.mean([campaign.get("max_stage", 0) for campaign in campaigns])),
         "plateau_detected": plateau_detected,
-        "episode_rewards": [campaign["reward"] for campaign in campaigns],
-        "avg_reward": float(np.mean([campaign["reward"] for campaign in campaigns])),
-        "chains": [campaign["chain"] for campaign in campaigns],
+        "episode_rewards": [campaign.get("reward", 0.0) for campaign in campaigns],
+        "avg_reward": float(np.mean([campaign.get("reward", 0.0) for campaign in campaigns])),
+        "chains": [campaign.get("chain", []) for campaign in campaigns],
     }
 
 
@@ -49,7 +49,11 @@ if not campaigns:
 eval_results = _evaluation_from_campaigns(campaigns, battle_results.get("plateau_detected", False))
 dvs_result = compute_dvs(eval_results)
 st.session_state["dvs_result"] = dvs_result
-chain_techniques = [technique for campaign in campaigns for technique in campaign["chain"]]
+chain_techniques = [
+    tech.get("technique_id", "") if isinstance(tech, dict) else str(tech)
+    for campaign in campaigns 
+    for tech in campaign.get("chain", [])
+]
 
 gauge_color = {"Robust": "#34c759", "Moderate": "#f8e71c", "Vulnerable": "#f5a623", "Critical": "#ff3b30"}[dvs_result["rating"]]
 gauge = go.Figure(go.Indicator(
@@ -76,19 +80,19 @@ st.subheader("Observed MITRE attack path")
 path_df = pd.DataFrame([
     {"Step": index + 1, "MITRE ID": event["MITRE ID"], "Technique": event["Technique Name"],
      "Stage": event["Stage"], "Detection confidence": event["Detector Confidence"], "Outcome": event["Status"]}
-    for event in battle_results.get("latest_events", [])
+    for index, event in enumerate(campaigns[-1].get("events", []))
 ])
-st.dataframe(path_df, use_container_width=True, hide_index=True)
+st.dataframe(path_df.astype(str), width="stretch", hide_index=True)
 
 with st.expander("PPO decision rationales", expanded=False):
-    for explanation in battle_results.get("latest_explanations", []):
-        chosen = explanation["chosen_technique"]
-        st.markdown(f"**Step {explanation['step']} — {chosen['id']} ({chosen['name']})**")
-        st.write(explanation["rationale"])
-        alternatives = pd.DataFrame(explanation["top_alternatives"])
+    for explanation in st.session_state.get("battle_explanations", []):
+        chosen = explanation.get("chosen_technique", {})
+        st.markdown(f"**Step {explanation.get('step', '?')} — {chosen.get('id', '?')} ({chosen.get('name', '?')})**")
+        st.write(explanation.get("rationale", ""))
+        alternatives = pd.DataFrame(explanation.get("top_alternatives", []))
         if not alternatives.empty:
-            st.dataframe(alternatives[["id", "name", "stage_name", "probability"]], hide_index=True,
-                         use_container_width=True)
+            st.dataframe(alternatives[["id", "name", "stage_name", "probability"]].astype(str), hide_index=True,
+                         width="stretch")
 
 st.subheader("On-demand detector explanations")
 st.caption("SHAP and LIME use the existing saved detector scaling and the CIC-IDS dataset until real captured flows are supplied.")
@@ -142,5 +146,31 @@ if "lime_result" in st.session_state:
     st.dataframe(lime_df, use_container_width=True, hide_index=True)
 
 report_markdown = format_report(dvs_result, chain_techniques)
-st.download_button("Download Executive Report (Markdown)", report_markdown,
-                   file_name="ascend_pg_defense_report.md", mime="text/markdown")
+
+dl_col1, dl_col2, _ = st.columns([1, 1, 2])
+with dl_col1:
+    st.download_button("Download Executive Report (Markdown)", report_markdown,
+                       file_name="ascend_pg_defense_report.md", mime="text/markdown")
+with dl_col2:
+    try:
+        import markdown
+        from fpdf import FPDF
+        
+        # FPDF default fonts only support Latin-1. We safely encode to ASCII to strip emojis.
+        safe_md = report_markdown.encode('ascii', 'ignore').decode('ascii')
+        html = markdown.markdown(safe_md, extensions=['tables'])
+        
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=10)
+        pdf.write_html(html)
+        pdf_bytes = pdf.output()
+        
+        st.download_button(
+            label="Download Executive Report (PDF)",
+            data=bytes(pdf_bytes),
+            file_name="ascend_pg_defense_report.pdf",
+            mime="application/pdf",
+        )
+    except Exception as e:
+        st.warning("PDF generation unavailable. Install fpdf2 and markdown.")

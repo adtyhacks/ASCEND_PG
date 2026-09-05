@@ -30,7 +30,6 @@ from testbed.grid_env import build_baseline
 from testbed.network_topology import build_ot_topology
 from testbed.visualize_topology import render_topology
 from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES
-from detection.fusion import DetectorFusion
 from xai.attack_decision_explain import explain_step_decision
 from metrics.dvs import PlateauTracker
 from stable_baselines3 import PPO
@@ -78,8 +77,9 @@ with tab_ai:
         st.session_state["battle_active"] = True
         st.session_state["battle_events"] = []
         st.session_state["battle_explanations"] = []
+        st.session_state["battle_reward"] = 0.0
         if "battle_plateau" not in st.session_state:
-            st.session_state["battle_plateau"] = PlateauTracker(window_size=5, patience=3, min_delta=0.03)
+            st.session_state["battle_plateau"] = PlateauTracker(patience=3, min_evasion_gain=0.03)
 
     def _record_completed_campaign():
         events = st.session_state.get("battle_events", [])
@@ -87,10 +87,25 @@ with tab_ai:
             return
         evasion_rate = 1.0 - pd.DataFrame(events)["Detected"].mean()
         campaign_complete = any(e["Stage"] == 3 for e in events)
+        
+        stages_hit = [e["Stage"] for e in events if not e["Detected"]]
+        max_stage = max(stages_hit) if stages_hit else 0
+        
+        chain = [{
+            "technique_id": e["MITRE ID"],
+            "technique_name": e["Technique Name"],
+            "stage": e["Stage"],
+            "detected": e["Detected"],
+            "confidence": float(e["Detector Confidence"])
+        } for e in events]
+
         st.session_state.setdefault("battle_campaigns", []).append({
             "events": list(events),
             "evasion_rate": float(evasion_rate),
             "campaign_complete": bool(campaign_complete),
+            "max_stage": int(max_stage),
+            "reward": float(st.session_state.get("battle_reward", 0.0)),
+            "chain": chain,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         plateau = st.session_state["battle_plateau"]
@@ -101,6 +116,15 @@ with tab_ai:
             "plateau_detected": bool(plateau_detected),
             "last_campaign_complete": bool(campaign_complete),
         }
+        
+        # Export for Andikumar's training pipeline
+        try:
+            history_file = _REPO / "data" / "ppo_campaign_history.json"
+            history_file.parent.mkdir(exist_ok=True)
+            with open(history_file, "w") as f:
+                json.dump(st.session_state["battle_campaigns"], f, indent=2)
+        except Exception as e:
+            print(f"Failed to export campaign history: {e}")
 
     def _step_campaign():
         if not st.session_state.get("battle_active"):
@@ -111,14 +135,15 @@ with tab_ai:
 
         action, _ = model.predict(obs, deterministic=False)
         action_idx = int(action)
-        explanation = explain_step_decision(model, env, obs, action_idx)
+        explanation = explain_step_decision(model, obs, action_idx)
 
         next_obs, reward, terminated, truncated, info = env.step(action_idx)
+        st.session_state["battle_reward"] += float(reward)
         tech = MITRE_TECHNIQUES[action_idx]
-        detected = not bool(info.get("evaded", False))
-        detector_conf = float(info.get("detector_confidence", 0.0))
+        detected = bool(info.get("detected", False))
+        detector_conf = float(info.get("detection_confidence", 0.0))
 
-        targets = [n["id"] for n in st.session_state["topo_nodes"] if n["group"] in ("plc", "substation", "generator")]
+        targets = [n["id"] for n in st.session_state["topo_nodes"] if n.get("type", "") in ("generation_substation", "distribution_substation", "rtu", "pmu", "plc", "generator")]
         target_host = targets[len(st.session_state["battle_events"]) % len(targets)] if targets else "plc1"
 
         event = {
@@ -181,7 +206,7 @@ with tab_ai:
             st.info("Start a PPO campaign, then run tactics one at a time or to completion.")
         else:
             display_columns = ["Timestamp", "Step", "MITRE ID", "Technique Name", "Stage", "Target Host", "Detector Confidence", "Status"]
-            st.dataframe(latest[display_columns], use_container_width=True, hide_index=True)
+            st.dataframe(latest[display_columns].astype(str), width="stretch", hide_index=True)
     with right:
         st.subheader("Compromise and defense topology")
         compromised = set()
@@ -200,8 +225,8 @@ with tab_ai:
             st.write(explanation["rationale"])
             alternatives = pd.DataFrame(explanation["top_alternatives"])
             if not alternatives.empty:
-                st.dataframe(alternatives[["id", "name", "stage_name", "probability"]], hide_index=True,
-                             use_container_width=True)
+                st.dataframe(alternatives[["id", "name", "stage_name", "probability"]].astype(str), hide_index=True,
+                             width="stretch")
 
     if campaigns:
         st.caption(f"Latest campaign: {len(campaigns[-1]['events'])} steps, "
@@ -225,27 +250,82 @@ with tab_testbed:
         if st.button("Refresh Now"):
             st.rerun()
 
-    if LOG_STORE.exists():
-        try:
-            raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-            if isinstance(raw_log, list) and raw_log:
-                log_df = pd.DataFrame(raw_log)
-                st.write(f"Total Logged Testbed Events: **{len(log_df)}**")
-                st.dataframe(log_df, use_container_width=True, height=350)
-            else:
-                st.info("Log store exists but contains no events yet.")
-        except Exception as err:
-            st.warning(f"Could not parse log store: {err}")
-    else:
-        st.info(f"No live testbed log store found at `{LOG_STORE}`. Run `scripts/run_cycle.py` on WSL2.")
+    # Determine real compromised/detected nodes from the logs
+    compromised_mininet = set()
+    detected_mininet = set()
+    try:
+        targets_hit = set()
+        if LOG_STORE.exists():
+            logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+            for e in logs[-30:]:  # Look at recent events
+                if "target" in e:
+                    ip = e["target"]
+                    if ip.startswith("10.0.0."):
+                        node_id = f"substation_{ip.split('.')[-1]}"
+                        targets_hit.add(node_id)
+        
+        is_detected = False
+        if CYCLE_REPORT.exists():
+            rep = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
+            for step in rep.get("steps", []):
+                if step.get("detected", False):
+                    is_detected = True
+                    
+        if is_detected:
+            detected_mininet.update(targets_hit)
+        else:
+            compromised_mininet.update(targets_hit)
+    except Exception:
+        pass
 
-    if CYCLE_REPORT.exists():
-        try:
-            report_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
-            st.subheader("Latest Testbed Cycle Detection Report")
-            st.json(report_data)
-        except Exception as err:
-            st.warning(f"Could not parse cycle report: {err}")
+    tleft, tright = st.columns([1, 1.2])
+    with tleft:
+        if LOG_STORE.exists():
+            try:
+                raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+                if isinstance(raw_log, list) and raw_log:
+                    log_df = pd.DataFrame(raw_log)
+                    st.write(f"Total Logged Testbed Events: **{len(log_df)}**")
+                    st.dataframe(log_df.astype(str), width="stretch", height=350)
+                else:
+                    st.info("Log store exists but contains no events yet.")
+            except Exception as err:
+                st.warning(f"Could not parse log store: {err}")
+        else:
+            st.info(f"No live testbed log store found at `{LOG_STORE}`. Run `scripts/run_cycle.py` on WSL2.")
+
+        if CYCLE_REPORT.exists():
+            try:
+                report_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
+                st.subheader("Latest Testbed Cycle Detection Report")
+                steps = report_data.get("steps", [])
+                if steps:
+                    formatted_steps = []
+                    for i, step in enumerate(steps, 1):
+                        start_time = step.get("start", "").split(".")[0].replace("T", " ")
+                        formatted_steps.append({
+                            "Step": i,
+                            "Attack Action": step.get("name", "Unknown"),
+                            "MITRE Techniques": ", ".join(step.get("techniques", [])),
+                            "Status": "🚨 Detected" if step.get("detected") else "✅ Evaded",
+                            "Alerts": step.get("alert_count", 0),
+                            "Start Time": start_time
+                        })
+                    report_df = pd.DataFrame(formatted_steps)
+                    st.dataframe(report_df, hide_index=True, width="stretch")
+                else:
+                    st.info("No steps found in the latest cycle report.")
+            except Exception as err:
+                st.warning(f"Could not parse cycle report: {err}")
+
+    with tright:
+        st.subheader("Live Testbed Attack Topology")
+        st.caption("Reacts to physical targets recorded in the log store.")
+        topology_html_mininet = render_topology(
+            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            compromised_ids=compromised_mininet, detected_ids=detected_mininet,
+        )
+        components.html(topology_html_mininet, height=600, scrolling=True)
 
     if auto_refresh:
         time.sleep(3)
