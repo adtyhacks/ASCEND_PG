@@ -56,7 +56,17 @@ def explain_action(model: PPO, obs: np.ndarray, chosen_action: int,
                    env_info: dict = None) -> dict:
     """
     Explains why the PPO agent chose a specific action given an observation.
+    """
+    return _explain_action_impl(model, obs, chosen_action, env_info)
 
+
+# Alias for backward compatibility across Streamlit pages
+explain_step_decision = explain_action
+
+
+def _explain_action_impl(model: PPO, obs: np.ndarray, chosen_action: int,
+                         env_info: dict = None) -> dict:
+    """
     Args:
         model: Trained PPO model
         obs: Current observation vector (24-dim)
