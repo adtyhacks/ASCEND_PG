@@ -46,6 +46,12 @@ def log_event(event: dict):
 
 
 def poll_plc(ip, port, count, device_id=1):
+    """
+    Connects to one PLC, reads its holding registers once, and
+    returns the register list (or None on failure).
+
+    NOTE: pymodbus 3.12+ renamed the `slave=` kwarg to `device_id=`.
+    """
     client = ModbusTcpClient(ip, port=port, timeout=3)
     if not client.connect():
         log.warning("Could not connect to PLC at %s:%d", ip, port)
@@ -64,10 +70,13 @@ def poll_plc(ip, port, count, device_id=1):
 
 def main():
     parser = argparse.ArgumentParser(description="ASCEND-PG SCADA polling client")
-    parser.add_argument("--targets", nargs="+", required=True)
+    parser.add_argument("--targets", nargs="+", required=True,
+                        help="PLC IP addresses to poll, e.g. 10.0.0.1 10.0.0.2")
     parser.add_argument("-p", "--port", type=int, default=502)
-    parser.add_argument("-n", "--num-registers", type=int, default=10)
-    parser.add_argument("--interval", type=float, default=1.0)
+    parser.add_argument("-n", "--num-registers", type=int, default=10,
+                        help="how many holding registers to read per poll")
+    parser.add_argument("--interval", type=float, default=1.0,
+                        help="seconds between poll cycles")
     parser.add_argument("--log", default=None,
                         help="override the shared event log store path "
                              "(defaults to <repo>/data/log_store.json)")
@@ -96,3 +105,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

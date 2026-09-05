@@ -6,7 +6,7 @@ Defines the emulated ICS network per the project architecture (§5):
 switch (flat network -- matches how the real attack tools such as
 arpspoof expect to operate on a shared L2 segment).
 
-Follows the same Topo-subclass pattern MiniCPS's own examples use
+Follow the same Topo-subclass pattern MiniCPS's own examples use
 (examples/toy/topo.py), but written independently -- this file has
 no dependency on minicps.devices, only on mininet.topo.
 
@@ -38,6 +38,7 @@ PLC_IPS = [
 SCADA_IP = "10.0.0.10"
 ATTACKER_IP = "10.0.0.66"
 
+
 class IcsTopo(Topo):
     def build(self):
         switch = self.addSwitch("s1")
@@ -54,6 +55,7 @@ class IcsTopo(Topo):
         # 1 attacker host (runs pymodbus FDI / hping3 / Scapy / arpspoof)
         attacker = self.addHost("attacker", ip=ATTACKER_IP + NETMASK)
         self.addLink(attacker, switch)
+
 
 def run():
     setLogLevel("info")
