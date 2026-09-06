@@ -1,18 +1,18 @@
-import pandapower as pp
+﻿import pandapower as pp
 import pandapower.networks as pn
 import pandas as pd
 import numpy as np
 
-
-def build_baseline(n_packets=500, seed=42):
+def build_baseline(n_packets=500, seed=42, case_name="case14"):
     """
-    Loads the IEEE-14 bus network, solves power flow, and generates a
-    matching synthetic traffic log. Returns (net, grid_df, traffic_df) —
-    `net` (the pandapower network object) is returned too because the
-    topology visualizer needs it to know which buses are generators vs
-    loads and how lines connect them.
+    Loads the requested pandapower network, solves power flow, and generates a
+    matching synthetic traffic log. Returns (net, grid_df, traffic_df).
     """
-    net = pn.case14()
+    if case_name == "case30":
+        net = pn.case30()
+    else:
+        net = pn.case14()
+        
     pp.runpp(net)
 
     grid_df = pd.DataFrame({
@@ -31,7 +31,7 @@ def build_baseline(n_packets=500, seed=42):
         "src_bus": rng.choice(bus_ids, size=n_packets),
         "dst_bus": rng.choice(bus_ids, size=n_packets),
         "packet_size_bytes": rng.normal(300, 50, size=n_packets).clip(min=64).astype(int),
-        "voltage_pu": rng.normal(1.0, 0.01, size=n_packets),  # simulated per-packet voltage reading
+        "voltage_pu": rng.normal(1.0, 0.01, size=n_packets),
     })
     traffic_df = traffic_df[traffic_df["src_bus"] != traffic_df["dst_bus"]].reset_index(drop=True)
 

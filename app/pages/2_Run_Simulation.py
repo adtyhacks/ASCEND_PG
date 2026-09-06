@@ -30,7 +30,8 @@ else:
 
 if st.button("Run Baseline Power-Flow Simulation", type="primary"):
     with st.spinner("Solving IEEE-14 AC power flow and generating normal telemetry..."):
-        net_obj, grid_df, traffic_df = build_baseline()
+        case_name = st.session_state.get("config", {}).get("topology", {}).get("pandapower_case", "case14")
+        net_obj, grid_df, traffic_df = build_baseline(case_name=case_name)
         topo_nodes, topo_edges = build_ot_topology(net_obj)
     st.session_state.update({
         "net_obj": net_obj,
