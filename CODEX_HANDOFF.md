@@ -555,3 +555,27 @@ You are taking over this project as the lead AI coding assistant.
 - **What this is:** ASCEND-PG is an adaptive cyber-physical security platform for power grid OT networks combining pandapower, real Modbus emulations, a 17-technique MITRE ATT&CK for ICS RL agent, a tabular GAN, a dual LSTM + Autoencoder detector, and an XAI/DVS assessment layer.
 - **Current State:** All backend AI/ML models are trained, evaluated, and saved in `models/`. All XAI tools (`xai/`) and DVS metrics (`metrics/`) are functional. The Streamlit UI has `Home.py` and `1_Configure_Network.py` ready, but pages 2, 3, and 4 are empty placeholders.
 - **Immediate Next Step:** Write `app/pages/2_Run_Simulation.py`, `app/pages/3_Live_Battle.py` (featuring the required event log table), and `app/pages/4_Report.py`, then test via `streamlit run app/Home.py`.
+
+---
+
+## 17. SESSION UPDATE (LATEST FIXES & FEATURES)
+
+> **Note:** The following updates have been completed and pushed to the Abin branch to resolve UI/UX issues and seamlessly integrate the Mininet physical testbed results into the DVS Executive Report.
+
+### 1. PyVis Topology Enhancements (app/pages/3_Live_Battle.py & testbed/visualize_topology.py)
+- **Restored Vector Assets:** Reverted the UI to use the preferred crisp, custom-colored cyan 3D isometric vector SVGs instead of rasterized images. 
+- **Fixed Layout & Artifacts:** Removed the solid blue background squares that bled through transparent icons by overriding shapeProperties background colors to gba(0,0,0,0). Adjusted PyVis physics (
+ode_distance=130, spring_length=50) to create a clean, un-crammed layout.
+- **Floating Legend:** Injected a sleek, semi-transparent absolute-positioned HTML legend directly into the PyVis canvas to explain the edge colors (Solid Orange = Power Line, Dashed Blue = IT/OT Comm) and node borders (Red Ring = Compromised, Green Ring = Detected).
+
+### 2. Baseline Grid Configuration Bugfix (testbed/grid_env.py & app/pages/2_Run_Simulation.py)
+- **Fixed Hardcoded Grid:** Previously, the uild_baseline() function hardcoded the pandapower grid to pn.case14(), completely ignoring the user's choice in 1_Configure_Network.py.
+- **Dynamic Loading:** The simulation page now properly retrieves the pandapower_case variable from st.session_state and passes it to the backend. The IEEE-30 grid selection now functions correctly.
+
+### 3. Mininet Testbed Executive Report Integration (xai/recommendation_templates.py)
+- **Hardware-in-the-Loop Reporting:** Modified the DVS report generator to automatically check for data/cycle_report.json (the output of the live 14-step Mininet attack cycle).
+- **Executive Validation Table:** If found, the final downloadable Markdown/PDF report now includes a "Hardware-in-the-Loop Testbed Validation" table showing exact physical success rates vs. Suricata IDS alert counts for every step.
+- **Targeted Mitigations:** Implemented logic to automatically map any successfully compromised physical step to its corresponding MITRE ATT&CK ID, querying TECHNIQUE_MITIGATIONS to append a dedicated list of defense recommendations tailored precisely to the attacks that bypassed the IDS.
+
+### 4. WSL Compatibility Fixes
+- **CRLF Line Endings:** Fixed \r\n line endings (os error 2) in all bash scripts (start_testbed.sh, scripts/*.sh, scripts/*.py) to ensure flawless execution in WSL/Linux environments.
