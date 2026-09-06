@@ -145,7 +145,19 @@ if "lime_result" in st.session_state:
     lime_df = pd.DataFrame(lime_result["explanation_list"], columns=["Feature contribution", "Weight"])
     st.dataframe(lime_df, use_container_width=True, hide_index=True)
 
-report_markdown = format_report(dvs_result, chain_techniques)
+import json
+from pathlib import Path
+
+testbed_data = None
+cycle_report_path = Path(PROJECT_ROOT) / "data" / "cycle_report.json"
+if cycle_report_path.exists():
+    try:
+        with open(cycle_report_path, "r", encoding="utf-8") as f:
+            testbed_data = json.load(f)
+    except Exception:
+        pass
+
+report_markdown = format_report(dvs_result, chain_techniques, testbed_report=testbed_data)
 
 dl_col1, dl_col2, _ = st.columns([1, 1, 2])
 with dl_col1:
