@@ -543,8 +543,10 @@ with left:
         st.info("Start a campaign, then run tactics one at a time or to completion.")
     else:
         display_cols = ["Timestamp", "Step", "MITRE ID", "Technique Name",
-                        "Stage", "Target Host", "Detector Confidence", "Status", "Mode"]
-        st.dataframe(latest[display_cols].astype(str), width="stretch", hide_index=True)
+                        "Stage", "Target Host", "Detector Confidence",
+                        "ML Confidence", "Detection Method", "Status", "Mode"]
+        available_cols = [c for c in display_cols if c in latest.columns]
+        st.dataframe(latest[available_cols].astype(str), width="stretch", hide_index=True)
 
 with right:
     st.subheader("Compromise & Defense Topology")

@@ -79,6 +79,7 @@ class HybridDetector:
         if use_ml:
             try:
                 self.ml_detector.load()
+                print("[hybrid] ML models loaded successfully")
             except Exception as e:
                 print(f"[hybrid] Warning: could not load ML models: {e}")
                 self.use_ml = False

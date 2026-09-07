@@ -34,6 +34,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.testbed_executor import (
     STEP_DEFS,
     execute_single_attack,
+    get_hybrid_detector,
     log_event,
 )
 
@@ -78,6 +79,14 @@ def main():
     print(" Press Ctrl+C to stop.")
     print("=" * 60)
 
+    detector = get_hybrid_detector()
+    if detector and detector.is_ml_available():
+        print(" [defense] ML models loaded (LSTM + Autoencoder)")
+        print(f" [defense] Suricata: active | ML: active | Mode: hybrid")
+    else:
+        print(" [defense] ML models NOT available — using Suricata only")
+        print(" [defense] To enable ML: train models with detection/lstm_detector.py")
+
     clear_old_result()
     steps_executed = 0
 
@@ -106,13 +115,16 @@ def main():
                             "mode": "real",
                         }
                     else:
-                        result = execute_single_attack(technique_id)
+                        result = execute_single_attack(technique_id, detection_mode="hybrid")
                         result["success"] = True
                         result["technique_id"] = technique_id
 
                     steps_executed += 1
+                    method = result.get("detection_method", "suricata")
+                    ml_conf = result.get("ml_confidence", 0.0)
                     print(f"[watcher] Result: detected={result.get('detected', '?')}, "
-                          f"alerts={result.get('alert_count', 0)}")
+                          f"method={method}, alerts={result.get('alert_count', 0)}, "
+                          f"ml_conf={ml_conf:.3f}")
 
                 except Exception as exc:
                     result = {
