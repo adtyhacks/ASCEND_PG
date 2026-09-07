@@ -471,17 +471,23 @@ if use_real:
         with hcol2:
             st.markdown("**LSTM + Autoencoder**")
             st.caption("ML anomaly detection (78 CIC-IDS features)")
-            try:
-                sys.path.insert(0, PROJECT_ROOT)
-                from defense.ml_detector import MLDetector
-                ml = MLDetector()
-                ml.load()
+            ml_key = "_ml_status_shown"
+            if ml_key not in st.session_state:
+                try:
+                    sys.path.insert(0, PROJECT_ROOT)
+                    from defense.ml_detector import MLDetector
+                    ml = MLDetector()
+                    ml.load()
+                    st.session_state[ml_key] = True
+                except Exception:
+                    st.session_state[ml_key] = False
+            if st.session_state.get(ml_key):
                 st.success("Models Loaded")
-            except Exception as e:
-                st.warning(f"Models unavailable: {e}")
+            else:
+                st.warning("Models unavailable")
         with hcol3:
             st.markdown("**Detection Fusion**")
-            st.caption("50% LSTM + 50% AE → Combined verdict")
+            st.caption("50% LSTM + 50% AE -> Combined verdict")
             st.info("Threshold: 0.50")
 
 # --- Campaign Controls ---
@@ -690,47 +696,15 @@ else:
             if st.button("Refresh Now"):
                 st.rerun()
 
-        compromised_mininet = set()
-        detected_mininet = set()
-        try:
-            targets_hit = set()
-            if LOG_STORE.exists():
-                logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-                for e in logs[-30:]:
-                    if "target" in e:
-                        ip = e["target"]
-                        if ip.startswith("10.0.0."):
-                            targets_hit.add(f"substation_{ip.split('.')[-1]}")
-            if CYCLE_REPORT.exists():
-                rep = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
-                detected = any(s.get("detected") for s in rep.get("steps", []))
-                if detected:
-                    detected_mininet.update(targets_hit)
+        if LOG_STORE.exists():
+            try:
+                raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+                if isinstance(raw_log, list) and raw_log:
+                    st.write(f"Total Events: **{len(raw_log)}**")
+                    st.dataframe(pd.DataFrame(raw_log).astype(str), width="stretch", height=300)
                 else:
-                    compromised_mininet.update(targets_hit)
-        except Exception:
-            pass
-
-        tleft, tright = st.columns([1, 1.2])
-        with tleft:
-            if LOG_STORE.exists():
-                try:
-                    raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-                    if isinstance(raw_log, list) and raw_log:
-                        st.write(f"Total Events: **{len(raw_log)}**")
-                        st.dataframe(pd.DataFrame(raw_log).astype(str), width="stretch", height=300)
-                except Exception as err:
-                    st.warning(f"Could not parse log store: {err}")
-            else:
-                st.info("No testbed log found. Run `scripts/start_testbed.py` on WSL2.")
-
-        with tright:
-            st.subheader("Testbed Topology")
-            components.html(render_topology(
-                st.session_state["topo_nodes"], st.session_state["topo_edges"],
-                compromised_ids=compromised_mininet, detected_ids=detected_mininet,
-            ), height=500, scrolling=True)
-
-        if auto_refresh:
-            time.sleep(3)
-            st.rerun()
+                    st.info("Log store exists but contains no events yet.")
+            except Exception as err:
+                st.warning(f"Could not parse log store: {err}")
+        else:
+            st.info("No testbed log found. Run `scripts/start_testbed.py` on WSL2.")
