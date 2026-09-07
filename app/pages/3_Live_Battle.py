@@ -1,16 +1,19 @@
 """
 ASCEND-PG — Live Battle & Defense Evaluation (Streamlit page)
 
-Unified interface supporting two operational modes:
-1. Adaptive AI Campaign (PPO + LSTM/Autoencoder Fusion):
-   Executes and visualizes multi-stage PPO attack campaigns with live detector feedback,
-   tactical decision rationales, plateau tracking, and topology compromise rendering.
-2. Live Mininet Testbed Monitor:
-   Polls real testbed logs (data/log_store.json + data/cycle_report.json) generated
-   by scripts/run_cycle.py against the emulated ICS network.
+Unified interface for PPO-driven attack campaigns with three operational modes:
+1. PPO + Real Testbed: PPO selects MITRE techniques, real attack scripts run
+   on the Mininet testbed via file-based handoff to ppo_step_watcher.py.
+2. PPO + Mock: PPO selects techniques, detection evaluated via calibrated
+   mock probabilities (no testbed required).
+3. Mininet Testbed Only: Raw event viewer for live testbed monitoring.
+
+File-based handoff protocol (PPO + Real Testbed mode):
+  1. Streamlit writes:  data/pending_step.json
+  2. Watcher on attacker reads it, executes attack, writes data/step_result.json
+  3. Streamlit polls for result, feeds detection confidence back to PPO
 """
 
-import base64
 import json
 import os
 import sys
@@ -18,6 +21,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -29,15 +33,33 @@ if PROJECT_ROOT not in sys.path:
 from testbed.grid_env import build_baseline
 from testbed.network_topology import build_ot_topology
 from testbed.visualize_topology import render_topology
-from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES
+from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES
 from xai.attack_decision_explain import explain_step_decision
 from metrics.dvs import PlateauTracker
 from stable_baselines3 import PPO
+from scripts.testbed_executor import TECHNIQUE_TO_STEP_NAME
 
 _REPO = Path(PROJECT_ROOT)
-LOG_STORE = _REPO / "data" / "log_store.json"
-CYCLE_REPORT = _REPO / "data" / "cycle_report.json"
+DATA_DIR = _REPO / "data"
+LOG_STORE = DATA_DIR / "log_store.json"
+CYCLE_REPORT = DATA_DIR / "cycle_report.json"
 MODEL_PATH = _REPO / "models" / "rl_agent.zip"
+
+# File-based handoff paths
+PENDING_STEP = DATA_DIR / "pending_step.json"
+STEP_RESULT = DATA_DIR / "step_result.json"
+
+# Technique IDs that have real testbed scripts (from testbed_executor.py)
+REAL_TESTBED_TECHNIQUES = {
+    "T0846", "T0888", "T0842", "T0830", "T0801", "T0814", "T0816",
+    "T0836", "T0806", "T0835", "T0832", "T0815",
+}
+
+# Mininet host IP mapping
+MININET_IPS = {
+    "plc1": "10.0.0.1", "plc2": "10.0.0.2", "plc3": "10.0.0.3",
+    "plc4": "10.0.0.4", "plc5": "10.0.0.5", "scada": "10.0.0.10",
+}
 
 st.set_page_config(page_title="Live Battle | ASCEND-PG", layout="wide")
 st.title("Live Battle & Defense Evaluation")
@@ -48,229 +70,438 @@ if "topo_nodes" not in st.session_state or "topo_edges" not in st.session_state:
     net_obj, grid_df, traffic_df = build_baseline()
     topo_nodes, topo_edges = build_ot_topology(net_obj)
     st.session_state.update({
-        "net_obj": net_obj,
-        "grid_df": grid_df,
-        "traffic_df": traffic_df,
-        "topo_nodes": topo_nodes,
-        "topo_edges": topo_edges,
+        "net_obj": net_obj, "grid_df": grid_df, "traffic_df": traffic_df,
+        "topo_nodes": topo_nodes, "topo_edges": topo_edges,
     })
 
-tab_ai, tab_testbed = st.tabs(["Adaptive AI Campaign (PPO + Detectors)", "Mininet Testbed Live Monitor"])
 
-# ==============================================================================
-# TAB 1: Adaptive AI Campaign Mode
-# ==============================================================================
-with tab_ai:
-    def _load_ppo_model():
-        if not MODEL_PATH.exists():
-            st.error(f"Trained PPO model not found at {MODEL_PATH}.")
-            st.stop()
-        return PPO.load(str(MODEL_PATH))
+# =============================================================================
+# Helper functions
+# =============================================================================
 
-    def _new_campaign(use_real_detector: bool):
-        env = AttackStrategyEnv(real_mode=use_real_detector)
-        model = _load_ppo_model()
-        obs, _ = env.reset()
-        st.session_state["battle_env"] = env
-        st.session_state["battle_model"] = model
-        st.session_state["battle_obs"] = obs
-        st.session_state["battle_active"] = True
-        st.session_state["battle_events"] = []
-        st.session_state["battle_explanations"] = []
-        st.session_state["battle_reward"] = 0.0
-        if "battle_plateau" not in st.session_state:
-            st.session_state["battle_plateau"] = PlateauTracker(patience=3, min_evasion_gain=0.03)
+def _load_ppo_model():
+    if not MODEL_PATH.exists():
+        st.error(f"Trained PPO model not found at {MODEL_PATH}.")
+        st.stop()
+    return PPO.load(str(MODEL_PATH))
 
-    def _record_completed_campaign():
-        events = st.session_state.get("battle_events", [])
-        if not events:
-            return
-        evasion_rate = 1.0 - pd.DataFrame(events)["Detected"].mean()
-        campaign_complete = any(e["Stage"] == 3 for e in events)
-        
-        stages_hit = [e["Stage"] for e in events if not e["Detected"]]
-        max_stage = max(stages_hit) if stages_hit else 0
-        
-        chain = [{
-            "technique_id": e["MITRE ID"],
-            "technique_name": e["Technique Name"],
-            "stage": e["Stage"],
-            "detected": e["Detected"],
-            "confidence": float(e["Detector Confidence"])
-        } for e in events]
 
-        st.session_state.setdefault("battle_campaigns", []).append({
-            "events": list(events),
-            "evasion_rate": float(evasion_rate),
-            "campaign_complete": bool(campaign_complete),
-            "max_stage": int(max_stage),
-            "reward": float(st.session_state.get("battle_reward", 0.0)),
-            "chain": chain,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        plateau = st.session_state["battle_plateau"]
-        plateau_detected = plateau.update(float(evasion_rate))
-        st.session_state["battle_results"] = {
-            "campaigns": st.session_state["battle_campaigns"],
-            "evasion_rate": float(evasion_rate),
-            "plateau_detected": bool(plateau_detected),
-            "last_campaign_complete": bool(campaign_complete),
-        }
-        
-        # Export for Andikumar's training pipeline
-        try:
-            history_file = _REPO / "data" / "ppo_campaign_history.json"
-            history_file.parent.mkdir(exist_ok=True)
-            with open(history_file, "w") as f:
-                json.dump(st.session_state["battle_campaigns"], f, indent=2)
-        except Exception as e:
-            print(f"Failed to export campaign history: {e}")
+def _has_testbed_support(technique_id: str) -> bool:
+    """Check if a technique has a real testbed attack script."""
+    return technique_id in REAL_TESTBED_TECHNIQUES
 
-    def _step_campaign():
-        if not st.session_state.get("battle_active"):
-            return
-        env = st.session_state["battle_env"]
-        model = st.session_state["battle_model"]
-        obs = st.session_state["battle_obs"]
 
-        action, _ = model.predict(obs, deterministic=False)
-        action_idx = int(action)
-        explanation = explain_step_decision(model, obs, action_idx)
+def _write_pending_step(technique_id: str, step_name: str):
+    """Write a step command for the PPO watcher to execute."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PENDING_STEP.write_text(json.dumps({
+        "technique_id": technique_id,
+        "step_name": step_name,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }), encoding="utf-8")
 
-        next_obs, reward, terminated, truncated, info = env.step(action_idx)
-        st.session_state["battle_reward"] += float(reward)
-        tech = MITRE_TECHNIQUES[action_idx]
-        detected = bool(info.get("detected", False))
-        detector_conf = float(info.get("detection_confidence", 0.0))
 
-        targets = [n["id"] for n in st.session_state["topo_nodes"] if n.get("type", "") in ("generation_substation", "distribution_substation", "rtu", "pmu", "plc", "generator")]
-        target_host = targets[len(st.session_state["battle_events"]) % len(targets)] if targets else "plc1"
+def _poll_step_result(timeout: float = 120.0, poll_interval: float = 0.5) -> dict | None:
+    """Poll for the watcher's result file. Returns None on timeout."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if STEP_RESULT.exists():
+            try:
+                data = json.loads(STEP_RESULT.read_text(encoding="utf-8"))
+                STEP_RESULT.unlink(missing_ok=True)
+                return data
+            except (json.JSONDecodeError, OSError):
+                pass
+        time.sleep(poll_interval)
+    return None
 
-        event = {
-            "Timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-            "Step": len(st.session_state["battle_events"]) + 1,
-            "MITRE ID": tech["id"],
-            "Technique Name": tech["name"],
-            "Stage": tech["stage"],
-            "Target Host": target_host,
-            "Detector Confidence": f"{detector_conf:.3f}",
-            "Status": "Detected" if detected else "Compromised",
-            "Detected": detected,
-        }
-        st.session_state["battle_events"].append(event)
-        st.session_state["battle_explanations"].append(explanation)
-        st.session_state["battle_obs"] = next_obs
 
-        if terminated or truncated:
-            st.session_state["battle_active"] = False
-            _record_completed_campaign()
+def _resolve_target_host(event_index: int) -> str:
+    """Map an event index to a Mininet host for topology highlighting."""
+    targets = [n["id"] for n in st.session_state["topo_nodes"]
+               if n.get("type", "") in ("generation_substation", "distribution_substation",
+                                          "rtu", "pmu", "plc", "generator")]
+    return targets[event_index % len(targets)] if targets else "plc1"
 
-    config = st.session_state.get("config", {})
-    use_detector_fusion = config.get("use_lstm", True) and config.get("use_autoencoder", True)
 
-    controls = st.columns(3)
-    with controls[0]:
-        if st.button("Start New PPO Campaign", type="primary"):
-            _new_campaign(use_detector_fusion)
-            st.rerun()
-    with controls[1]:
-        next_disabled = not st.session_state.get("battle_active", False)
-        if st.button("Run Next Tactic", disabled=next_disabled):
-            _step_campaign()
-            st.rerun()
-    with controls[2]:
-        if st.button("Run Campaign to Completion", disabled=not st.session_state.get("battle_active", False)):
-            while st.session_state.get("battle_active", False):
-                _step_campaign()
-            st.rerun()
+def _new_campaign(use_real_testbed: bool):
+    """Initialize a new PPO attack campaign."""
+    env = AttackStrategyEnv(real_mode=False)  # We handle detection ourselves
+    model = _load_ppo_model()
+    obs, _ = env.reset()
+    st.session_state["battle_env"] = env
+    st.session_state["battle_model"] = model
+    st.session_state["battle_obs"] = obs
+    st.session_state["battle_active"] = True
+    st.session_state["battle_events"] = []
+    st.session_state["battle_explanations"] = []
+    st.session_state["battle_reward"] = 0.0
+    st.session_state["use_real_testbed"] = use_real_testbed
+    if "battle_plateau" not in st.session_state:
+        st.session_state["battle_plateau"] = PlateauTracker(patience=3, min_evasion_gain=0.03)
+    # Clear any stale handoff files
+    PENDING_STEP.unlink(missing_ok=True)
+    STEP_RESULT.unlink(missing_ok=True)
 
+
+def _record_completed_campaign():
+    """Record campaign results for the DVS report."""
     events = st.session_state.get("battle_events", [])
-    campaigns = st.session_state.get("battle_campaigns", [])
-    latest = pd.DataFrame(events)
-    current_evasion = 1.0 - (latest["Detected"].mean() if not latest.empty else 0.0)
-    plateaued = st.session_state.get("battle_results", {}).get("plateau_detected", False)
+    if not events:
+        return
+    evasion_rate = 1.0 - pd.DataFrame(events)["Detected"].mean()
+    campaign_complete = any(e["Stage"] == 3 for e in events)
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Current step", len(events))
-    m2.metric("Current evasion", f"{current_evasion:.0%}" if events else "—")
-    m3.metric("Completed campaigns", len(campaigns))
-    m4.metric("Plateau status", "Plateau detected" if plateaued else "Monitoring")
+    stages_hit = [e["Stage"] for e in events if not e["Detected"]]
+    max_stage = max(stages_hit) if stages_hit else 0
 
-    if plateaued:
-        st.warning("Defense-evasion plateau detected across completed campaigns. The report will include this DVS signal.")
+    chain = [{
+        "technique_id": e["MITRE ID"],
+        "technique_name": e["Technique Name"],
+        "stage": e["Stage"],
+        "detected": e["Detected"],
+        "confidence": float(e["Detector Confidence"]),
+    } for e in events]
 
-    left, right = st.columns([1.15, 1])
-    with left:
-        st.subheader("Live battle event log")
-        if latest.empty:
-            st.info("Start a PPO campaign, then run tactics one at a time or to completion.")
+    st.session_state.setdefault("battle_campaigns", []).append({
+        "events": list(events),
+        "evasion_rate": float(evasion_rate),
+        "campaign_complete": bool(campaign_complete),
+        "max_stage": int(max_stage),
+        "reward": float(st.session_state.get("battle_reward", 0.0)),
+        "chain": chain,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    plateau = st.session_state["battle_plateau"]
+    plateau_detected = plateau.update(float(evasion_rate))
+    st.session_state["battle_results"] = {
+        "campaigns": st.session_state["battle_campaigns"],
+        "evasion_rate": float(evasion_rate),
+        "plateau_detected": bool(plateau_detected),
+        "last_campaign_complete": bool(campaign_complete),
+    }
+
+    try:
+        history_file = DATA_DIR / "ppo_campaign_history.json"
+        history_file.parent.mkdir(exist_ok=True)
+        with open(history_file, "w") as f:
+            json.dump(st.session_state["battle_campaigns"], f, indent=2)
+    except Exception as e:
+        print(f"Failed to export campaign history: {e}")
+
+
+def _step_campaign_mock():
+    """Execute one PPO step using mock detection (no testbed)."""
+    if not st.session_state.get("battle_active"):
+        return
+    env = st.session_state["battle_env"]
+    model = st.session_state["battle_model"]
+    obs = st.session_state["battle_obs"]
+
+    action, _ = model.predict(obs, deterministic=False)
+    action_idx = int(action)
+    explanation = explain_step_decision(model, obs, action_idx)
+
+    next_obs, reward, terminated, truncated, info = env.step(action_idx)
+    st.session_state["battle_reward"] += float(reward)
+    tech = MITRE_TECHNIQUES[action_idx]
+    detected = bool(info.get("detected", False))
+    detector_conf = float(info.get("detection_confidence", 0.0))
+
+    target_host = _resolve_target_host(len(st.session_state["battle_events"]))
+
+    event = {
+        "Timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "Step": len(st.session_state["battle_events"]) + 1,
+        "MITRE ID": tech["id"],
+        "Technique Name": tech["name"],
+        "Stage": tech["stage"],
+        "Target Host": target_host,
+        "Detector Confidence": f"{detector_conf:.3f}",
+        "Status": "Detected" if detected else "Compromised",
+        "Detected": detected,
+        "Mode": "Mock",
+    }
+    st.session_state["battle_events"].append(event)
+    st.session_state["battle_explanations"].append(explanation)
+    st.session_state["battle_obs"] = next_obs
+
+    if terminated or truncated:
+        st.session_state["battle_active"] = False
+        _record_completed_campaign()
+
+
+def _step_campaign_real():
+    """Execute one PPO step using real testbed attacks via file handoff."""
+    if not st.session_state.get("battle_active"):
+        return
+    model = st.session_state["battle_model"]
+    obs = st.session_state["battle_obs"]
+    env = st.session_state["battle_env"]
+
+    action, _ = model.predict(obs, deterministic=False)
+    action_idx = int(action)
+    explanation = explain_step_decision(model, obs, action_idx)
+    tech = MITRE_TECHNIQUES[action_idx]
+    technique_id = tech["id"]
+
+    target_host = _resolve_target_host(len(st.session_state["battle_events"]))
+
+    # Check if this technique has a real testbed script
+    step_name = TECHNIQUE_TO_STEP_NAME.get(technique_id)
+    has_testbed = step_name is not None
+
+    if has_testbed and not PENDING_STEP.exists() and not STEP_RESULT.exists():
+        # Write step for watcher
+        _write_pending_step(technique_id, step_name)
+
+        with st.spinner(f"Executing {technique_id} ({tech['name']}) on testbed..."):
+            result = _poll_step_result(timeout=150.0)
+
+        if result and result.get("success", False):
+            detected = result.get("detected", False)
+            detector_conf = 1.0 if detected else 0.0
+            mode_label = "Real"
         else:
-            display_columns = ["Timestamp", "Step", "MITRE ID", "Technique Name", "Stage", "Target Host", "Detector Confidence", "Status"]
-            st.dataframe(latest[display_columns].astype(str), width="stretch", hide_index=True)
-    with right:
-        st.subheader("Compromise and defense topology")
-        compromised = set()
-        detected = set()
-        for event in events:
-            (detected if event["Detected"] else compromised).add(event["Target Host"])
-        topology_html = render_topology(
-            st.session_state["topo_nodes"], st.session_state["topo_edges"],
-            compromised_ids=compromised, detected_ids=detected,
-        )
-        components.html(topology_html, height=600, scrolling=True)
+            # Fallback to mock if testbed execution fails
+            st.warning(f"Testbed execution failed: {result.get('error', 'timeout') if result else 'timeout'}. "
+                       f"Falling back to mock evaluation.")
+            _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
+            detected = bool(mock_info.get("detected", False))
+            detector_conf = float(mock_info.get("detection_confidence", 0.0))
+            mode_label = "Mock (fallback)"
+    else:
+        # Fallback to mock: either technique has no testbed script, or watcher is busy
+        _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
+        st.session_state["battle_reward"] += float(mock_reward)
+        detected = bool(mock_info.get("detected", False))
+        detector_conf = float(mock_info.get("detection_confidence", 0.0))
+        mode_label = "Mock" if not has_testbed else "Mock (busy)"
 
-    if events:
-        with st.expander("Latest PPO tactical rationale", expanded=True):
-            explanation = st.session_state["battle_explanations"][-1]
-            st.write(explanation["rationale"])
-            alternatives = pd.DataFrame(explanation["top_alternatives"])
-            if not alternatives.empty:
-                st.dataframe(alternatives[["id", "name", "stage_name", "probability"]].astype(str), hide_index=True,
-                             width="stretch")
+    # Compute reward (same logic as rl_env.py)
+    reward = -0.1
+    if not detected:
+        reward += 1.5 * (1.0 - detector_conf)
+    else:
+        reward -= 2.5 * detector_conf
 
-    if campaigns:
-        st.caption(f"Latest campaign: {len(campaigns[-1]['events'])} steps, "
-                   f"evasion {campaigns[-1]['evasion_rate']:.0%}, "
-                   f"completion {'yes' if campaigns[-1]['campaign_complete'] else 'no'}.")
-        if st.button("Open Executive Report"):
-            st.switch_page("pages/4_Report.py")
+    tech_stage = tech["stage"]
+    if tech_stage == env._current_stage:
+        env._completed_stages.add(tech_stage)
+        reward += 3.0
+        if env._current_stage < 3:
+            env._current_stage += 1
+    elif tech_stage in env._completed_stages:
+        reward -= 1.5
+    else:
+        reward -= 1.0
+
+    campaign_complete = len(env._completed_stages) == 4
+    if campaign_complete:
+        reward += 8.0 if not detected else 4.0
+
+    st.session_state["battle_reward"] += float(reward)
+    env._history.append(1 if detected else 0)
+    env._last_action = action_idx
+    env._last_confidence = detector_conf
+    env._step_count += 1
+    env._chain.append(technique_id)
+
+    # Build next observation manually (mirrors rl_env._get_obs)
+    recent = env._history[-5:]
+    recent_evasion_rate = (sum(1 - x for x in recent) / len(recent)) if recent else 1.0
+    one_hot_action = np.zeros(NUM_TECHNIQUES, dtype=np.float32)
+    one_hot_action[action_idx] = 1.0
+    stages_vec = np.zeros(4, dtype=np.float32)
+    for s in env._completed_stages:
+        if 0 <= s < 4:
+            stages_vec[s] = 1.0
+    next_obs = np.concatenate([
+        [float(env._current_stage) / 3.0],
+        [float(recent_evasion_rate)],
+        [float(detector_conf)],
+        one_hot_action,
+        stages_vec,
+    ]).astype(np.float32)
+
+    event = {
+        "Timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "Step": len(st.session_state["battle_events"]) + 1,
+        "MITRE ID": technique_id,
+        "Technique Name": tech["name"],
+        "Stage": tech["stage"],
+        "Target Host": target_host,
+        "Detector Confidence": f"{detector_conf:.3f}",
+        "Status": "Detected" if detected else "Compromised",
+        "Detected": detected,
+        "Mode": mode_label,
+    }
+    st.session_state["battle_events"].append(event)
+    st.session_state["battle_explanations"].append(explanation)
+    st.session_state["battle_obs"] = next_obs
+
+    terminated = campaign_complete
+    truncated = env._step_count >= 12
+
+    if terminated or truncated:
+        st.session_state["battle_active"] = False
+        _record_completed_campaign()
 
 
-# ==============================================================================
-# TAB 2: Mininet Testbed Live Monitor
-# ==============================================================================
-with tab_testbed:
-    st.subheader("Live Mininet Testbed Monitor")
-    st.caption("Reads live telemetry events from data/log_store.json and verdicts from data/cycle_report.json.")
+# =============================================================================
+# UI Layout
+# =============================================================================
+
+# --- Mode Selector ---
+st.subheader("Operational Mode")
+mode_col1, mode_col2, mode_col3 = st.columns(3)
+with mode_col1:
+    use_real = st.checkbox("Use Real Testbed", value=False,
+                           help="Execute real attack scripts on the Mininet testbed. "
+                                "Requires ppo_step_watcher.py running on the attacker host.")
+with mode_col2:
+    watcher_status = "Connected" if PENDING_STEP.exists() or STEP_RESULT.exists() else "Checking..."
+    st.metric("Watcher Status", watcher_status)
+with mode_col3:
+    if use_real:
+        watcher_ready = not PENDING_STEP.exists()  # No pending = watcher is idle
+        if watcher_ready:
+            st.success("Ready for steps")
+        else:
+            st.warning("Watcher busy")
+
+# --- Campaign Controls ---
+st.subheader("Campaign Controls")
+ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
+with ctrl1:
+    if st.button("Start New Campaign", type="primary"):
+        _new_campaign(use_real_testbed=use_real)
+        st.rerun()
+with ctrl2:
+    next_disabled = not st.session_state.get("battle_active", False)
+    if st.button("Run Next Tactic", disabled=next_disabled):
+        if use_real:
+            _step_campaign_real()
+        else:
+            _step_campaign_mock()
+        st.rerun()
+with ctrl3:
+    run_all_disabled = not st.session_state.get("battle_active", False)
+    if st.button("Run to Completion", disabled=run_all_disabled):
+        max_steps = 12
+        step_count = 0
+        while st.session_state.get("battle_active", False) and step_count < max_steps:
+            if use_real:
+                _step_campaign_real()
+            else:
+                _step_campaign_mock()
+            step_count += 1
+        st.rerun()
+with ctrl4:
+    if st.button("Open Executive Report"):
+        st.switch_page("pages/4_Report.py")
+
+# --- Metrics Row ---
+events = st.session_state.get("battle_events", [])
+campaigns = st.session_state.get("battle_campaigns", [])
+latest = pd.DataFrame(events) if events else pd.DataFrame()
+current_evasion = 1.0 - (latest["Detected"].mean() if not latest.empty else 0.0)
+plateaued = st.session_state.get("battle_results", {}).get("plateau_detected", False)
+
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Current step", len(events))
+m2.metric("Evasion", f"{current_evasion:.0%}" if events else "---")
+m3.metric("Campaigns", len(campaigns))
+m4.metric("Plateau", "Detected" if plateaued else "Monitoring")
+mode_text = "Real Testbed" if use_real else "Mock"
+m5.metric("Mode", mode_text)
+
+if plateaued:
+    st.warning("Defense-evasion plateau detected across completed campaigns. "
+               "The report will include this DVS signal.")
+
+# --- Main Content: Event Log + Topology ---
+left, right = st.columns([1.15, 1])
+
+with left:
+    st.subheader("Live Battle Event Log")
+    if latest.empty:
+        st.info("Start a campaign, then run tactics one at a time or to completion.")
+    else:
+        display_cols = ["Timestamp", "Step", "MITRE ID", "Technique Name",
+                        "Stage", "Target Host", "Detector Confidence", "Status", "Mode"]
+        st.dataframe(latest[display_cols].astype(str), width="stretch", hide_index=True)
+
+with right:
+    st.subheader("Compromise & Defense Topology")
+    compromised = set()
+    detected_nodes = set()
+    for event in events:
+        target = event["Target Host"]
+        if event["Detected"]:
+            detected_nodes.add(target)
+        else:
+            compromised.add(target)
+
+    topology_html = render_topology(
+        st.session_state["topo_nodes"], st.session_state["topo_edges"],
+        compromised_ids=compromised, detected_ids=detected_nodes,
+    )
+    components.html(topology_html, height=600, scrolling=True)
+
+# --- PPO Tactical Rationale ---
+if events:
+    with st.expander("Latest PPO Tactical Rationale", expanded=True):
+        explanation = st.session_state["battle_explanations"][-1]
+        st.write(explanation["rationale"])
+        alternatives = pd.DataFrame(explanation["top_alternatives"])
+        if not alternatives.empty:
+            st.dataframe(alternatives[["id", "name", "stage_name", "probability"]].astype(str),
+                         hide_index=True, width="stretch")
+
+# --- Campaign Summary ---
+if campaigns:
+    latest_campaign = campaigns[-1]
+    st.caption(f"Latest campaign: {len(latest_campaign['events'])} steps, "
+               f"evasion {latest_campaign['evasion_rate']:.0%}, "
+               f"completion {'yes' if latest_campaign['campaign_complete'] else 'no'}.")
+
+
+# =============================================================================
+# Section: Mininet Testbed Live Monitor (secondary)
+# =============================================================================
+st.divider()
+with st.expander("Mininet Testbed Live Monitor (raw events)", expanded=False):
+    st.caption("Reads live telemetry from data/log_store.json and verdicts from data/cycle_report.json.")
 
     col_ctrl, col_auto = st.columns([2, 1])
     with col_ctrl:
-        auto_refresh = st.checkbox("Auto-refresh testbed events (every 3s)", value=False)
+        auto_refresh = st.checkbox("Auto-refresh (every 3s)", value=False)
     with col_auto:
         if st.button("Refresh Now"):
             st.rerun()
 
-    # Determine real compromised/detected nodes from the logs
+    # Determine compromised/detected nodes from testbed logs
     compromised_mininet = set()
     detected_mininet = set()
     try:
         targets_hit = set()
         if LOG_STORE.exists():
             logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-            for e in logs[-30:]:  # Look at recent events
+            for e in logs[-30:]:
                 if "target" in e:
                     ip = e["target"]
                     if ip.startswith("10.0.0."):
                         node_id = f"substation_{ip.split('.')[-1]}"
                         targets_hit.add(node_id)
-        
+
         is_detected = False
         if CYCLE_REPORT.exists():
             rep = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
             for step in rep.get("steps", []):
                 if step.get("detected", False):
                     is_detected = True
-                    
+
         if is_detected:
             detected_mininet.update(targets_hit)
         else:
@@ -285,47 +516,44 @@ with tab_testbed:
                 raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
                 if isinstance(raw_log, list) and raw_log:
                     log_df = pd.DataFrame(raw_log)
-                    st.write(f"Total Logged Testbed Events: **{len(log_df)}**")
-                    st.dataframe(log_df.astype(str), width="stretch", height=350)
+                    st.write(f"Total Testbed Events: **{len(log_df)}**")
+                    st.dataframe(log_df.astype(str), width="stretch", height=300)
                 else:
                     st.info("Log store exists but contains no events yet.")
             except Exception as err:
                 st.warning(f"Could not parse log store: {err}")
         else:
-            st.info(f"No live testbed log store found at `{LOG_STORE}`. Run `scripts/run_cycle.py` on WSL2.")
+            st.info(f"No testbed log found at `{LOG_STORE}`. "
+                    "Run `scripts/start_testbed.py` on WSL2.")
 
         if CYCLE_REPORT.exists():
             try:
                 report_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
-                st.subheader("Latest Testbed Cycle Detection Report")
+                st.subheader("Latest Cycle Report")
                 steps = report_data.get("steps", [])
                 if steps:
-                    formatted_steps = []
+                    formatted = []
                     for i, step in enumerate(steps, 1):
                         start_time = step.get("start", "").split(".")[0].replace("T", " ")
-                        formatted_steps.append({
+                        formatted.append({
                             "Step": i,
-                            "Attack Action": step.get("name", "Unknown"),
-                            "MITRE Techniques": ", ".join(step.get("techniques", [])),
-                            "Status": "🚨 Detected" if step.get("detected") else "✅ Evaded",
+                            "Attack": step.get("name", "Unknown"),
+                            "MITRE": ", ".join(step.get("techniques", [])),
+                            "Status": "Detected" if step.get("detected") else "Evaded",
                             "Alerts": step.get("alert_count", 0),
-                            "Start Time": start_time
+                            "Time": start_time,
                         })
-                    report_df = pd.DataFrame(formatted_steps)
-                    st.dataframe(report_df, hide_index=True, width="stretch")
-                else:
-                    st.info("No steps found in the latest cycle report.")
+                    st.dataframe(pd.DataFrame(formatted), hide_index=True, width="stretch")
             except Exception as err:
                 st.warning(f"Could not parse cycle report: {err}")
 
     with tright:
-        st.subheader("Live Testbed Attack Topology")
-        st.caption("Reacts to physical targets recorded in the log store.")
+        st.subheader("Testbed Attack Topology")
         topology_html_mininet = render_topology(
             st.session_state["topo_nodes"], st.session_state["topo_edges"],
             compromised_ids=compromised_mininet, detected_ids=detected_mininet,
         )
-        components.html(topology_html_mininet, height=600, scrolling=True)
+        components.html(topology_html_mininet, height=500, scrolling=True)
 
     if auto_refresh:
         time.sleep(3)

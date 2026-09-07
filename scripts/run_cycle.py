@@ -10,17 +10,21 @@ Design: STEPS is a plain list of dicts. Adding a new attack means
 adding one dict entry here; nothing else in this file needs to change.
 That's what "attack-agnostic" means in practice.
 
-Full attack arsenal (Session 17 expansion — 14 steps, 13 unique scripts,
-9 MITRE ATT&CK for ICS techniques, all 4 Morris & Gao categories):
+Full attack arsenal (18 steps, 18 unique scripts, 14 MITRE ATT&CK for ICS techniques):
 
   RECON:             recon_step.py (T0846/T0888), fc_scan.py (T0840)
   RESPONSE INJECTION: fdi_attack.py, naive_response_injection.py,
                       complex_response_injection.py (all T0836)
   COMMAND INJECTION:  cmd_inject_coil.py, cmd_inject_register.py,
                       malicious_fc.py (all T0855)
-  DoS:               dos_attack.py, dos_conn_exhaust.py (T0814)
+  DoS:               dos_attack.py (dos_quiet, dos_loud), dos_conn_exhaust.py (T0814)
   REPLAY:            replay_attack.py (T0832)
   MITM:              mitm_proxy.py (T0830)
+  DEVICE RESTART:    device_restart.py (T0816)
+  BRUTE FORCE I/O:   brute_force_io.py (T0806)
+  DENIAL OF VIEW:    denial_of_view.py (T0815)
+  I/O MANIPULATION:  manipulate_io_image.py (T0835)
+  PROCESS MONITOR:   monitor_process_state.py (T0801)
 
 Paths are resolved relative to this file, so the runner works from any
 cwd:
@@ -53,15 +57,25 @@ DATA_DIR = REPO_ROOT / "data"
 LOG_STORE_PATH = DATA_DIR / "log_store.json"
 REPORT_PATH = DATA_DIR / "cycle_report.json"
 
+# Import shared utilities from testbed_executor
+sys.path.insert(0, str(REPO_ROOT))
+from scripts.testbed_executor import (
+    log_event as _log_event,
+    run_step as _run_step,
+    find_alerts_for_window as _find_alerts,
+    DETECTION_SEARCH_BUFFER_SEC,
+)
+
 # Step ordering follows a realistic kill chain:
 # 1. Reconnaissance — discover the network and fingerprint PLCs
 # 2. Response/Measurement Injection — manipulate sensor data
 # 3. Command Injection — inject unauthorized control commands
 # 4. DoS — disrupt communications
 # 5. Replay — replay captured legitimate traffic
-# Note: MITM (mitm_proxy.py) is excluded from the automated cycle because
-# it requires the SCADA client to be redirected to the proxy port (:503).
-# Run it separately per docs/testbed_runbook.md.
+# 6. MITM — transparent proxy intercepting Modbus responses
+# 7. Device Restart — unauthorized coil write to trigger restart
+# 8. Brute Force I/O — rapid register reads to discover I/O
+# 9. Denial of View — flood SCADA with forged responses
 
 STEPS = [
     # === RECONNAISSANCE ===
@@ -173,114 +187,84 @@ STEPS = [
         "detect_sids": [],  # Replay is signature-invisible — trained detectors only
         "timeout": 120,     # 3s capture + replay + scapy init overhead
     },
-]
 
-DETECTION_SEARCH_BUFFER_SEC = 3
+    # === MITM (T0830) ===
+    {
+        "name": "mitm_proxy",
+        "techniques": ["T0830"],
+        "script": str(ATTACKS_DIR / "mitm_proxy.py"),
+        "args": ["--target", "10.0.0.1", "--listen-port", "503",
+                  "--mode", "offset", "--magnitude", "100",
+                  "--duration", "10", "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [],  # MITM is signature-invisible — transparent proxy
+        "timeout": 30,
+    },
+
+    # === DEVICE RESTART (T0816) ===
+    {
+        "name": "device_restart",
+        "techniques": ["T0816"],
+        "script": str(ATTACKS_DIR / "device_restart.py"),
+        "args": ["--target", "10.0.0.1", "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000007],  # Coil write detected
+        "timeout": 30,
+    },
+
+    # === BRUTE FORCE I/O (T0806) ===
+    {
+        "name": "brute_force_io",
+        "techniques": ["T0806"],
+        "script": str(ATTACKS_DIR / "brute_force_io.py"),
+        "args": ["--target", "10.0.0.1", "--count", "200", "--delay", "0.01",
+                  "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000002],  # High volume triggers modbus.flooded
+        "timeout": 60,
+    },
+
+    # === DENIAL OF VIEW (T0815) ===
+    {
+        "name": "denial_of_view",
+        "techniques": ["T0815"],
+        "script": str(ATTACKS_DIR / "denial_of_view.py"),
+        "args": ["--scada-ip", "10.0.0.10", "--plc-ip", "10.0.0.1",
+                  "--count", "100", "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000001],
+        "timeout": 30,
+    },
+
+    # === MANIPULATE I/O IMAGE (T0835) ===
+    {
+        "name": "manipulate_io_image",
+        "techniques": ["T0835"],
+        "script": str(ATTACKS_DIR / "manipulate_io_image.py"),
+        "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
+                  "--delay", "0.05", "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000007],  # Coil writes detected
+        "timeout": 30,
+    },
+
+    # === MONITOR PROCESS STATE (T0801) ===
+    {
+        "name": "monitor_process_state",
+        "techniques": ["T0801"],
+        "script": str(ATTACKS_DIR / "monitor_process_state.py"),
+        "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
+                  "--count", "5", "--delay", "0.5", "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000002],  # High volume triggers modbus.flooded
+        "timeout": 30,
+    },
+]
 
 # Suricata's modbus.flooded fires on flow timeout, not immediately.
 # Re-scan for undetected steps after this many seconds to catch those.
 FLOW_TIMEOUT_SEC = 660  # 11 minutes — covers Suricata's default TCP flow timeout
 
 ATTACKER_LOG_STORE = LOG_STORE_PATH
-SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
 
-
-def log_event(event: dict):
-    event["timestamp"] = datetime.now(timezone.utc).isoformat()
-    events = []
-    if ATTACKER_LOG_STORE.exists():
-        try:
-            events = json.loads(ATTACKER_LOG_STORE.read_text())
-        except json.JSONDecodeError:
-            events = []
-    events.append(event)
-    ATTACKER_LOG_STORE.parent.mkdir(parents=True, exist_ok=True)
-    ATTACKER_LOG_STORE.write_text(json.dumps(events, indent=2))
-
-
-def run_step(step: dict) -> dict:
-    print(f"\n=== Running step: {step['name']} ({', '.join(step['techniques'])}) ===")
-    start = datetime.now(timezone.utc)
-    log_event({
-        "stage": step["name"], "technique": "+".join(step["techniques"]),
-        "action": "step_start",
-    })
-
-    # Per-step timeout: steps can declare their own "timeout" key (seconds).
-    # Nmap recon needs ~60s; fc_scan needs ~30s; dos_conn_exhaust holds
-    # connections for 10s + overhead. Default is 90s which covers most attacks.
-    step_timeout = step.get("timeout", 90)
-
-    # sys.executable (not bare "python3") so the step scripts run under the
-    # same interpreter/venv as the runner — the one that has pymodbus installed.
-    try:
-        result = subprocess.run(
-            [sys.executable, step["script"], *step["args"]],
-            capture_output=True, text=True, timeout=step_timeout,
-        )
-    except subprocess.TimeoutExpired:
-        print(f"[run_cycle] WARNING: {step['name']} timed out after {step_timeout}s — skipping")
-        log_event({
-            "stage": step["name"], "technique": "+".join(step["techniques"]),
-            "action": "step_timeout", "timeout_sec": step_timeout,
-        })
-        end = datetime.now(timezone.utc)
-        return {"name": step["name"], "start": start, "end": end,
-                "detect_sids": step["detect_sids"], "techniques": step["techniques"]}
-
-    if result.stdout:
-        print(result.stdout.strip())
-    if result.returncode != 0:
-        print(f"[run_cycle] WARNING: {step['script']} exited {result.returncode}")
-        if result.stderr:
-            print(result.stderr.strip())
-
-    end = datetime.now(timezone.utc)
-    log_event({
-        "stage": step["name"], "technique": "+".join(step["techniques"]),
-        "action": "step_end", "returncode": result.returncode,
-    })
-    return {"name": step["name"], "start": start, "end": end,
-            "detect_sids": step["detect_sids"], "techniques": step["techniques"]}
-
-
-def find_alerts_for_window(sids, start, end):
-    if not SURICATA_EVE_LOG.exists():
-        return []
-
-    window_end = end.timestamp() + DETECTION_SEARCH_BUFFER_SEC
-    matches = []
-    with open(SURICATA_EVE_LOG) as f:
-        for line in f:
-            line = line.strip()
-            # Cheap pre-filter to skip non-event lines, then parse and check
-            # the field on the decoded object — robust to JSON whitespace
-            # rather than assuming Suricata's compact one-event-per-line default.
-            if not line or '"event_type"' not in line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if entry.get("event_type") != "alert":
-                continue
-            alert = entry.get("alert", {})
-            if alert.get("signature_id") not in sids:
-                continue
-            # Match on flow start time, not alert timestamp.
-            # Suricata's modbus.flooded fires on flow timeout — the alert
-            # timestamp can be minutes after the flood. The flow.start
-            # field always falls within the step that generated the traffic.
-            flow = entry.get("flow", {})
-            flow_start_str = flow.get("start")
-            if flow_start_str:
-                ts = datetime.fromisoformat(flow_start_str.replace("Z", "+00:00"))
-            else:
-                # Fallback for alerts without flow data (e.g. packet-level rules)
-                ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
-            if start.timestamp() <= ts.timestamp() <= window_end:
-                matches.append(entry)
-    return matches
+# Use shared utilities from testbed_executor
+log_event = _log_event
+run_step = _run_step
+find_alerts_for_window = _find_alerts
 
 
 def build_merged_log(step_results):

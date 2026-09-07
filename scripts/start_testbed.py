@@ -142,6 +142,8 @@ class TestbedOrchestrator:
 
     def cleanup(self):
         print("\n\nShutting down ASCEND-PG testbed...")
+        if hasattr(self, 'ppo_watcher_proc') and self.ppo_watcher_proc is not None:
+            self.ppo_watcher_proc.terminate()
         if self.scada_proc:
             self.scada_proc.terminate()
         for p in self.plc_procs:
@@ -154,19 +156,50 @@ class TestbedOrchestrator:
         subprocess.run(["ip", "link", "delete", "s1-mon"], stderr=subprocess.DEVNULL)
         print("Cleanup complete. All testbed services stopped.")
 
+    def run_ppo_watcher(self):
+        print("\n" + "=" * 70)
+        print(" STARTING PPO STEP WATCHER ON ATTACKER HOST")
+        print("=" * 70)
+        print(" The watcher will poll data/pending_step.json for attack commands")
+        print(" from the Streamlit Live Battle page and execute them on the")
+        print(" Mininet attacker host.")
+        print(" Press Ctrl+C in the watcher terminal to stop.")
+        print("=" * 70)
+        attacker = self.net.get("attacker")
+        watcher_script = str(PROJECT_ROOT / "scripts" / "ppo_step_watcher.py")
+        proc = attacker.popen([sys.executable, watcher_script])
+        print(f"\n[+] PPO Step Watcher launched on attacker (PID: {proc.pid})")
+        print("    You can now use the Live Battle page in 'PPO + Real Testbed' mode.")
+        print("    The watcher runs in the background. Use menu option [7] to check status.")
+        self.ppo_watcher_proc = proc
+
+    def check_ppo_watcher(self):
+        if hasattr(self, 'ppo_watcher_proc') and self.ppo_watcher_proc is not None:
+            poll = self.ppo_watcher_proc.poll()
+            if poll is None:
+                print(f"\n[+] PPO Step Watcher is running (PID: {self.ppo_watcher_proc.pid})")
+            else:
+                print(f"\n[!] PPO Step Watcher has exited (code: {poll})")
+                self.ppo_watcher_proc = None
+        else:
+            print("\n[!] PPO Step Watcher is not running. Use menu option [6] to start it.")
+
     def menu_loop(self):
         while self.running:
             print("\n" + "=" * 70)
             print(" ASCEND-PG ONE-SHOT TESTBED DASHBOARD")
             print("=" * 70)
-            print(" [1] Run 12-Step Automated Attack Cycle")
+            print(" [1] Run 16-Step Automated Attack Cycle")
             print(" [2] Ping All Hosts (Connectivity Sanity Check)")
             print(" [3] View Recent Logged Events")
             print(" [4] Open Interactive Mininet CLI")
             print(" [5] Exit & Stop Testbed")
+            print(" --- PPO Integration ---")
+            print(" [6] Start PPO Step Watcher (for Live Battle page)")
+            print(" [7] Check PPO Watcher Status")
             print("=" * 70)
             try:
-                choice = input("Select an option [1-5]: ").strip()
+                choice = input("Select an option [1-7]: ").strip()
                 if choice == "1":
                     self.run_attack_cycle()
                 elif choice == "2":
@@ -177,8 +210,12 @@ class TestbedOrchestrator:
                     self.open_cli()
                 elif choice == "5" or choice.lower() in ("exit", "quit", "q"):
                     self.running = False
+                elif choice == "6":
+                    self.run_ppo_watcher()
+                elif choice == "7":
+                    self.check_ppo_watcher()
                 else:
-                    print("Invalid option. Enter 1 to 5.")
+                    print("Invalid option. Enter 1 to 7.")
             except (KeyboardInterrupt, EOFError):
                 self.running = False
 
