@@ -2,7 +2,7 @@
 scripts/testbed_executor.py
 
 Shared module for executing individual attack steps against the Mininet
-testbed and checking Suricata detection results.
+testbed and checking Suricata + ML detection results.
 
 Used by:
   - ppo_step_watcher.py  (PPO-driven single-step execution)
@@ -14,6 +14,8 @@ Provides:
   - run_step(step): execute one attack script via subprocess
   - find_alerts_for_window(sids, start, end): scan Suricata eve.json
   - log_event(event): append to shared data/log_store.json
+  - get_hybrid_detector(): get or create the global hybrid detector
+  - execute_single_attack(technique_id, detection_mode): run attack + hybrid detection
 
 Run attack scripts ON THE ATTACKER HOST inside the Mininet topology.
 """
@@ -25,7 +27,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- path anchors (repo-relative, cwd-independent) --------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ATTACKS_DIR = REPO_ROOT / "attacks"
 DATA_DIR = REPO_ROOT / "data"
@@ -33,6 +34,8 @@ LOG_STORE_PATH = DATA_DIR / "log_store.json"
 
 DETECTION_SEARCH_BUFFER_SEC = 3
 SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
+
+_hybrid_detector = None
 
 # ---------------------------------------------------------------------------
 # PPO technique ID -> testbed step name mapping
@@ -346,34 +349,71 @@ def find_alerts_for_window(sids: list, start: datetime, end: datetime) -> list:
     return matches
 
 
-def execute_single_attack(technique_id: str) -> dict:
-    """High-level function: resolve technique -> run step -> check detection.
+def get_hybrid_detector(interface="s1-mon", use_ml=True):
+    global _hybrid_detector
+    if _hybrid_detector is None:
+        try:
+            sys.path.insert(0, str(REPO_ROOT))
+            from defense.hybrid_detector import HybridDetector
+            _hybrid_detector = HybridDetector(
+                interface=interface, use_ml=use_ml, use_suricata=True
+            )
+            print(f"[executor] Hybrid detector initialized (ml={'on' if use_ml else 'off'})")
+        except Exception as e:
+            print(f"[executor] Warning: Hybrid detector init failed: {e}")
+            print("[executor] Falling back to Suricata-only detection")
+            _hybrid_detector = None
+    return _hybrid_detector
 
-    Returns dict with:
-      detected: bool
-      alert_count: int
-      alert_signatures: list[str]
-      step_name: str
-      techniques: list[str]
-      mode: "real"
-    """
+
+def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
     step = build_step(technique_id)
     if step is None:
         raise ValueError(f"No testbed step for technique {technique_id}")
 
+    detector = get_hybrid_detector(use_ml=(detection_mode != "suricata_only"))
+
+    if detector and detection_mode == "hybrid":
+        detector.start_capture()
+
     timing = run_step(step)
     time.sleep(DETECTION_SEARCH_BUFFER_SEC)
+
+    if detector and detection_mode == "hybrid":
+        verdict = detector.get_verdict(
+            timing["start"], timing["end"], timing["detect_sids"]
+        )
+        return {
+            "detected": verdict["combined_detected"],
+            "alert_count": verdict["suricata_alert_count"],
+            "alert_signatures": verdict["suricata_signatures"],
+            "ml_detected": verdict["ml_detected"],
+            "ml_confidence": verdict["ml_confidence"],
+            "ml_lstm_confidence": verdict["ml_lstm_confidence"],
+            "ml_ae_score": verdict["ml_ae_score"],
+            "ml_available": verdict["ml_available"],
+            "detection_method": verdict["detection_method"],
+            "step_name": timing["name"],
+            "techniques": timing["techniques"],
+            "mode": "hybrid",
+        }
+
     alerts = find_alerts_for_window(
         timing["detect_sids"], timing["start"], timing["end"]
     )
-
     return {
         "detected": len(alerts) > 0,
         "alert_count": len(alerts),
         "alert_signatures": [
             a.get("alert", {}).get("signature", "unknown") for a in alerts
         ],
+        "ml_detected": False,
+        "ml_confidence": 0.0,
+        "ml_lstm_confidence": 0.0,
+        "ml_ae_score": 0.0,
+        "ml_available": False,
+        "detection_method": "suricata",
         "step_name": timing["name"],
         "techniques": timing["techniques"],
-        "mode": "real",
+        "mode": "suricata_only",
     }

@@ -96,12 +96,10 @@ def _format_log_detail(event: dict) -> str:
     action = event.get("action", "")
     parts = []
 
-    # Add status if present
     status = event.get("status", "")
     if status:
         parts.append(status)
 
-    # Add success/error info
     if event.get("success") is True:
         parts.append("OK")
     elif event.get("success") is False:
@@ -111,7 +109,6 @@ def _format_log_detail(event: dict) -> str:
     if error:
         parts.append(str(error)[:60])
 
-    # Add specific details based on action type
     if "injection" in action or "inject" in action:
         addr = event.get("address", "")
         val = event.get("injected_value", event.get("value", ""))
@@ -142,6 +139,9 @@ def _format_log_detail(event: dict) -> str:
         tech = event.get("technique", "")
         if tech:
             parts.append(tech)
+        det = event.get("detection_method", "")
+        if det and det != "suricata":
+            parts.append(f"via {det}")
 
     elif "replay_" in action:
         frames = event.get("frames_captured", event.get("frames", ""))
@@ -151,6 +151,14 @@ def _format_log_detail(event: dict) -> str:
     elif "monitor_snapshot" in action:
         changes = event.get("changes_detected", 0)
         parts.append(f"changes={changes}")
+
+    elif "hybrid_detection" in action:
+        method = event.get("detection_method", "")
+        ml_conf = event.get("ml_confidence", 0.0)
+        if method:
+            parts.append(f"method={method}")
+        if ml_conf > 0:
+            parts.append(f"ml={ml_conf:.2f}")
 
     return " | ".join(parts) if parts else "-"
 
@@ -282,6 +290,10 @@ def _step_campaign_mock():
         "Stage": tech["stage"],
         "Target Host": target_host,
         "Detector Confidence": f"{detector_conf:.3f}",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "mock",
         "Status": "Detected" if detected else "Compromised",
         "Detected": detected,
         "Mode": "Mock",
@@ -316,7 +328,6 @@ def _step_campaign_real():
     has_testbed = step_name is not None
 
     if has_testbed and not PENDING_STEP.exists() and not STEP_RESULT.exists():
-        # Write step for watcher
         _write_pending_step(technique_id, step_name)
 
         with st.spinner(f"Executing {technique_id} ({tech['name']}) on testbed..."):
@@ -324,22 +335,32 @@ def _step_campaign_real():
 
         if result and result.get("success", False):
             detected = result.get("detected", False)
-            detector_conf = 1.0 if detected else 0.0
-            mode_label = "Real"
+            detector_conf = result.get("ml_confidence", 1.0 if detected else 0.0)
+            ml_confidence = result.get("ml_confidence", 0.0)
+            ml_lstm = result.get("ml_lstm_confidence", 0.0)
+            ml_ae = result.get("ml_ae_score", 0.0)
+            detection_method = result.get("detection_method", "suricata")
+            mode_label = f"Real ({detection_method})"
         else:
-            # Fallback to mock if testbed execution fails
             st.warning(f"Testbed execution failed: {result.get('error', 'timeout') if result else 'timeout'}. "
                        f"Falling back to mock evaluation.")
             _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
             detected = bool(mock_info.get("detected", False))
             detector_conf = float(mock_info.get("detection_confidence", 0.0))
+            ml_confidence = 0.0
+            ml_lstm = 0.0
+            ml_ae = 0.0
+            detection_method = "mock"
             mode_label = "Mock (fallback)"
     else:
-        # Fallback to mock: either technique has no testbed script, or watcher is busy
         _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
         st.session_state["battle_reward"] += float(mock_reward)
         detected = bool(mock_info.get("detected", False))
         detector_conf = float(mock_info.get("detection_confidence", 0.0))
+        ml_confidence = 0.0
+        ml_lstm = 0.0
+        ml_ae = 0.0
+        detection_method = "mock"
         mode_label = "Mock" if not has_testbed else "Mock (busy)"
 
     # Compute reward (same logic as rl_env.py)
@@ -396,6 +417,10 @@ def _step_campaign_real():
         "Stage": tech["stage"],
         "Target Host": target_host,
         "Detector Confidence": f"{detector_conf:.3f}",
+        "ML Confidence": f"{ml_confidence:.3f}",
+        "LSTM Score": f"{ml_lstm:.3f}",
+        "AE Score": f"{ml_ae:.3f}",
+        "Detection Method": detection_method,
         "Status": "Detected" if detected else "Compromised",
         "Detected": detected,
         "Mode": mode_label,
@@ -428,11 +453,36 @@ with mode_col2:
     st.metric("Watcher Status", watcher_status)
 with mode_col3:
     if use_real:
-        watcher_ready = not PENDING_STEP.exists()  # No pending = watcher is idle
+        watcher_ready = not PENDING_STEP.exists()
         if watcher_ready:
             st.success("Ready for steps")
         else:
             st.warning("Watcher busy")
+
+# --- Hybrid Defense Status ---
+if use_real:
+    st.divider()
+    with st.expander("Hybrid Defense Configuration", expanded=True):
+        hcol1, hcol2, hcol3 = st.columns(3)
+        with hcol1:
+            st.markdown("**Suricata IDS**")
+            st.caption("Signature-based detection (SIDs 9000001-9000010)")
+            st.success("Active")
+        with hcol2:
+            st.markdown("**LSTM + Autoencoder**")
+            st.caption("ML anomaly detection (78 CIC-IDS features)")
+            try:
+                sys.path.insert(0, PROJECT_ROOT)
+                from defense.ml_detector import MLDetector
+                ml = MLDetector()
+                ml.load()
+                st.success("Models Loaded")
+            except Exception as e:
+                st.warning(f"Models unavailable: {e}")
+        with hcol3:
+            st.markdown("**Detection Fusion**")
+            st.caption("50% LSTM + 50% AE → Combined verdict")
+            st.info("Threshold: 0.50")
 
 # --- Campaign Controls ---
 st.subheader("Campaign Controls")
