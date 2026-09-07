@@ -91,6 +91,70 @@ def _has_testbed_support(technique_id: str) -> bool:
     return technique_id in REAL_TESTBED_TECHNIQUES
 
 
+def _format_log_detail(event: dict) -> str:
+    """Format a log event into a short human-readable detail string."""
+    action = event.get("action", "")
+    parts = []
+
+    # Add status if present
+    status = event.get("status", "")
+    if status:
+        parts.append(status)
+
+    # Add success/error info
+    if event.get("success") is True:
+        parts.append("OK")
+    elif event.get("success") is False:
+        parts.append("FAIL")
+
+    error = event.get("error", "")
+    if error:
+        parts.append(str(error)[:60])
+
+    # Add specific details based on action type
+    if "injection" in action or "inject" in action:
+        addr = event.get("address", "")
+        val = event.get("injected_value", event.get("value", ""))
+        if addr != "" and val != "":
+            parts.append(f"reg[{addr}]={val}")
+
+    elif "mitm_intercept" in action:
+        mode = event.get("mode", "")
+        parts.append(f"mode={mode}")
+
+    elif "dos_" in action or "conn_exhaust" in action:
+        count = event.get("count", event.get("connections", ""))
+        if count:
+            parts.append(f"count={count}")
+
+    elif "nmap_sweep_result" in action:
+        hosts = event.get("hosts_found", [])
+        parts.append(f"hosts={len(hosts)}")
+
+    elif "fc_scan_complete" in action:
+        supported = event.get("supported_count", 0)
+        parts.append(f"supported={supported}")
+
+    elif "poll_" in action:
+        parts.append("SCADA poll")
+
+    elif "step_start" in action or "step_end" in action:
+        tech = event.get("technique", "")
+        if tech:
+            parts.append(tech)
+
+    elif "replay_" in action:
+        frames = event.get("frames_captured", event.get("frames", ""))
+        if frames:
+            parts.append(f"frames={frames}")
+
+    elif "monitor_snapshot" in action:
+        changes = event.get("changes_detected", 0)
+        parts.append(f"changes={changes}")
+
+    return " | ".join(parts) if parts else "-"
+
+
 def _write_pending_step(technique_id: str, step_name: str):
     """Write a step command for the PPO watcher to execute."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -468,68 +532,74 @@ if campaigns:
 
 
 # =============================================================================
-# Section: Mininet Testbed Live Monitor (secondary)
+# Section: Live Testbed Activity Log (real-time from data/log_store.json)
 # =============================================================================
-st.divider()
-with st.expander("Mininet Testbed Live Monitor (raw events)", expanded=False):
-    st.caption("Reads live telemetry from data/log_store.json and verdicts from data/cycle_report.json.")
+if use_real:
+    st.divider()
+    st.subheader("Live Testbed Activity")
+    st.caption("Real-time events from attack scripts, SCADA client, and Suricata IDS. "
+               "Polls data/log_store.json every 3 seconds.")
 
-    col_ctrl, col_auto = st.columns([2, 1])
-    with col_ctrl:
-        auto_refresh = st.checkbox("Auto-refresh (every 3s)", value=False)
-    with col_auto:
-        if st.button("Refresh Now"):
-            st.rerun()
+    log_ctrl1, log_ctrl2, log_ctrl3 = st.columns([2, 1, 1])
+    with log_ctrl1:
+        auto_refresh_log = st.checkbox("Auto-refresh logs (every 3s)", value=True,
+                                        key="auto_refresh_live_log")
+    with log_ctrl2:
+        log_filter = st.selectbox("Filter by stage",
+                                   ["All", "recon", "attack", "Impair Process Control",
+                                    "normal_traffic"],
+                                   key="log_stage_filter")
+    with log_ctrl3:
+        max_events = st.slider("Max events to show", 10, 200, 50, key="max_log_events")
 
-    # Determine compromised/detected nodes from testbed logs
-    compromised_mininet = set()
-    detected_mininet = set()
-    try:
-        targets_hit = set()
-        if LOG_STORE.exists():
-            logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-            for e in logs[-30:]:
-                if "target" in e:
-                    ip = e["target"]
-                    if ip.startswith("10.0.0."):
-                        node_id = f"substation_{ip.split('.')[-1]}"
-                        targets_hit.add(node_id)
-
-        is_detected = False
-        if CYCLE_REPORT.exists():
-            rep = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
-            for step in rep.get("steps", []):
-                if step.get("detected", False):
-                    is_detected = True
-
-        if is_detected:
-            detected_mininet.update(targets_hit)
-        else:
-            compromised_mininet.update(targets_hit)
-    except Exception:
-        pass
-
-    tleft, tright = st.columns([1, 1.2])
-    with tleft:
-        if LOG_STORE.exists():
-            try:
-                raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-                if isinstance(raw_log, list) and raw_log:
-                    log_df = pd.DataFrame(raw_log)
-                    st.write(f"Total Testbed Events: **{len(log_df)}**")
-                    st.dataframe(log_df.astype(str), width="stretch", height=300)
+    # Read and display live log events
+    if LOG_STORE.exists():
+        try:
+            raw_logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+            if isinstance(raw_logs, list) and raw_logs:
+                # Filter by stage if needed
+                if log_filter != "All":
+                    filtered = [e for e in raw_logs if e.get("stage", "") == log_filter]
                 else:
-                    st.info("Log store exists but contains no events yet.")
-            except Exception as err:
-                st.warning(f"Could not parse log store: {err}")
-        else:
-            st.info(f"No testbed log found at `{LOG_STORE}`. "
-                    "Run `scripts/start_testbed.py` on WSL2.")
+                    filtered = raw_logs
 
-        if CYCLE_REPORT.exists():
-            try:
-                report_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
-                st.subheader("Latest Cycle Report")
+                # Show most recent first, limit to max_events
+                recent_events = list(reversed(filtered[-max_events:]))
+
+                # Build display table
+                log_rows = []
+                for e in recent_events:
+                    ts = e.get("timestamp", "")
+                    if "T" in ts:
+                        ts = ts.split("T")[1][:8]
+
+                    log_rows.append({
+                        "Time": ts,
+                        "Stage": e.get("stage", "-"),
+                        "Technique": e.get("technique", "-"),
+                        "Action": e.get("action", "-"),
+                        "Target": e.get("target", e.get("spoofed_source", "-")),
+                        "Detail": _format_log_detail(e),
+                    })
+
+                log_df = pd.DataFrame(log_rows)
+                st.write(f"**{len(filtered)}** events total, showing **{len(log_rows)}** most recent:")
+                st.dataframe(log_df, use_container_width=True, hide_index=True, height=400)
+
+                st.metric("Total events in log store", len(raw_logs))
+            else:
+                st.info("Log store exists but contains no events yet. "
+                        "Events will appear here as attacks execute on the testbed.")
+        except Exception as err:
+            st.warning(f"Could not parse log store: {err}")
+    else:
+        st.info("No testbed log found. Events will appear here once attacks run on the testbed.")
+
+    # Suricata cycle report (if available)
+    if CYCLE_REPORT.exists():
+        try:
+            report_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
+            with st.expander("Latest Suricata Cycle Report", expanded=False):
                 steps = report_data.get("steps", [])
                 if steps:
                     formatted = []
@@ -544,17 +614,71 @@ with st.expander("Mininet Testbed Live Monitor (raw events)", expanded=False):
                             "Time": start_time,
                         })
                     st.dataframe(pd.DataFrame(formatted), hide_index=True, width="stretch")
-            except Exception as err:
-                st.warning(f"Could not parse cycle report: {err}")
+        except Exception:
+            pass
 
-    with tright:
-        st.subheader("Testbed Attack Topology")
-        topology_html_mininet = render_topology(
-            st.session_state["topo_nodes"], st.session_state["topo_edges"],
-            compromised_ids=compromised_mininet, detected_ids=detected_mininet,
-        )
-        components.html(topology_html_mininet, height=500, scrolling=True)
-
-    if auto_refresh:
+    # Auto-refresh every 3 seconds
+    if auto_refresh_log:
         time.sleep(3)
         st.rerun()
+
+
+# =============================================================================
+# Section: Legacy Mininet Testbed Monitor (mock mode only)
+# =============================================================================
+else:
+    st.divider()
+    with st.expander("Mininet Testbed Monitor (raw events)", expanded=False):
+        st.caption("Reads telemetry from data/log_store.json.")
+
+        col_ctrl, col_auto = st.columns([2, 1])
+        with col_ctrl:
+            auto_refresh = st.checkbox("Auto-refresh (every 3s)", value=False)
+        with col_auto:
+            if st.button("Refresh Now"):
+                st.rerun()
+
+        compromised_mininet = set()
+        detected_mininet = set()
+        try:
+            targets_hit = set()
+            if LOG_STORE.exists():
+                logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+                for e in logs[-30:]:
+                    if "target" in e:
+                        ip = e["target"]
+                        if ip.startswith("10.0.0."):
+                            targets_hit.add(f"substation_{ip.split('.')[-1]}")
+            if CYCLE_REPORT.exists():
+                rep = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
+                detected = any(s.get("detected") for s in rep.get("steps", []))
+                if detected:
+                    detected_mininet.update(targets_hit)
+                else:
+                    compromised_mininet.update(targets_hit)
+        except Exception:
+            pass
+
+        tleft, tright = st.columns([1, 1.2])
+        with tleft:
+            if LOG_STORE.exists():
+                try:
+                    raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+                    if isinstance(raw_log, list) and raw_log:
+                        st.write(f"Total Events: **{len(raw_log)}**")
+                        st.dataframe(pd.DataFrame(raw_log).astype(str), width="stretch", height=300)
+                except Exception as err:
+                    st.warning(f"Could not parse log store: {err}")
+            else:
+                st.info("No testbed log found. Run `scripts/start_testbed.py` on WSL2.")
+
+        with tright:
+            st.subheader("Testbed Topology")
+            components.html(render_topology(
+                st.session_state["topo_nodes"], st.session_state["topo_edges"],
+                compromised_ids=compromised_mininet, detected_ids=detected_mininet,
+            ), height=500, scrolling=True)
+
+        if auto_refresh:
+            time.sleep(3)
+            st.rerun()
