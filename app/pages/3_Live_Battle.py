@@ -540,21 +540,19 @@ if plateaued:
     st.warning("Defense-evasion plateau detected across completed campaigns. "
                "The report will include this DVS signal.")
 
-# --- Main Content: Event Log + Topology ---
-left, right = st.columns([1.15, 1])
+# --- Main Content: Event Log ---
+st.subheader("Live Battle Event Log")
+if latest.empty:
+    st.info("Start a campaign, then run tactics one at a time or to completion.")
+else:
+    display_cols = ["Timestamp", "Step", "MITRE ID", "Technique Name",
+                    "Stage", "Target Host", "Detector Confidence",
+                    "ML Confidence", "Detection Method", "Status", "Mode"]
+    available_cols = [c for c in display_cols if c in latest.columns]
+    st.dataframe(latest[available_cols].astype(str), width="stretch", hide_index=True)
 
-with left:
-    st.subheader("Live Battle Event Log")
-    if latest.empty:
-        st.info("Start a campaign, then run tactics one at a time or to completion.")
-    else:
-        display_cols = ["Timestamp", "Step", "MITRE ID", "Technique Name",
-                        "Stage", "Target Host", "Detector Confidence",
-                        "ML Confidence", "Detection Method", "Status", "Mode"]
-        available_cols = [c for c in display_cols if c in latest.columns]
-        st.dataframe(latest[available_cols].astype(str), width="stretch", hide_index=True)
-
-with right:
+# --- Topology (only when events exist) ---
+if events:
     st.subheader("Compromise & Defense Topology")
     compromised = set()
     detected_nodes = set()
@@ -569,7 +567,7 @@ with right:
         st.session_state["topo_nodes"], st.session_state["topo_edges"],
         compromised_ids=compromised, detected_ids=detected_nodes,
     )
-    components.html(topology_html, height=600, scrolling=True)
+    components.html(topology_html, height=500, scrolling=True)
 
 # --- PPO Tactical Rationale ---
 if events:
