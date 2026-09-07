@@ -272,7 +272,7 @@ def run_step(step: dict) -> dict:
 
     try:
         result = subprocess.run(
-            [sys.executable, step["script"], *step["args"]],
+            ["sudo", sys.executable, step["script"], *step["args"]],
             capture_output=True, text=True, timeout=step_timeout,
         )
     except subprocess.TimeoutExpired:
