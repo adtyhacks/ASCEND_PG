@@ -167,8 +167,14 @@ class TestbedOrchestrator:
         print("=" * 70)
         attacker = self.net.get("attacker")
         watcher_script = str(PROJECT_ROOT / "scripts" / "ppo_step_watcher.py")
-        proc = attacker.popen([sys.executable, watcher_script])
+        venv_python = Path.home() / "ascend-pg-venv" / "bin" / "python3"
+        if venv_python.exists():
+            python_cmd = str(venv_python)
+        else:
+            python_cmd = sys.executable
+        proc = attacker.popen([python_cmd, watcher_script])
         print(f"\n[+] PPO Step Watcher launched on attacker (PID: {proc.pid})")
+        print(f"    Python: {python_cmd}")
         print("    You can now use the Live Battle page in 'PPO + Real Testbed' mode.")
         print("    The watcher runs in the background. Use menu option [7] to check status.")
         self.ppo_watcher_proc = proc
