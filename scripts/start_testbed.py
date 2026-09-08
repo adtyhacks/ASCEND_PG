@@ -135,17 +135,29 @@ class TestbedOrchestrator:
             except Exception:
                 pass
 
+    def _find_venv_python(self):
+        """Find venv Python, checking both root and real user home."""
+        import glob as _glob
+        candidates = [
+            Path.home() / "ascend-pg-venv" / "bin" / "python3",
+            Path("/root/ascend-pg-venv/bin/python3"),
+        ]
+        # Also check /home/*/ascend-pg-venv (real user under sudo)
+        for p in _glob.glob("/home/*/ascend-pg-venv/bin/python3"):
+            candidates.append(Path(p))
+        for c in candidates:
+            if c.exists():
+                return str(c)
+        return sys.executable
+
     def run_attack_cycle(self):
         print("\n" + "=" * 70)
         print(" EXECUTING 18-STEP ATTACK CYCLE FROM ATTACKER HOST (10.0.0.66)")
         print("=" * 70)
         attacker = self.net.get("attacker")
         cycle_script = str(PROJECT_ROOT / "scripts" / "run_cycle.py")
-        venv_python = Path.home() / "ascend-pg-venv" / "bin" / "python3"
-        if venv_python.exists():
-            python_cmd = str(venv_python)
-        else:
-            python_cmd = sys.executable
+        python_cmd = self._find_venv_python()
+        print(f"      Python: {python_cmd}")
         proc = attacker.popen([python_cmd, cycle_script])
         proc.wait()
         print("\n[+] Cycle execution completed. Verdicts saved to data/cycle_report.json.")
@@ -238,11 +250,7 @@ class TestbedOrchestrator:
         print("=" * 70)
         attacker = self.net.get("attacker")
         watcher_script = str(PROJECT_ROOT / "scripts" / "ppo_step_watcher.py")
-        venv_python = Path.home() / "ascend-pg-venv" / "bin" / "python3"
-        if venv_python.exists():
-            python_cmd = str(venv_python)
-        else:
-            python_cmd = sys.executable
+        python_cmd = self._find_venv_python()
         proc = attacker.popen([python_cmd, watcher_script])
         print(f"\n[+] PPO Step Watcher launched on attacker (PID: {proc.pid})")
         print(f"    Python: {python_cmd}")
