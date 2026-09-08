@@ -87,6 +87,7 @@ class MLDetector:
                 "fused_confidence": 0.0,
                 "detected": False,
                 "available": False,
+                "error": "ML models not loaded",
             }
 
         if len(window_df) != WINDOW_SIZE:
@@ -97,6 +98,7 @@ class MLDetector:
                 "fused_confidence": 0.0,
                 "detected": False,
                 "available": False,
+                "error": f"Window size mismatch: expected {WINDOW_SIZE}, got {len(window_df)}",
             }
 
         try:

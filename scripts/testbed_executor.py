@@ -373,15 +373,17 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
     if step is None:
         raise ValueError(f"No testbed step for technique {technique_id}")
 
-    detector = get_hybrid_detector(use_ml=(detection_mode != "suricata_only"))
+    use_ml = detection_mode in ("hybrid", "ml_only")
+    use_suricata = detection_mode in ("hybrid", "suricata_only")
+    detector = get_hybrid_detector(use_ml=use_ml)
 
-    if detector and detection_mode == "hybrid":
+    if detector and use_ml:
         detector.start_capture()
 
     timing = run_step(step)
     time.sleep(DETECTION_SEARCH_BUFFER_SEC)
 
-    if detector and detection_mode == "hybrid":
+    if detector and use_ml:
         verdict = detector.get_verdict(
             timing["start"], timing["end"], timing["detect_sids"]
         )
@@ -394,13 +396,16 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
             "ml_lstm_confidence": verdict["ml_lstm_confidence"],
             "ml_ae_score": verdict["ml_ae_score"],
             "ml_available": verdict["ml_available"],
+            "ml_error": verdict.get("ml_error"),
             "detection_method": verdict["detection_method"],
             "step_name": timing["name"],
             "techniques": timing["techniques"],
-            "mode": "hybrid",
+            "mode": detection_mode,
         }
 
-    alerts = find_alerts_for_window(
+    # Suricata-only fallback
+    from defense.hybrid_detector import _find_suricata_alerts
+    alerts = _find_suricata_alerts(
         timing["detect_sids"], timing["start"], timing["end"]
     )
     return {
@@ -414,6 +419,7 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
         "ml_lstm_confidence": 0.0,
         "ml_ae_score": 0.0,
         "ml_available": False,
+        "ml_error": None,
         "detection_method": "suricata",
         "step_name": timing["name"],
         "techniques": timing["techniques"],

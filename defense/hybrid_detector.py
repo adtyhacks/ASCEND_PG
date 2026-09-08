@@ -16,11 +16,6 @@ from pathlib import Path
 from .flow_extractor import FlowExtractor, FEATURE_COLS
 from .ml_detector import MLDetector
 
-try:
-    import pandas as pd
-except ImportError:
-    pd = None
-
 
 SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
 DETECTION_BUFFER_SEC = 3
@@ -59,8 +54,9 @@ def _find_suricata_alerts(sids, start, end):
 
                 if start.timestamp() <= ts.timestamp() <= window_end:
                     matches.append(entry)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[hybrid] Warning: Suricata eve.json parse error: {e}")
+        return []
 
     return matches
 
@@ -103,13 +99,16 @@ class HybridDetector:
         ml_detected = False
         ml_confidence = 0.0
         ml_result = None
+        ml_error = None
         if self.use_ml and self.extractor:
             try:
                 window_df = self.extractor.get_window()
                 ml_result = self.ml_detector.predict(window_df)
                 ml_detected = ml_result["detected"]
                 ml_confidence = ml_result["fused_confidence"]
+                ml_error = ml_result.get("error")
             except Exception as e:
+                ml_error = str(e)
                 print(f"[hybrid] ML inference error: {e}")
 
         if suricata_detected and ml_detected:
@@ -136,6 +135,7 @@ class HybridDetector:
             "ml_lstm_confidence": ml_result["lstm_confidence"] if ml_result else 0.0,
             "ml_ae_score": ml_result["ae_anomaly_score"] if ml_result else 0.0,
             "ml_available": self.is_ml_available(),
+            "ml_error": ml_error,
             "combined_detected": combined,
             "detection_method": method,
         }

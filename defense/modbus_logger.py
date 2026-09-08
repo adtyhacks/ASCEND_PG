@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from scapy.all import sniff, TCP, IP, Raw
+    from scapy.all import AsyncSniffer, TCP, IP, Raw
     SCAPY_AVAILABLE = True
 except ImportError:
     SCAPY_AVAILABLE = False
@@ -182,21 +182,27 @@ class ModbusLogger:
             pass
 
     def start(self):
-        """Start packet capture in background thread."""
+        """Start packet capture in background thread (non-blocking)."""
+        if not SCAPY_AVAILABLE:
+            return
         self._running = True
-        self._sniffer = sniff(
+        self._sniffer = AsyncSniffer(
             iface=self.interface,
             filter="tcp port 502",
             prn=self._parse_modbus_tcp,
             store=False,
-            stop_filter=lambda _: not self._running,
         )
+        self._sniffer.start()
 
     def stop(self):
         """Stop capture and return collected packets."""
         self._running = False
-        if self._sniffer and self._sniffer.running:
-            self._sniffer.stop()
+        if self._sniffer is not None:
+            try:
+                self._sniffer.stop()
+            except Exception:
+                pass
+            self._sniffer = None
 
         with self._lock:
             packets = list(self._packets)

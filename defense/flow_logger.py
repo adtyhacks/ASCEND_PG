@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from scapy.all import sniff, TCP, IP
+    from scapy.all import AsyncSniffer, TCP, IP
     SCAPY_AVAILABLE = True
 except ImportError:
     SCAPY_AVAILABLE = False
@@ -182,19 +182,27 @@ class FlowLogger:
                 self._completed.append(self._flows.pop(key).to_dict(key))
 
     def start(self):
+        """Start packet capture in background thread (non-blocking)."""
+        if not SCAPY_AVAILABLE:
+            return
         self._running = True
-        self._sniffer = sniff(
+        self._sniffer = AsyncSniffer(
             iface=self.interface,
             filter="tcp",
             prn=self._process_packet,
             store=False,
-            stop_filter=lambda _: not self._running,
         )
+        self._sniffer.start()
 
     def stop(self):
+        """Stop capture and return completed flows."""
         self._running = False
-        if self._sniffer and self._sniffer.running:
-            self._sniffer.stop()
+        if self._sniffer is not None:
+            try:
+                self._sniffer.stop()
+            except Exception:
+                pass
+            self._sniffer = None
 
         with self._lock:
             for key, stats in self._flows.items():

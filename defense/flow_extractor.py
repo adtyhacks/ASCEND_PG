@@ -21,12 +21,12 @@ import numpy as np
 import pandas as pd
 
 try:
-    from scapy.all import sniff, TCP, IP, Raw
+    from scapy.all import AsyncSniffer, TCP, IP, Raw
     SCAPY_AVAILABLE = True
 except ImportError:
     SCAPY_AVAILABLE = False
 
-WINDOW_SIZE = 10
+from detection.lstm_detector import WINDOW_SIZE
 
 FEATURE_COLS = [
     "Destination Port", "Flow Duration", "Total Fwd Packets",
@@ -67,7 +67,7 @@ class _FlowState:
         "packets", "fwd_packets", "bwd_packets", "start_time",
         "last_time", "fwd_times", "bwd_times", "fwd_lengths",
         "bwd_lengths", "all_lengths", "fwd_flags", "bwd_flags",
-        "fwd_init_win", "bwd_init_win",
+        "fwd_init_win", "bwd_init_win", "fwd_header_len", "bwd_header_len",
     )
 
     def __init__(self):
@@ -83,8 +83,10 @@ class _FlowState:
         self.all_lengths = []
         self.fwd_flags = []
         self.bwd_flags = []
-        self.fwd_init_win = 0
-        self.bwd_init_win = 0
+        self.fwd_init_win = None
+        self.bwd_init_win = None
+        self.fwd_header_len = 0
+        self.bwd_header_len = 0
 
 
 def _flag_count(flags_list, flag_name):
@@ -178,8 +180,8 @@ def _compute_flow_features(flow_id, state):
         "Bwd PSH Flags": _flag_count(state.bwd_flags, "PSH"),
         "Fwd URG Flags": _flag_count(state.fwd_flags, "URG"),
         "Bwd URG Flags": _flag_count(state.bwd_flags, "URG"),
-        "Fwd Header Length": sum(state.fwd_lengths),
-        "Bwd Header Length": sum(state.bwd_lengths),
+        "Fwd Header Length": state.fwd_header_len,
+        "Bwd Header Length": state.bwd_header_len,
         "Fwd Packets/s": _safe_div(state.fwd_packets, duration),
         "Bwd Packets/s": _safe_div(state.bwd_packets, duration),
         "Min Packet Length": min(all_lens),
@@ -199,7 +201,7 @@ def _compute_flow_features(flow_id, state):
         "Average Packet Size": _safe_div(total_fwd_bytes + total_bwd_bytes, state.packets),
         "Avg Fwd Segment Size": np.mean(fwd_seg_sizes),
         "Avg Bwd Segment Size": np.mean(bwd_seg_sizes),
-        "Fwd Header Length.1": sum(state.fwd_lengths),
+        "Fwd Header Length.1": state.fwd_header_len,
         "Fwd Avg Bytes/Bulk": 0.0,
         "Fwd Avg Packets/Bulk": 0.0,
         "Fwd Avg Bulk Rate": 0.0,
@@ -248,7 +250,14 @@ class FlowExtractor:
         src_ip, dst_ip = ip.src, ip.dst
         src_port, dst_port = tcp.sport, tcp.dport
 
-        if src_port <= dst_port:
+        # Use well-known port (502) to determine direction; fallback to lower port as client
+        if dst_port == 502:
+            flow_id = (src_ip, dst_ip, src_port, dst_port, "TCP")
+            is_fwd = True
+        elif src_port == 502:
+            flow_id = (dst_ip, src_ip, dst_port, src_port, "TCP")
+            is_fwd = False
+        elif src_port <= dst_port:
             flow_id = (src_ip, dst_ip, src_port, dst_port, "TCP")
             is_fwd = True
         else:
@@ -257,6 +266,10 @@ class FlowExtractor:
 
         pkt_len = len(tcp.payload)
         flags = int(tcp.flags)
+        # IP header (20 bytes) + TCP header (20 bytes typical, 32 with options)
+        ip_hdr_len = (ip.ihl or 5) * 4
+        tcp_hdr_len = (tcp.dataofs or 5) * 4
+        total_hdr_len = ip_hdr_len + tcp_hdr_len
 
         with self._lock:
             state = self._flows[flow_id]
@@ -272,32 +285,40 @@ class FlowExtractor:
                 state.fwd_times.append(ts)
                 state.fwd_lengths.append(pkt_len)
                 state.fwd_flags.append(flags)
-                if state.fwd_init_win == 0:
+                state.fwd_header_len += total_hdr_len
+                if state.fwd_init_win is None:
                     state.fwd_init_win = tcp.window
             else:
                 state.bwd_packets += 1
                 state.bwd_times.append(ts)
                 state.bwd_lengths.append(pkt_len)
                 state.bwd_flags.append(flags)
-                if state.bwd_init_win == 0:
+                state.bwd_header_len += total_hdr_len
+                if state.bwd_init_win is None:
                     state.bwd_init_win = tcp.window
 
     def start(self):
-        """Start packet capture in background thread."""
+        """Start packet capture in background thread (non-blocking)."""
+        if not SCAPY_AVAILABLE:
+            return
         self._running = True
-        self._sniffer = sniff(
+        self._sniffer = AsyncSniffer(
             iface=self.interface,
             filter="tcp",
             prn=self._process_packet,
             store=False,
-            stop_filter=lambda _: not self._running,
         )
+        self._sniffer.start()
 
     def stop(self):
         """Stop capture and return flow features as DataFrame."""
         self._running = False
-        if self._sniffer and self._sniffer.running:
-            self._sniffer.stop()
+        if self._sniffer is not None:
+            try:
+                self._sniffer.stop()
+            except Exception:
+                pass
+            self._sniffer = None
 
         with self._lock:
             flows = {}
@@ -316,11 +337,25 @@ class FlowExtractor:
         return df[FEATURE_COLS].fillna(0.0)
 
     def get_window(self):
-        """Get last WINDOW_SIZE flows for LSTM input. Pads with zeros if needed."""
-        df = self.stop()
+        """Get last WINDOW_SIZE flows for LSTM input. Does NOT stop capture."""
+        with self._lock:
+            flows = {}
+            for flow_id, state in self._flows.items():
+                if state.packets >= 2:
+                    flows[flow_id] = _compute_flow_features(flow_id, state)
+
+        if not flows:
+            return pd.DataFrame(columns=FEATURE_COLS)
+
+        df = pd.DataFrame(list(flows.values()))
+        for col in FEATURE_COLS:
+            if col not in df.columns:
+                df[col] = 0.0
+        df = df[FEATURE_COLS].fillna(0.0)
+
         if len(df) >= WINDOW_SIZE:
             return df.iloc[-WINDOW_SIZE:]
-        padding = pd.DataFrame(
-            0.0, index=range(WINDOW_SIZE - len(df)), columns=FEATURE_COLS
-        )
+        # Pad with first row repeated instead of zeros to avoid diluting signal
+        pad_count = WINDOW_SIZE - len(df)
+        padding = pd.concat([df.iloc[:1]] * pad_count, ignore_index=True)
         return pd.concat([padding, df], ignore_index=True)
