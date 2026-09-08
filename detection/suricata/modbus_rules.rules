@@ -12,7 +12,8 @@
 # autoencoder_detector.py, fusion.py — §5 of the master file) remain the final
 # deliverable; these signatures give a working, real-IDS ground truth now.
 #
-# SID allocation: 9000001–9000029 reserved for ASCEND-PG testbed rules.
+# SID allocation: 9000001–9000025 reserved for ASCEND-PG testbed rules.
+# (SIDs 9000003, 9000011–9000019, 9000021 are unused/reserved)
 
 # ===== FDI / RESPONSE INJECTION (T0836) — writes to holding registers =====
 # Flags any write to a Holding Register — matches fdi_attack.py,
@@ -49,12 +50,11 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Coil Write (T0855)";
 alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Diagnostics Restart FC08 (T0855)"; modbus: function 8, subfunction 1; classtype:attempted-admin; sid:9000008; rev:1;)
 alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Diagnostics Clear Counters FC08 (T0855)"; modbus: function 8, subfunction 10; classtype:attempted-admin; sid:9000009; rev:1;)
 
-# ===== MITM (T0830) — not rule-detectable =====
-# CORRECTED: Suricata does NOT support `arp` as an alertable protocol.
-# A transparent TCP proxy (mitm_proxy.py on :503) is invisible to a
-# signature-based IDS on the wire — the modified responses are valid
-# Modbus frames. Real detection requires sequence/timing anomaly logic
-# in the trained detectors, or arpwatch for ARP-level MITM.
+# ===== MITM (T0830) — non-standard port detection =====
+# A transparent TCP proxy (mitm_proxy.py on :503) forwards modified
+# responses. SID 9000022 matches raw TCP payload with MBAP-like header
+# on port 503. True modification detection requires the trained
+# LSTM/Autoencoder detectors.
 
 # ===== REPLAY (T0832) — not rule-detectable =====
 # Replayed Modbus traffic is byte-identical to legitimate traffic at the

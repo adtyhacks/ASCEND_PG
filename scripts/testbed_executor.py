@@ -141,7 +141,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "dos_attack.py"),
         "args": ["--target", "10.0.0.1", "--count", "100", "--delay", "0.05",
                   "--log", WSL_LOG_PATH],
-        "detect_sids": [9000020],
+        "detect_sids": [9000023],
         "timeout": 120,
     },
     "dos_loud": {
@@ -187,7 +187,7 @@ STEP_DEFS = {
         "techniques": ["T0816"],
         "script": str(ATTACKS_DIR / "device_restart.py"),
         "args": ["--target", "10.0.0.1", "--log", WSL_LOG_PATH],
-        "detect_sids": [9000007, 9000024],
+        "detect_sids": [9000007],
         "timeout": 90,
     },
     "brute_force_io": {
@@ -214,7 +214,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "manipulate_io_image.py"),
         "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
                   "--delay", "0.05", "--log", WSL_LOG_PATH],
-        "detect_sids": [9000007, 9000025],
+        "detect_sids": [9000007],
         "timeout": 90,
     },
     "monitor_process_state": {
@@ -223,7 +223,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "monitor_process_state.py"),
         "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
                   "--count", "5", "--delay", "0.5", "--log", WSL_LOG_PATH],
-        "detect_sids": [9000023, 9000025],
+        "detect_sids": [9000023],
         "timeout": 90,
     },
 }

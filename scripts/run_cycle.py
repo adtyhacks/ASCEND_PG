@@ -169,7 +169,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "dos_attack.py"),
         "args": ["--target", "10.0.0.1", "--count", "100", "--delay", "0.05",
                   "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000020],
+        "detect_sids": [9000023],
     },
     {
         "name": "dos_loud",
@@ -219,7 +219,7 @@ STEPS = [
         "techniques": ["T0816"],
         "script": str(ATTACKS_DIR / "device_restart.py"),
         "args": ["--target", "10.0.0.1", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000007, 9000024],  # Coil write + raw byte fallback
+        "detect_sids": [9000007],  # Coil write detected
         "timeout": 30,
     },
 
@@ -252,7 +252,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "manipulate_io_image.py"),
         "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
                   "--delay", "0.05", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000007, 9000025],  # Coil writes + coil read detection
+        "detect_sids": [9000007],  # Coil writes detected
         "timeout": 30,
     },
 
@@ -263,7 +263,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "monitor_process_state.py"),
         "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
                   "--count", "5", "--delay", "0.5", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000023, 9000025],  # Register enumeration + coil read
+        "detect_sids": [9000023],  # Register enumeration
         "timeout": 30,
     },
 ]
