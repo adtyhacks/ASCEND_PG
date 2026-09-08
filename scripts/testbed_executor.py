@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ATTACKS_DIR = REPO_ROOT / "attacks"
 DATA_DIR = REPO_ROOT / "data"
 LOG_STORE_PATH = DATA_DIR / "log_store.json"
+WSL_LOG_PATH = str(LOG_STORE_PATH).replace("\\", "/")
 
 DETECTION_SEARCH_BUFFER_SEC = 5
 SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
@@ -67,7 +68,7 @@ STEP_DEFS = {
         "name": "recon_nmap_devid",
         "techniques": ["T0846", "T0888"],
         "script": str(ATTACKS_DIR / "recon_step.py"),
-        "args": ["--subnet", "10.0.0.0/24", "--log", str(LOG_STORE_PATH)],
+        "args": ["--subnet", "10.0.0.0/24", "--log", WSL_LOG_PATH],
         "detect_sids": [9000004],
         "timeout": 240,
     },
@@ -75,7 +76,7 @@ STEP_DEFS = {
         "name": "recon_fc_scan",
         "techniques": ["T0840"],
         "script": str(ATTACKS_DIR / "fc_scan.py"),
-        "args": ["--target", "10.0.0.1", "--safe", "--log", str(LOG_STORE_PATH)],
+        "args": ["--target", "10.0.0.1", "--safe", "--log", WSL_LOG_PATH],
         "detect_sids": [9000005, 9000006],
         "timeout": 120,
     },
@@ -93,7 +94,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "naive_response_injection.py"),
         "args": ["--target", "10.0.0.1", "--address", "0", "--value", "65535",
                   "--duration", "5", "--interval", "1.0",
-                  "--log", str(LOG_STORE_PATH)],
+                  "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
         "timeout": 120,
     },
@@ -103,7 +104,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "complex_response_injection.py"),
         "args": ["--target", "10.0.0.1", "--address", "0", "--mode", "ramp",
                   "--magnitude", "5", "--duration", "5", "--interval", "1.0",
-                  "--log", str(LOG_STORE_PATH)],
+                  "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
         "timeout": 120,
     },
@@ -112,7 +113,7 @@ STEP_DEFS = {
         "techniques": ["T0855"],
         "script": str(ATTACKS_DIR / "cmd_inject_coil.py"),
         "args": ["--target", "10.0.0.1", "--address", "0", "--value", "True",
-                  "--count", "5", "--log", str(LOG_STORE_PATH)],
+                  "--count", "5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000007],
         "timeout": 120,
     },
@@ -121,7 +122,7 @@ STEP_DEFS = {
         "techniques": ["T0855"],
         "script": str(ATTACKS_DIR / "cmd_inject_register.py"),
         "args": ["--target", "10.0.0.1", "--address", "50", "--value", "0",
-                  "--count", "5", "--log", str(LOG_STORE_PATH)],
+                  "--count", "5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
         "timeout": 120,
     },
@@ -130,7 +131,7 @@ STEP_DEFS = {
         "techniques": ["T0855"],
         "script": str(ATTACKS_DIR / "malicious_fc.py"),
         "args": ["--target", "10.0.0.1", "--action", "all",
-                  "--log", str(LOG_STORE_PATH)],
+                  "--log", WSL_LOG_PATH],
         "detect_sids": [9000006, 9000008, 9000009],
         "timeout": 120,
     },
@@ -139,7 +140,7 @@ STEP_DEFS = {
         "techniques": ["T0814"],
         "script": str(ATTACKS_DIR / "dos_attack.py"),
         "args": ["--target", "10.0.0.1", "--count", "100", "--delay", "0.05",
-                  "--log", str(LOG_STORE_PATH)],
+                  "--log", WSL_LOG_PATH],
         "detect_sids": [9000002],
         "timeout": 120,
     },
@@ -148,7 +149,7 @@ STEP_DEFS = {
         "techniques": ["T0814"],
         "script": str(ATTACKS_DIR / "dos_attack.py"),
         "args": ["--target", "10.0.0.1", "--count", "600", "--delay", "0",
-                  "--log", str(LOG_STORE_PATH)],
+                  "--log", WSL_LOG_PATH],
         "detect_sids": [9000002],
         "timeout": 120,
     },
@@ -157,7 +158,7 @@ STEP_DEFS = {
         "techniques": ["T0814"],
         "script": str(ATTACKS_DIR / "dos_conn_exhaust.py"),
         "args": ["--target", "10.0.0.1", "--connections", "30",
-                  "--hold-time", "10", "--log", str(LOG_STORE_PATH)],
+                  "--hold-time", "10", "--log", WSL_LOG_PATH],
         "detect_sids": [9000002, 9000010],
         "timeout": 120,
     },
@@ -167,7 +168,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "replay_attack.py"),
         "args": ["--target", "10.0.0.1", "--iface", "s1-mon",
                   "--capture-time", "3", "--replay-count", "1",
-                  "--log", str(LOG_STORE_PATH)],
+                  "--log", WSL_LOG_PATH],
         "detect_sids": [],
         "timeout": 180,
     },
@@ -177,7 +178,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "mitm_proxy.py"),
         "args": ["--target", "10.0.0.1", "--listen-port", "503",
                   "--mode", "offset", "--magnitude", "100",
-                  "--duration", "10", "--log", str(LOG_STORE_PATH)],
+                  "--duration", "10", "--log", WSL_LOG_PATH],
         "detect_sids": [],
         "timeout": 120,
     },
@@ -185,7 +186,7 @@ STEP_DEFS = {
         "name": "device_restart",
         "techniques": ["T0816"],
         "script": str(ATTACKS_DIR / "device_restart.py"),
-        "args": ["--target", "10.0.0.1", "--log", str(LOG_STORE_PATH)],
+        "args": ["--target", "10.0.0.1", "--log", WSL_LOG_PATH],
         "detect_sids": [9000007],
         "timeout": 90,
     },
@@ -194,7 +195,7 @@ STEP_DEFS = {
         "techniques": ["T0806"],
         "script": str(ATTACKS_DIR / "brute_force_io.py"),
         "args": ["--target", "10.0.0.1", "--count", "200", "--delay", "0.01",
-                  "--log", str(LOG_STORE_PATH)],
+                  "--log", WSL_LOG_PATH],
         "detect_sids": [9000002],
         "timeout": 120,
     },
@@ -203,7 +204,7 @@ STEP_DEFS = {
         "techniques": ["T0815"],
         "script": str(ATTACKS_DIR / "denial_of_view.py"),
         "args": ["--scada-ip", "10.0.0.10", "--plc-ip", "10.0.0.1",
-                  "--count", "100", "--log", str(LOG_STORE_PATH)],
+                  "--count", "100", "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
         "timeout": 90,
     },
@@ -212,7 +213,7 @@ STEP_DEFS = {
         "techniques": ["T0835"],
         "script": str(ATTACKS_DIR / "manipulate_io_image.py"),
         "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
-                  "--delay", "0.05", "--log", str(LOG_STORE_PATH)],
+                  "--delay", "0.05", "--log", WSL_LOG_PATH],
         "detect_sids": [9000007],
         "timeout": 90,
     },
@@ -221,7 +222,7 @@ STEP_DEFS = {
         "techniques": ["T0801"],
         "script": str(ATTACKS_DIR / "monitor_process_state.py"),
         "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
-                  "--count", "5", "--delay", "0.5", "--log", str(LOG_STORE_PATH)],
+                  "--count", "5", "--delay", "0.5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000002],
         "timeout": 90,
     },
@@ -244,14 +245,15 @@ def log_event(event: dict):
     """Append one event to the shared JSON log store."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
     events = []
-    if LOG_STORE_PATH.exists():
+    log_path = Path(WSL_LOG_PATH)
+    if log_path.exists():
         try:
-            events = json.loads(LOG_STORE_PATH.read_text())
+            events = json.loads(log_path.read_text())
         except (json.JSONDecodeError, OSError):
             events = []
     events.append(event)
-    LOG_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOG_STORE_PATH.write_text(json.dumps(events, indent=2))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(events, indent=2))
 
 
 def run_step(step: dict) -> dict:
