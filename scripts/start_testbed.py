@@ -137,11 +137,16 @@ class TestbedOrchestrator:
 
     def run_attack_cycle(self):
         print("\n" + "=" * 70)
-        print(" EXECUTING 12-STEP ATTACK CYCLE FROM ATTACKER HOST (10.0.0.66)")
+        print(" EXECUTING 18-STEP ATTACK CYCLE FROM ATTACKER HOST (10.0.0.66)")
         print("=" * 70)
         attacker = self.net.get("attacker")
         cycle_script = str(PROJECT_ROOT / "scripts" / "run_cycle.py")
-        proc = attacker.popen([sys.executable, cycle_script])
+        venv_python = Path.home() / "ascend-pg-venv" / "bin" / "python3"
+        if venv_python.exists():
+            python_cmd = str(venv_python)
+        else:
+            python_cmd = sys.executable
+        proc = attacker.popen([python_cmd, cycle_script])
         proc.wait()
         print("\n[+] Cycle execution completed. Verdicts saved to data/cycle_report.json.")
 
