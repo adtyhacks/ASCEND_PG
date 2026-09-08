@@ -683,7 +683,7 @@ if use_real:
         try:
             modbus_data = json.loads(MODBUS_LOG.read_text(encoding="utf-8"))
             if isinstance(modbus_data, list) and modbus_data:
-                with st.expander(f"Modbus TCP Packet Log ({len(modbus_data)} packets)", expanded=False):
+                with st.expander(f"Modbus TCP Packet Log ({len(modbus_data)} packets)", expanded=True):
                     recent_modbus = modbus_data[-50:]
                     modbus_rows = []
                     for pkt in reversed(recent_modbus):
@@ -712,7 +712,7 @@ if use_real:
         try:
             flow_data = json.loads(FLOW_LOG.read_text(encoding="utf-8"))
             if isinstance(flow_data, list) and flow_data:
-                with st.expander(f"Network Flow Log ({len(flow_data)} flows)", expanded=False):
+                with st.expander(f"Network Flow Log ({len(flow_data)} flows)", expanded=True):
                     recent_flows = flow_data[-30:]
                     flow_rows = []
                     for flow in reversed(recent_flows):
