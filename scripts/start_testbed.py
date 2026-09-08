@@ -9,9 +9,10 @@ Automates the entire WSL2 startup in a single command:
 2. Boots the 7-host ICS topology (plc1–plc5, scada, attacker).
 3. Automatically launches all 5 Modbus PLC servers in their network namespaces.
 4. Automatically launches the SCADA polling client.
-5. Optionally starts Suricata IDS on s1-eth7 (attacker switch port).
-6. Provides an interactive menu to trigger attack cycles, test ping, or open CLI.
-7. Automatically terminates and cleans all background processes on exit.
+5. Starts Suricata IDS on s1-eth7 (attacker switch port).
+6. Starts Modbus/Flow loggers for realistic network logging.
+7. Provides an interactive menu to trigger attack cycles, test ping, or open CLI.
+8. Automatically terminates and cleans all background processes on exit.
 
 Usage:
     sudo python3 scripts/start_testbed.py
@@ -22,6 +23,7 @@ import sys
 import time
 import signal
 import subprocess
+import threading
 from pathlib import Path
 
 # Ensure repo root is on sys.path
@@ -43,6 +45,8 @@ class TestbedOrchestrator:
         self.plc_procs = []
         self.scada_proc = None
         self.suricata_proc = None
+        self.modbus_logger = None
+        self.flow_logger = None
         self.running = True
 
     def check_root(self):
@@ -52,11 +56,11 @@ class TestbedOrchestrator:
             sys.exit(1)
 
     def clean_stale(self):
-        print("[1/5] Cleaning stale Mininet state...")
+        print("[1/6] Cleaning stale Mininet state...")
         subprocess.run(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def start_network(self):
-        print("[2/5] Starting 7-host Mininet ICS topology...")
+        print("[2/6] Starting 7-host Mininet ICS topology...")
         setLogLevel("error")
         topo = IcsTopo()
         self.net = Mininet(topo=topo, controller=OVSController)
@@ -67,7 +71,7 @@ class TestbedOrchestrator:
         print(f"      - Attacker: attacker ({ATTACKER_IP})")
 
     def start_plcs(self):
-        print("[3/5] Launching 5 Modbus PLC servers...")
+        print("[3/6] Launching 5 Modbus PLC servers...")
         plc_script = str(PROJECT_ROOT / "testbed" / "plc_server.py")
         for i, ip in enumerate(PLC_IPS, start=1):
             host = self.net.get(f"plc{i}")
@@ -77,7 +81,7 @@ class TestbedOrchestrator:
         print("      5 Modbus PLCs running (addresses 1-100 initialized).")
 
     def start_scada(self):
-        print("[4/5] Launching SCADA polling client...")
+        print("[4/6] Launching SCADA polling client...")
         scada_script = str(PROJECT_ROOT / "testbed" / "scada_client.py")
         scada_host = self.net.get("scada")
         self.scada_proc = scada_host.popen(
@@ -86,7 +90,7 @@ class TestbedOrchestrator:
         print("      SCADA poller active (streaming telemetry to data/log_store.json).")
 
     def start_suricata(self):
-        print("[5/5] Starting Suricata IDS on s1-eth7 (attacker port)...")
+        print("[5/6] Starting Suricata IDS on s1-eth7 (attacker port)...")
         suricata_yaml = Path("/etc/suricata/suricata.yaml")
         if suricata_yaml.exists():
             self.suricata_proc = subprocess.Popen(
@@ -96,6 +100,40 @@ class TestbedOrchestrator:
             print("      Suricata IDS active on s1-eth7.")
         else:
             print("      [!] Suricata config not found, skipping.")
+
+    def start_loggers(self):
+        print("[6/6] Starting Modbus/Flow loggers on s1-eth7...")
+        try:
+            from defense.modbus_logger import ModbusLogger
+            from defense.flow_logger import FlowLogger
+
+            self.modbus_logger = ModbusLogger(interface="s1-eth7")
+            self.flow_logger = FlowLogger(interface="s1-eth7")
+
+            modbus_thread = threading.Thread(target=self.modbus_logger.start, daemon=True)
+            flow_thread = threading.Thread(target=self.flow_logger.start, daemon=True)
+            modbus_thread.start()
+            flow_thread.start()
+
+            time.sleep(1)
+            print("      Modbus logger active (data/modbus_log.json)")
+            print("      Flow logger active (data/flow_log.json)")
+        except ImportError as e:
+            print(f"      [!] Could not start loggers: {e}")
+        except Exception as e:
+            print(f"      [!] Logger error: {e}")
+
+    def stop_loggers(self):
+        if self.modbus_logger:
+            try:
+                self.modbus_logger.stop()
+            except Exception:
+                pass
+        if self.flow_logger:
+            try:
+                self.flow_logger.stop()
+            except Exception:
+                pass
 
     def run_attack_cycle(self):
         print("\n" + "=" * 70)
@@ -130,8 +168,48 @@ class TestbedOrchestrator:
         else:
             print("\nNo events logged yet in data/log_store.json.")
 
+    def view_network_logs(self):
+        import json
+        modbus_log = PROJECT_ROOT / "data" / "modbus_log.json"
+        flow_log = PROJECT_ROOT / "data" / "flow_log.json"
+
+        print("\n" + "=" * 70)
+        print(" NETWORK LOG SUMMARY")
+        print("=" * 70)
+
+        if modbus_log.exists():
+            try:
+                data = json.loads(modbus_log.read_text())
+                print(f"\nModbus Packets: {len(data)}")
+                if data:
+                    funcs = {}
+                    for pkt in data:
+                        fn = pkt.get("function_name", "unknown")
+                        funcs[fn] = funcs.get(fn, 0) + 1
+                    for fn, count in sorted(funcs.items(), key=lambda x: -x[1])[:5]:
+                        print(f"  {fn}: {count}")
+            except Exception as e:
+                print(f"  Error reading modbus log: {e}")
+        else:
+            print("\nModbus log: No data yet")
+
+        if flow_log.exists():
+            try:
+                data = json.loads(flow_log.read_text())
+                print(f"\nNetwork Flows: {len(data)}")
+                if data:
+                    total_bytes = sum(f.get("total_bytes", 0) for f in data)
+                    total_pkts = sum(f.get("total_packets", 0) for f in data)
+                    print(f"  Total bytes: {total_bytes:,}")
+                    print(f"  Total packets: {total_pkts:,}")
+            except Exception as e:
+                print(f"  Error reading flow log: {e}")
+        else:
+            print("\nFlow log: No data yet")
+
     def cleanup(self):
         print("\n\nShutting down ASCEND-PG testbed...")
+        self.stop_loggers()
         if hasattr(self, 'ppo_watcher_proc') and self.ppo_watcher_proc is not None:
             self.ppo_watcher_proc.terminate()
         if self.scada_proc:
@@ -186,14 +264,15 @@ class TestbedOrchestrator:
             print(" [1] Run 16-Step Automated Attack Cycle")
             print(" [2] Ping All Hosts (Connectivity Sanity Check)")
             print(" [3] View Recent Logged Events")
-            print(" [4] Open Interactive Mininet CLI")
-            print(" [5] Exit & Stop Testbed")
+            print(" [4] View Network Logs (Modbus/Flow)")
+            print(" [5] Open Interactive Mininet CLI")
+            print(" [6] Exit & Stop Testbed")
             print(" --- PPO Integration ---")
-            print(" [6] Start PPO Step Watcher (for Live Battle page)")
-            print(" [7] Check PPO Watcher Status")
+            print(" [7] Start PPO Step Watcher (for Live Battle page)")
+            print(" [8] Check PPO Watcher Status")
             print("=" * 70)
             try:
-                choice = input("Select an option [1-7]: ").strip()
+                choice = input("Select an option [1-8]: ").strip()
                 if choice == "1":
                     self.run_attack_cycle()
                 elif choice == "2":
@@ -201,15 +280,17 @@ class TestbedOrchestrator:
                 elif choice == "3":
                     self.view_log_summary()
                 elif choice == "4":
+                    self.view_network_logs()
+                elif choice == "5":
                     self.open_cli()
-                elif choice == "5" or choice.lower() in ("exit", "quit", "q"):
+                elif choice == "6" or choice.lower() in ("exit", "quit", "q"):
                     self.running = False
-                elif choice == "6":
-                    self.run_ppo_watcher()
                 elif choice == "7":
+                    self.run_ppo_watcher()
+                elif choice == "8":
                     self.check_ppo_watcher()
                 else:
-                    print("Invalid option. Enter 1 to 7.")
+                    print("Invalid option. Enter 1 to 8.")
             except (KeyboardInterrupt, EOFError):
                 self.running = False
 
@@ -232,6 +313,7 @@ def main():
         orch.start_plcs()
         orch.start_scada()
         orch.start_suricata()
+        orch.start_loggers()
         orch.menu_loop()
     finally:
         orch.cleanup()
