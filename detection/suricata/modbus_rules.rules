@@ -91,6 +91,6 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG BruteForce - Rapid Register Enum
 alert tcp any any -> any 502 (msg:"ASCEND-PG DoV - Forged FC06 Write (T0815)"; flow:to_server, established; dsize:12; content: "|00 00|"; offset 2; depth 2; content: "|00|"; offset 6; depth 1; content: "|06|"; offset 7; depth 1; classtype:attempted-admin; sid:9000024; rev:1;)
 
 # ===== Recon — Coil Read (T0801) =====
-# detect coil reads (FC01) — uncommon in normal SCADA polling.
-# Catches manipulate_io_image.py Phase 1 reads before writes.
+# Detect coil reads (FC01) — uncommon in normal SCADA polling.
+# No attack script currently uses FC01; kept as defense-in-depth.
 alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Coil Read FC01 (T0801)"; modbus: function 1; classtype:attempted-recon; sid:9000025; rev:1;)
