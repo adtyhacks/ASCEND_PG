@@ -64,6 +64,18 @@ from scripts.testbed_executor import (
     DETECTION_SEARCH_BUFFER_SEC,
 )
 
+# --- Early diagnostics (write immediately so we see import errors) ---
+_diag_path = DATA_DIR / "ml_diagnostics.txt"
+try:
+    with open(str(_diag_path), "w") as _d:
+        _d.write(f"Python: {sys.executable}\n")
+        _d.write(f"Python version: {sys.version}\n")
+        _d.write(f"REPO_ROOT: {REPO_ROOT}\n")
+        _d.write(f"sys.path[0:5]: {sys.path[:5]}\n")
+        _d.write(f"Imports OK\n")
+except Exception as _e:
+    print(f"[run_cycle] WARNING: could not write early diagnostics: {_e}")
+
 # Step ordering follows a realistic kill chain:
 # 1. Reconnaissance — discover the network and fingerprint PLCs
 # 2. Response/Measurement Injection — manipulate sensor data
@@ -154,7 +166,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "dos_attack.py"),
         "args": ["--target", "10.0.0.1", "--count", "100", "--delay", "0.05",
                   "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000002],
+        "detect_sids": [9000020],
     },
     {
         "name": "dos_loud",
@@ -194,7 +206,7 @@ STEPS = [
         "args": ["--target", "10.0.0.1", "--listen-port", "503",
                   "--mode", "offset", "--magnitude", "100",
                   "--duration", "10", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [],  # MITM is signature-invisible — transparent proxy
+        "detect_sids": [9000022],  # Non-standard port 503 detection
         "timeout": 30,
     },
 
@@ -204,7 +216,7 @@ STEPS = [
         "techniques": ["T0816"],
         "script": str(ATTACKS_DIR / "device_restart.py"),
         "args": ["--target", "10.0.0.1", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000007],  # Coil write detected
+        "detect_sids": [9000007, 9000024],  # Coil write + raw byte fallback
         "timeout": 30,
     },
 
@@ -215,7 +227,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "brute_force_io.py"),
         "args": ["--target", "10.0.0.1", "--count", "200", "--delay", "0.01",
                   "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000002],  # High volume triggers modbus.flooded
+        "detect_sids": [9000023],  # Rapid register enumeration
         "timeout": 60,
     },
 
@@ -226,7 +238,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "denial_of_view.py"),
         "args": ["--scada-ip", "10.0.0.10", "--plc-ip", "10.0.0.1",
                   "--count", "100", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000001],
+        "detect_sids": [9000001, 9000024],  # Holding write + raw byte fallback
         "timeout": 30,
     },
 
@@ -237,7 +249,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "manipulate_io_image.py"),
         "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
                   "--delay", "0.05", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000007],  # Coil writes detected
+        "detect_sids": [9000007, 9000025],  # Coil writes + coil read detection
         "timeout": 30,
     },
 
@@ -248,7 +260,7 @@ STEPS = [
         "script": str(ATTACKS_DIR / "monitor_process_state.py"),
         "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
                   "--count", "5", "--delay", "0.5", "--log", str(LOG_STORE_PATH)],
-        "detect_sids": [9000002],  # High volume triggers modbus.flooded
+        "detect_sids": [9000023, 9000025],  # Register enumeration + coil read
         "timeout": 30,
     },
 ]
@@ -327,9 +339,9 @@ def main():
     step_results = []
     detector = get_hybrid_detector(use_ml=True, use_suricata=True)
     
-    # Write diagnostics to file so we can see what happened
+    # Write detector diagnostics (append to early diagnostics)
     diag_path = DATA_DIR / "ml_diagnostics.txt"
-    with open(str(diag_path), "w") as diag:
+    with open(str(diag_path), "a") as diag:
         diag.write(f"Python: {sys.executable}\n")
         diag.write(f"Python version: {sys.version}\n")
         diag.write(f"REPO_ROOT: {REPO_ROOT}\n")

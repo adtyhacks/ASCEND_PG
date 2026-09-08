@@ -12,8 +12,12 @@
 # autoencoder_detector.py, fusion.py — §5 of the master file) remain the final
 # deliverable; these signatures give a working, real-IDS ground truth now.
 #
+<<<<<<< HEAD
 # SID allocation: 9000001–9000024 reserved for ASCEND-PG testbed rules.
 # (SIDs 9000003, 9000011–9000019, 9000021 are unused/reserved)
+=======
+# SID allocation: 9000001–9000029 reserved for ASCEND-PG testbed rules.
+>>>>>>> 03f69eb (Add Suricata rules for 5 undetected attacks + fix diagnostics)
 
 # ===== FDI / RESPONSE INJECTION (T0836) — writes to holding registers =====
 # Flags any write to a Holding Register — matches fdi_attack.py,
@@ -68,11 +72,23 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Diagnostics Clear Co
 # (sid:9000002) may also fire. Additional TCP-level detection:
 alert tcp any any -> any 502 (msg:"ASCEND-PG DoS - Rapid TCP SYN to Modbus (T0814)"; flags:S; threshold:type both, track by_src, count 20, seconds 5; classtype:attempted-dos; sid:9000010; rev:1;)
 
+<<<<<<< HEAD
+=======
+# ===== DoS — Sub-Threshold Read Flood (T0814) =====
+# Detects dos_quiet: 100 FC03 reads in 5s on one connection.
+# Falls below modbus.flooded threshold (500) so uses rate-based detection.
+alert modbus any any -> any 502 (msg:"ASCEND-PG DoS - Sub-Threshold Read Flood (T0814)"; flow:to_server, established; dsize:<20; threshold:type both, track by_src, count 50, seconds 5; classtype:attempted-dos; sid:9000020; rev:1;)
+
+>>>>>>> 03f69eb (Add Suricata rules for 5 undetected attacks + fix diagnostics)
 # ===== MITM — Modbus on Non-Standard Port 503 (T0830) =====
 # mitm_proxy.py listens on TCP 503 and forwards to PLC on 502.
 # Suricata's Modbus decoder only inspects detection-ports 502, so
 # match on raw TCP payload with MBAP-like header at non-standard port.
+<<<<<<< HEAD
 alert tcp any any -> any 503 (msg:"ASCEND-PG MITM - Modbus on Non-Standard Port 503 (T0830)"; flow:to_server, established; dsize:<50; content: "|00 00|"; offset:2; depth:2; content: "|00 00|"; offset:4; depth:2; content: "|03|"; offset:7; depth:1; classtype:policy-violation; sid:9000022; rev:1;)
+=======
+alert tcp any any -> any 503 (msg:"ASCEND-PG MITM - Modbus on Non-Standard Port 503 (T0830)"; flow:to_server, established; dsize:<50; content: "|00 00|"; offset 2; depth 2; content: "|00 00|"; offset 4; depth 2; classtype:policy-violation; sid:9000022; rev:1;)
+>>>>>>> 03f69eb (Add Suricata rules for 5 undetected attacks + fix diagnostics)
 
 # ===== Brute Force — Rapid Register Enumeration (T0806) =====
 # brute_force_io.py sends 200 FC03 reads cycling registers 0-99 in 2s.
@@ -83,4 +99,13 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG BruteForce - Rapid Register Enum
 # denial_of_view.py sends forged FC06 writes to SCADA host.
 # Raw byte match as fallback when Suricata's Modbus decoder rejects
 # unsolicited responses (no matching request in TCP flow state).
+<<<<<<< HEAD
 alert tcp any any -> any 502 (msg:"ASCEND-PG DoV - Forged FC06 Write (T0815)"; flow:to_server, established; dsize:12; content: "|00 00|"; offset:2; depth:2; content: "|00|"; offset:6; depth:1; content: "|06|"; offset:7; depth:1; classtype:attempted-admin; sid:9000024; rev:1;)
+=======
+alert tcp any any -> any 502 (msg:"ASCEND-PG DoV - Forged FC06 Write (T0815)"; flow:to_server, established; dsize:12; content: "|00 00|"; offset 2; depth 2; content: "|00|"; offset 6; depth 1; content: "|06|"; offset 7; depth 1; classtype:attempted-admin; sid:9000024; rev:1;)
+
+# ===== Recon — Coil Read (T0801) =====
+# detect coil reads (FC01) — uncommon in normal SCADA polling.
+# Catches manipulate_io_image.py Phase 1 reads before writes.
+alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Coil Read FC01 (T0801)"; modbus: function 1; classtype:attempted-recon; sid:9000025; rev:1;)
+>>>>>>> 03f69eb (Add Suricata rules for 5 undetected attacks + fix diagnostics)
