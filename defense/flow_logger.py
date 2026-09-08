@@ -5,7 +5,7 @@ Tracks network flow metrics (bytes, packets, duration, flags) from live
 Mininet traffic. Produces NetFlow/IPFIX-style logs.
 
 Usage:
-    logger = FlowLogger(interface="s1-mon")
+    logger = FlowLogger(interface="s1-eth7")
     logger.start()
     # ... attack runs ...
     flows = logger.stop()  # returns list of flow dicts
@@ -131,7 +131,7 @@ class _FlowStats:
 class FlowLogger:
     """Captures packets and computes flow-level metrics."""
 
-    def __init__(self, interface="s1-mon", flow_timeout=30.0):
+    def __init__(self, interface="s1-eth7", flow_timeout=30.0):
         if not SCAPY_AVAILABLE:
             raise ImportError("scapy is required: pip install scapy")
         self.interface = interface

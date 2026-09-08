@@ -68,7 +68,7 @@ def _find_suricata_alerts(sids, start, end):
 class HybridDetector:
     """Orchestrates Suricata + ML detection layers."""
 
-    def __init__(self, interface="s1-mon", use_ml=True, use_suricata=True):
+    def __init__(self, interface="s1-eth7", use_ml=True, use_suricata=True):
         self.interface = interface
         self.use_ml = use_ml
         self.use_suricata = use_suricata

@@ -16,7 +16,7 @@
 #
 # Example (full pipeline for scenario cycle_001):
 #   sudo bash scripts/capture_testbed_session.sh \
-#       --interface s1-mon --scenario cycle_001 --duration 900
+#       --interface s1-eth7 --scenario cycle_001 --duration 900
 #   bash scripts/run_cicflowmeter.sh \
 #       data/captures/cycle_001/capture.pcap \
 #       data/cicflow_output/ \

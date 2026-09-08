@@ -5,14 +5,13 @@ scripts/start_testbed.py
 One-Shot Testbed Orchestrator for ASCEND-PG.
 
 Automates the entire WSL2 startup in a single command:
-1. Cleans stale Mininet/OVS state.
+1. Cleans stale Mininet state.
 2. Boots the 7-host ICS topology (plc1–plc5, scada, attacker).
 3. Automatically launches all 5 Modbus PLC servers in their network namespaces.
 4. Automatically launches the SCADA polling client.
-5. Automatically sets up the OVS port mirror (s1-mon tap interface).
-6. Optionally starts Suricata IDS on s1-eth7 (attacker switch port).
-7. Provides an interactive menu to trigger attack cycles, test ping, or open CLI.
-8. Automatically terminates and cleans all background processes on exit.
+5. Optionally starts Suricata IDS on s1-eth7 (attacker switch port).
+6. Provides an interactive menu to trigger attack cycles, test ping, or open CLI.
+7. Automatically terminates and cleans all background processes on exit.
 
 Usage:
     sudo python3 scripts/start_testbed.py
@@ -53,9 +52,8 @@ class TestbedOrchestrator:
             sys.exit(1)
 
     def clean_stale(self):
-        print("[1/5] Cleaning stale Mininet and OVS state...")
+        print("[1/5] Cleaning stale Mininet state...")
         subprocess.run(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["ovs-vsctl", "clear", "bridge", "s1", "mirrors"], stderr=subprocess.DEVNULL)
 
     def start_network(self):
         print("[2/5] Starting 7-host Mininet ICS topology...")
@@ -87,24 +85,17 @@ class TestbedOrchestrator:
         )
         print("      SCADA poller active (streaming telemetry to data/log_store.json).")
 
-    def setup_mirror_and_ids(self, start_suricata=False):
-        print("[5/5] Setting up OVS mirror (s1-mon tap interface)...")
-        mirror_script = str(PROJECT_ROOT / "scripts" / "setup_mirror.sh")
-        res = subprocess.run(["bash", mirror_script], capture_output=True, text=True)
-        if res.returncode == 0:
-            print("      OVS mirror configured on s1-mon.")
+    def start_suricata(self):
+        print("[5/5] Starting Suricata IDS on s1-eth7 (attacker port)...")
+        suricata_yaml = Path("/etc/suricata/suricata.yaml")
+        if suricata_yaml.exists():
+            self.suricata_proc = subprocess.Popen(
+                ["suricata", "-c", str(suricata_yaml), "-i", "s1-eth7"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            print("      Suricata IDS active on s1-eth7.")
         else:
-            print(f"      [!] Warning configuring mirror: {res.stderr.strip()}")
-
-        if start_suricata:
-            suricata_yaml = Path("/etc/suricata/suricata.yaml")
-            if suricata_yaml.exists():
-                print("      Starting Suricata IDS on s1-eth7 (attacker port)...")
-                self.suricata_proc = subprocess.Popen(
-                    ["suricata", "-c", str(suricata_yaml), "-i", "s1-eth7"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                print("      Suricata IDS active on s1-eth7.")
+            print("      [!] Suricata config not found, skipping.")
 
     def run_attack_cycle(self):
         print("\n" + "=" * 70)
@@ -151,7 +142,6 @@ class TestbedOrchestrator:
             self.suricata_proc.terminate()
         if self.net:
             self.net.stop()
-        subprocess.run(["ovs-vsctl", "clear", "bridge", "s1", "mirrors"], stderr=subprocess.DEVNULL)
         print("Cleanup complete. All testbed services stopped.")
 
     def run_ppo_watcher(self):
@@ -241,7 +231,7 @@ def main():
         orch.start_network()
         orch.start_plcs()
         orch.start_scada()
-        orch.setup_mirror_and_ids()
+        orch.start_suricata()
         orch.menu_loop()
     finally:
         orch.cleanup()

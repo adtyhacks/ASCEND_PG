@@ -166,7 +166,7 @@ STEP_DEFS = {
         "name": "replay_attack",
         "techniques": ["T0832"],
         "script": str(ATTACKS_DIR / "replay_attack.py"),
-        "args": ["--target", "10.0.0.1", "--iface", "s1-mon",
+        "args": ["--target", "10.0.0.1", "--iface", "s1-eth7",
                   "--capture-time", "3", "--replay-count", "1",
                   "--log", WSL_LOG_PATH],
         "detect_sids": [],
@@ -351,7 +351,7 @@ def find_alerts_for_window(sids: list, start: datetime, end: datetime) -> list:
     return matches
 
 
-def get_hybrid_detector(interface="s1-mon", use_ml=True):
+def get_hybrid_detector(interface="s1-eth7", use_ml=True):
     global _hybrid_detector
     if _hybrid_detector is None:
         try:

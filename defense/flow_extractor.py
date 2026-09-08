@@ -5,7 +5,7 @@ Captures live Mininet traffic via scapy and extracts CIC-IDS-2017 compatible
 flow features (78 dimensions) for input to the LSTM/AE detectors.
 
 Usage:
-    extractor = FlowExtractor(interface="s1-mon")
+    extractor = FlowExtractor(interface="s1-eth7")
     extractor.start()
     # ... attack runs ...
     flows_df = extractor.stop()  # returns DataFrame with 78 feature columns
@@ -228,7 +228,7 @@ def _compute_flow_features(flow_id, state):
 class FlowExtractor:
     """Captures packets on a Mininet interface and extracts flow features."""
 
-    def __init__(self, interface="s1-mon"):
+    def __init__(self, interface="s1-eth7"):
         if not SCAPY_AVAILABLE:
             raise ImportError("scapy is required: pip install scapy")
         self.interface = interface

@@ -7,7 +7,7 @@ packet-level information (function codes, registers, values).
 Produces realistic ICS/SCADA network logs suitable for thesis documentation.
 
 Usage:
-    logger = ModbusLogger(interface="s1-mon")
+    logger = ModbusLogger(interface="s1-eth7")
     logger.start()
     # ... attack runs ...
     logs = logger.stop()  # returns list of detailed Modbus log dicts
@@ -64,7 +64,7 @@ MODBUS_EXCEPTION_CODES = {
 class ModbusLogger:
     """Captures Modbus TCP packets and extracts detailed protocol information."""
 
-    def __init__(self, interface="s1-mon"):
+    def __init__(self, interface="s1-eth7"):
         if not SCAPY_AVAILABLE:
             raise ImportError("scapy is required: pip install scapy")
         self.interface = interface
