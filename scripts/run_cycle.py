@@ -330,6 +330,33 @@ def main():
 
     step_results = []
     detector = get_hybrid_detector(use_ml=True, use_suricata=True)
+    
+    # Write diagnostics to file so we can see what happened
+    diag_path = DATA_DIR / "ml_diagnostics.txt"
+    with open(str(diag_path), "w") as diag:
+        diag.write(f"Python: {sys.executable}\n")
+        diag.write(f"Python version: {sys.version}\n")
+        diag.write(f"REPO_ROOT: {REPO_ROOT}\n")
+        diag.write(f"sys.path[0:5]: {sys.path[:5]}\n")
+        if detector:
+            diag.write(f"detector created: True\n")
+            diag.write(f"detector.is_ml_available(): {detector.is_ml_available()}\n")
+            diag.write(f"detector.use_ml: {detector.use_ml}\n")
+            diag.write(f"detector.use_suricata: {detector.use_suricata}\n")
+            if hasattr(detector, 'ml_detector'):
+                diag.write(f"ml_detector._loaded: {detector.ml_detector._loaded}\n")
+        else:
+            diag.write(f"detector created: False\n")
+        try:
+            import torch
+            diag.write(f"torch available: True, version: {torch.__version__}\n")
+        except ImportError as e:
+            diag.write(f"torch available: False, error: {e}\n")
+        try:
+            import scapy
+            diag.write(f"scapy available: True\n")
+        except ImportError as e:
+            diag.write(f"scapy available: False, error: {e}\n")
 
     for step in STEPS:
         if detector and detector.is_ml_available():
