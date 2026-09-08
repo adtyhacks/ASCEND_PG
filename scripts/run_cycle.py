@@ -334,28 +334,31 @@ def main():
     for step in STEPS:
         if detector and detector.is_ml_available():
             detector.start_capture()
-        timing = run_step(step)
-        time.sleep(DETECTION_SEARCH_BUFFER_SEC)
+        try:
+            timing = run_step(step)
+            time.sleep(DETECTION_SEARCH_BUFFER_SEC)
 
-        if detector and detector.is_ml_available():
-            verdict = detector.get_verdict(
-                timing["start"], timing["end"], timing["detect_sids"]
-            )
-            timing["alerts"] = [
-                {"alert": {"signature": s}} for s in verdict["suricata_signatures"]
-            ]
-            timing["detected"] = verdict["combined_detected"]
-            timing["ml_detected"] = verdict["ml_detected"]
-            timing["ml_confidence"] = verdict["ml_confidence"]
-            timing["detection_method"] = verdict["detection_method"]
-            detector.stop_capture()
-        else:
-            alerts = _find_alerts(timing["detect_sids"], timing["start"], timing["end"])
-            timing["alerts"] = alerts
-            timing["detected"] = len(alerts) > 0
-            timing["ml_detected"] = False
-            timing["ml_confidence"] = 0.0
-            timing["detection_method"] = "suricata"
+            if detector and detector.is_ml_available():
+                verdict = detector.get_verdict(
+                    timing["start"], timing["end"], timing["detect_sids"]
+                )
+                timing["alerts"] = [
+                    {"alert": {"signature": s}} for s in verdict["suricata_signatures"]
+                ]
+                timing["detected"] = verdict["combined_detected"]
+                timing["ml_detected"] = verdict["ml_detected"]
+                timing["ml_confidence"] = verdict["ml_confidence"]
+                timing["detection_method"] = verdict["detection_method"]
+            else:
+                alerts = _find_alerts(timing["detect_sids"], timing["start"], timing["end"])
+                timing["alerts"] = alerts
+                timing["detected"] = len(alerts) > 0
+                timing["ml_detected"] = False
+                timing["ml_confidence"] = 0.0
+                timing["detection_method"] = "suricata"
+        finally:
+            if detector and detector.is_ml_available():
+                detector.stop_capture()
         step_results.append(timing)
 
     # --- Post-cycle re-scan for flow-timeout alerts ---
