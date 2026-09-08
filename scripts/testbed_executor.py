@@ -351,20 +351,21 @@ def find_alerts_for_window(sids: list, start: datetime, end: datetime) -> list:
     return matches
 
 
-def get_hybrid_detector(interface="s1-eth7", use_ml=True):
+def get_hybrid_detector(interface="s1-eth7", use_ml=True, use_suricata=True):
     global _hybrid_detector
-    if _hybrid_detector is None:
-        try:
-            sys.path.insert(0, str(REPO_ROOT))
-            from defense.hybrid_detector import HybridDetector
-            _hybrid_detector = HybridDetector(
-                interface=interface, use_ml=use_ml, use_suricata=True
-            )
-            print(f"[executor] Hybrid detector initialized (ml={'on' if use_ml else 'off'})")
-        except Exception as e:
-            print(f"[executor] Warning: Hybrid detector init failed: {e}")
-            print("[executor] Falling back to Suricata-only detection")
-            _hybrid_detector = None
+    if _hybrid_detector is not None:
+        return _hybrid_detector
+    try:
+        sys.path.insert(0, str(REPO_ROOT))
+        from defense.hybrid_detector import HybridDetector
+        _hybrid_detector = HybridDetector(
+            interface=interface, use_ml=use_ml, use_suricata=use_suricata
+        )
+        print(f"[executor] Hybrid detector initialized (ml={'on' if use_ml else 'off'}, suricata={'on' if use_suricata else 'off'})")
+    except Exception as e:
+        print(f"[executor] Warning: Hybrid detector init failed: {e}")
+        print("[executor] Falling back to Suricata-only detection")
+        _hybrid_detector = None
     return _hybrid_detector
 
 
@@ -375,7 +376,7 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
 
     use_ml = detection_mode in ("hybrid", "ml_only")
     use_suricata = detection_mode in ("hybrid", "suricata_only")
-    detector = get_hybrid_detector(use_ml=use_ml)
+    detector = get_hybrid_detector(use_ml=use_ml, use_suricata=use_suricata)
 
     if detector and use_ml:
         detector.start_capture()
@@ -383,31 +384,38 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
     timing = run_step(step)
     time.sleep(DETECTION_SEARCH_BUFFER_SEC)
 
-    if detector and use_ml:
-        verdict = detector.get_verdict(
-            timing["start"], timing["end"], timing["detect_sids"]
-        )
-        return {
-            "detected": verdict["combined_detected"],
-            "alert_count": verdict["suricata_alert_count"],
-            "alert_signatures": verdict["suricata_signatures"],
-            "ml_detected": verdict["ml_detected"],
-            "ml_confidence": verdict["ml_confidence"],
-            "ml_lstm_confidence": verdict["ml_lstm_confidence"],
-            "ml_ae_score": verdict["ml_ae_score"],
-            "ml_available": verdict["ml_available"],
-            "ml_error": verdict.get("ml_error"),
-            "detection_method": verdict["detection_method"],
-            "step_name": timing["name"],
-            "techniques": timing["techniques"],
-            "mode": detection_mode,
-        }
+    try:
+        if detector and use_ml:
+            verdict = detector.get_verdict(
+                timing["start"], timing["end"], timing["detect_sids"]
+            )
+            return {
+                "detected": verdict["combined_detected"],
+                "alert_count": verdict["suricata_alert_count"],
+                "alert_signatures": verdict["suricata_signatures"],
+                "ml_detected": verdict["ml_detected"],
+                "ml_confidence": verdict["ml_confidence"],
+                "ml_lstm_confidence": verdict["ml_lstm_confidence"],
+                "ml_ae_score": verdict["ml_ae_score"],
+                "ml_available": verdict["ml_available"],
+                "ml_error": verdict.get("ml_error"),
+                "detection_method": verdict["detection_method"],
+                "step_name": timing["name"],
+                "techniques": timing["techniques"],
+                "mode": detection_mode,
+            }
+    finally:
+        if detector and use_ml:
+            detector.stop_capture()
 
     # Suricata-only fallback
     from defense.hybrid_detector import _find_suricata_alerts
-    alerts = _find_suricata_alerts(
-        timing["detect_sids"], timing["start"], timing["end"]
-    )
+    if use_suricata:
+        alerts = _find_suricata_alerts(
+            timing["detect_sids"], timing["start"], timing["end"]
+        )
+    else:
+        alerts = []
     return {
         "detected": len(alerts) > 0,
         "alert_count": len(alerts),
@@ -419,9 +427,9 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
         "ml_lstm_confidence": 0.0,
         "ml_ae_score": 0.0,
         "ml_available": False,
-        "ml_error": None,
-        "detection_method": "suricata",
+        "ml_error": "Detector unavailable" if not use_suricata else None,
+        "detection_method": "suricata" if use_suricata else "none",
         "step_name": timing["name"],
         "techniques": timing["techniques"],
-        "mode": "suricata_only",
+        "mode": detection_mode,
     }

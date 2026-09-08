@@ -36,7 +36,16 @@ def _scale(df: pd.DataFrame, scaling: dict) -> np.ndarray:
     col_min = np.array(scaling["col_min"])
     col_max = np.array(scaling["col_max"])
     denom = np.where((col_max - col_min) == 0, 1.0, col_max - col_min)
-    values = df[feature_cols].select_dtypes(include=["number"]).fillna(0.0).values
+    # Ensure all feature columns exist and are numeric
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0.0
+    values = df[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).values
+    if values.shape[1] != len(col_min):
+        raise ValueError(
+            f"Feature count mismatch: expected {len(col_min)}, got {values.shape[1]}. "
+            f"Missing columns: {[c for c in feature_cols if c not in df.columns]}"
+        )
     return (values - col_min) / denom
 
 

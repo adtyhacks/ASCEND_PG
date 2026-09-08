@@ -139,7 +139,6 @@ class FlowLogger:
         self._flows = {}
         self._completed = []
         self._sniffer = None
-        self._running = False
         self._lock = threading.Lock()
 
     def _process_packet(self, pkt):
@@ -185,7 +184,8 @@ class FlowLogger:
         """Start packet capture in background thread (non-blocking)."""
         if not SCAPY_AVAILABLE:
             return
-        self._running = True
+        if self._sniffer is not None:
+            return  # already running
         self._sniffer = AsyncSniffer(
             iface=self.interface,
             filter="tcp",
@@ -196,7 +196,6 @@ class FlowLogger:
 
     def stop(self):
         """Stop capture and return completed flows."""
-        self._running = False
         if self._sniffer is not None:
             try:
                 self._sniffer.stop()

@@ -87,6 +87,10 @@ class HybridDetector:
         if self.extractor and self.use_ml:
             self.extractor.start()
 
+    def stop_capture(self):
+        if self.extractor and self.use_ml:
+            self.extractor.stop_capture()
+
     def get_verdict(self, step_start, step_end, detect_sids=None):
         detect_sids = detect_sids or []
 

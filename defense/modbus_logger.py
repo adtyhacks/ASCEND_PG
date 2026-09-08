@@ -14,6 +14,8 @@ Usage:
 """
 
 import json
+import os
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -70,7 +72,6 @@ class ModbusLogger:
         self.interface = interface
         self._packets = []
         self._sniffer = None
-        self._running = False
         self._lock = threading.Lock()
 
     def _parse_modbus_tcp(self, pkt):
@@ -167,7 +168,7 @@ class ModbusLogger:
         self._write_live_event(log_entry)
 
     def _write_live_event(self, entry):
-        """Append to modbus_log.json for live viewing."""
+        """Append to modbus_log.json atomically."""
         try:
             events = []
             if LOG_STORE.exists():
@@ -177,7 +178,16 @@ class ModbusLogger:
                     events = []
             events.append(entry)
             LOG_STORE.parent.mkdir(parents=True, exist_ok=True)
-            LOG_STORE.write_text(json.dumps(events, indent=2), encoding="utf-8")
+            fd, tmp_path = tempfile.mkstemp(dir=str(LOG_STORE.parent), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(events, f, indent=2)
+                os.replace(tmp_path, str(LOG_STORE))
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
         except Exception:
             pass
 
@@ -185,7 +195,8 @@ class ModbusLogger:
         """Start packet capture in background thread (non-blocking)."""
         if not SCAPY_AVAILABLE:
             return
-        self._running = True
+        if self._sniffer is not None:
+            return  # already running
         self._sniffer = AsyncSniffer(
             iface=self.interface,
             filter="tcp port 502",
@@ -196,7 +207,6 @@ class ModbusLogger:
 
     def stop(self):
         """Stop capture and return collected packets."""
-        self._running = False
         if self._sniffer is not None:
             try:
                 self._sniffer.stop()

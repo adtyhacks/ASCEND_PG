@@ -236,7 +236,6 @@ class FlowExtractor:
         self.interface = interface
         self._flows = defaultdict(_FlowState)
         self._sniffer = None
-        self._running = False
         self._lock = threading.Lock()
 
     def _process_packet(self, pkt):
@@ -301,7 +300,8 @@ class FlowExtractor:
         """Start packet capture in background thread (non-blocking)."""
         if not SCAPY_AVAILABLE:
             return
-        self._running = True
+        if self._sniffer is not None:
+            return  # already running
         self._sniffer = AsyncSniffer(
             iface=self.interface,
             filter="tcp",
@@ -312,7 +312,6 @@ class FlowExtractor:
 
     def stop(self):
         """Stop capture and return flow features as DataFrame."""
-        self._running = False
         if self._sniffer is not None:
             try:
                 self._sniffer.stop()
@@ -336,6 +335,15 @@ class FlowExtractor:
                 df[col] = 0.0
         return df[FEATURE_COLS].fillna(0.0)
 
+    def stop_capture(self):
+        """Stop capture without clearing flow state."""
+        if self._sniffer is not None:
+            try:
+                self._sniffer.stop()
+            except Exception:
+                pass
+            self._sniffer = None
+
     def get_window(self):
         """Get last WINDOW_SIZE flows for LSTM input. Does NOT stop capture."""
         with self._lock:
@@ -355,7 +363,6 @@ class FlowExtractor:
 
         if len(df) >= WINDOW_SIZE:
             return df.iloc[-WINDOW_SIZE:]
-        # Pad with first row repeated instead of zeros to avoid diluting signal
         pad_count = WINDOW_SIZE - len(df)
         padding = pd.concat([df.iloc[:1]] * pad_count, ignore_index=True)
         return pd.concat([padding, df], ignore_index=True)

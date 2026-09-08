@@ -63,6 +63,7 @@ from scripts.testbed_executor import (
     log_event as _log_event,
     run_step as _run_step,
     find_alerts_for_window as _find_alerts,
+    get_hybrid_detector,
     DETECTION_SEARCH_BUFFER_SEC,
 )
 
@@ -305,14 +306,18 @@ def print_report(step_results):
     print("ASCEND-PG TESTBED CYCLE REPORT")
     print("=" * 70)
     for step in step_results:
-        detected = len(step["alerts"]) > 0
+        detected = step.get("detected", len(step["alerts"]) > 0)
         status = "DETECTED" if detected else "NOT DETECTED"
+        method = step.get("detection_method", "suricata")
+        ml_info = ""
+        if step.get("ml_detected"):
+            ml_info = f" [ML: {step.get('ml_confidence', 0):.2f}]"
         print(f"\n[{step['name']}] techniques={'+'.join(step['techniques'])}")
         print(f"  window: {step['start'].isoformat()} -> {step['end'].isoformat()}")
-        print(f"  result: {status} ({len(step['alerts'])} matching alert(s))")
+        print(f"  result: {status} via {method}{ml_info}")
         for a in step["alerts"]:
             sig = a.get("alert", {}).get("signature")
-            print(f"    - {a.get('timestamp')}: {sig}")
+            print(f"    - {a.get('timestamp', 'N/A')}: {sig}")
     print("\n" + "=" * 70)
 
 
@@ -324,11 +329,33 @@ def main():
     args = parser.parse_args()
 
     step_results = []
+    detector = get_hybrid_detector(use_ml=True, use_suricata=True)
+
     for step in STEPS:
+        if detector and detector.is_ml_available():
+            detector.start_capture()
         timing = run_step(step)
         time.sleep(DETECTION_SEARCH_BUFFER_SEC)
-        alerts = find_alerts_for_window(timing["detect_sids"], timing["start"], timing["end"])
-        timing["alerts"] = alerts
+
+        if detector and detector.is_ml_available():
+            verdict = detector.get_verdict(
+                timing["start"], timing["end"], timing["detect_sids"]
+            )
+            timing["alerts"] = [
+                {"alert": {"signature": s}} for s in verdict["suricata_signatures"]
+            ]
+            timing["detected"] = verdict["combined_detected"]
+            timing["ml_detected"] = verdict["ml_detected"]
+            timing["ml_confidence"] = verdict["ml_confidence"]
+            timing["detection_method"] = verdict["detection_method"]
+            detector.stop_capture()
+        else:
+            alerts = _find_alerts(timing["detect_sids"], timing["start"], timing["end"])
+            timing["alerts"] = alerts
+            timing["detected"] = len(alerts) > 0
+            timing["ml_detected"] = False
+            timing["ml_confidence"] = 0.0
+            timing["detection_method"] = "suricata"
         step_results.append(timing)
 
     # --- Post-cycle re-scan for flow-timeout alerts ---
@@ -356,8 +383,11 @@ def main():
             {
                 "name": s["name"], "techniques": s["techniques"],
                 "start": s["start"].isoformat(), "end": s["end"].isoformat(),
-                "detected": len(s["alerts"]) > 0,
+                "detected": s.get("detected", len(s["alerts"]) > 0),
                 "alert_count": len(s["alerts"]),
+                "ml_detected": s.get("ml_detected", False),
+                "ml_confidence": s.get("ml_confidence", 0.0),
+                "detection_method": s.get("detection_method", "suricata"),
             }
             for s in step_results
         ],
