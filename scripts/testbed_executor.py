@@ -32,6 +32,16 @@ ATTACKS_DIR = REPO_ROOT / "attacks"
 DATA_DIR = REPO_ROOT / "data"
 LOG_STORE_PATH = DATA_DIR / "log_store.json"
 
+
+def _wsl_log_path() -> str:
+    """Convert Windows path to WSL2 path for attack scripts running via sudo."""
+    win_path = str(LOG_STORE_PATH)
+    if win_path[1] == ":":
+        drive = win_path[0].lower()
+        rest = win_path[2:].replace("\\", "/")
+        return f"/mnt/{drive}{rest}"
+    return win_path
+
 DETECTION_SEARCH_BUFFER_SEC = 3
 SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
 
@@ -244,14 +254,15 @@ def log_event(event: dict):
     """Append one event to the shared JSON log store."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
     events = []
-    if LOG_STORE_PATH.exists():
+    log_path = Path(_wsl_log_path())
+    if log_path.exists():
         try:
-            events = json.loads(LOG_STORE_PATH.read_text())
-        except json.JSONDecodeError:
+            events = json.loads(log_path.read_text())
+        except (json.JSONDecodeError, OSError):
             events = []
     events.append(event)
-    LOG_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOG_STORE_PATH.write_text(json.dumps(events, indent=2))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(events, indent=2))
 
 
 def run_step(step: dict) -> dict:
@@ -270,9 +281,21 @@ def run_step(step: dict) -> dict:
 
     step_timeout = step.get("timeout", 90)
 
+    wsl_log = _wsl_log_path()
+    converted_args = []
+    i = 0
+    while i < len(step["args"]):
+        if step["args"][i] == "--log" and i + 1 < len(step["args"]):
+            converted_args.append("--log")
+            converted_args.append(wsl_log)
+            i += 2
+        else:
+            converted_args.append(step["args"][i])
+            i += 1
+
     try:
         result = subprocess.run(
-            ["sudo", sys.executable, step["script"], *step["args"]],
+            ["sudo", sys.executable, step["script"], *converted_args],
             capture_output=True, text=True, timeout=step_timeout,
         )
     except subprocess.TimeoutExpired:
