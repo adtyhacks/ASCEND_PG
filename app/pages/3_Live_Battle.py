@@ -677,6 +677,64 @@ if use_real:
         except Exception:
             pass
 
+    # Modbus Packet Log (realistic ICS traffic)
+    MODBUS_LOG = DATA_DIR / "modbus_log.json"
+    if MODBUS_LOG.exists():
+        try:
+            modbus_data = json.loads(MODBUS_LOG.read_text(encoding="utf-8"))
+            if isinstance(modbus_data, list) and modbus_data:
+                with st.expander(f"Modbus TCP Packet Log ({len(modbus_data)} packets)", expanded=False):
+                    recent_modbus = modbus_data[-50:]
+                    modbus_rows = []
+                    for pkt in reversed(recent_modbus):
+                        ts = pkt.get("timestamp", "")
+                        if "T" in ts:
+                            ts = ts.split("T")[1][:12]
+                        modbus_rows.append({
+                            "Time": ts,
+                            "Src": pkt.get("src_ip", "-"),
+                            "Dst": pkt.get("dst_ip", "-"),
+                            "Direction": pkt.get("direction", "-"),
+                            "Function": pkt.get("function_name", "-"),
+                            "Unit": pkt.get("mbap_unit_id", "-"),
+                            "Addr": pkt.get("start_address", "-"),
+                            "Values": str(pkt.get("values", []))[:30],
+                            "Exception": pkt.get("exception_code", "-"),
+                            "Length": pkt.get("packet_length", 0),
+                        })
+                    st.dataframe(pd.DataFrame(modbus_rows), use_container_width=True, hide_index=True, height=350)
+        except Exception:
+            pass
+
+    # Network Flow Log (NetFlow/IPFIX style)
+    FLOW_LOG = DATA_DIR / "flow_log.json"
+    if FLOW_LOG.exists():
+        try:
+            flow_data = json.loads(FLOW_LOG.read_text(encoding="utf-8"))
+            if isinstance(flow_data, list) and flow_data:
+                with st.expander(f"Network Flow Log ({len(flow_data)} flows)", expanded=False):
+                    recent_flows = flow_data[-30:]
+                    flow_rows = []
+                    for flow in reversed(recent_flows):
+                        flow_rows.append({
+                            "Start": flow.get("timestamp", "-").split("T")[1][:8] if "T" in flow.get("timestamp", "") else "-",
+                            "Src": flow.get("src_ip", "-"),
+                            "Dst": flow.get("dst_ip", "-"),
+                            "Sport": flow.get("src_port", "-"),
+                            "Dport": flow.get("dst_port", "-"),
+                            "Duration": f"{flow.get('duration_sec', 0):.3f}s",
+                            "Packets": flow.get("total_packets", 0),
+                            "Bytes": flow.get("total_bytes", 0),
+                            "B/s": f"{flow.get('bytes_per_sec', 0):.0f}",
+                            "SYN": flow.get("syn_count", 0),
+                            "ACK": flow.get("ack_count", 0),
+                            "RST": flow.get("rst_count", 0),
+                            "FIN": flow.get("fin_count", 0),
+                        })
+                    st.dataframe(pd.DataFrame(flow_rows), use_container_width=True, hide_index=True, height=350)
+        except Exception:
+            pass
+
     # Auto-refresh every 3 seconds
     if auto_refresh_log:
         time.sleep(3)
