@@ -330,8 +330,10 @@ def _step_campaign_real():
     if has_testbed and not PENDING_STEP.exists() and not STEP_RESULT.exists():
         _write_pending_step(technique_id, step_name)
 
-        with st.spinner(f"Executing {technique_id} ({tech['name']}) on testbed..."):
-            result = _poll_step_result(timeout=300.0)
+        status_box = st.empty()
+        status_box.info(f"Executing {technique_id} ({tech['name']}) on testbed...")
+        result = _poll_step_result(timeout=300.0)
+        status_box.empty()
 
         if result and result.get("success", False):
             detected = result.get("detected", False)
@@ -342,8 +344,10 @@ def _step_campaign_real():
             detection_method = result.get("detection_method", "suricata")
             mode_label = f"Real ({detection_method})"
         else:
-            st.warning(f"Testbed execution failed: {result.get('error', 'timeout') if result else 'timeout'}. "
-                       f"Falling back to mock evaluation.")
+            error_msg = result.get("error", "timeout") if result else "timeout"
+            status_box.warning(f"Testbed failed: {error_msg}. Falling back to mock.")
+            time.sleep(3)
+            status_box.empty()
             _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
             detected = bool(mock_info.get("detected", False))
             detector_conf = float(mock_info.get("detection_confidence", 0.0))
