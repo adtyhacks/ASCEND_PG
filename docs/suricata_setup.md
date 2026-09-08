@@ -80,9 +80,13 @@ Verify it's attached:
 
     sudo ovs-vsctl list Mirror
 
-## 6. Run Suricata against the monitor interface
+## 6. Run Suricata against the attacker switch port
 
-    sudo suricata -c /etc/suricata/suricata.yaml -i <monitor-host-interface> -v
+In WSL2, the OVS mirror port (`s1-mon`) doesn't work due to kernel limitations
+(`NO-CARRIER, state DOWN`). Instead, run Suricata directly on the attacker's
+switch port (`s1-eth7`), which sees all attack traffic:
+
+    sudo suricata -c /etc/suricata/suricata.yaml -i s1-eth7 -D
 
 Watch `/var/log/suricata/eve.json` for alerts as you generate test traffic
 (this is the same eve.json `scripts/run_cycle.py` correlates against for its
@@ -91,11 +95,23 @@ scripts, do one manual sanity check: from any host, do a plain pymodbus
 read/write against a PLC and confirm Suricata logs *something* — proves the
 pipeline is alive before you add recon/attack complexity on top.
 
+**Interface mapping:**
+
+| Switch Port | Host | IP |
+|---|---|---|
+| s1-eth1 | plc1 | 10.0.0.1 |
+| s1-eth2 | plc2 | 10.0.0.2 |
+| s1-eth3 | plc3 | 10.0.0.3 |
+| s1-eth4 | plc4 | 10.0.0.4 |
+| s1-eth5 | plc5 | 10.0.0.5 |
+| s1-eth6 | scada | 10.0.0.10 |
+| s1-eth7 | attacker | 10.0.0.66 |
+
 ## Known risk (WSL2 + OVS)
 
-If `select-all=true` mirroring doesn't behave cleanly under WSL2's OVS (WSL2
-+ OVS compatibility has already bitten this project once, during the
-original Mininet install), the fallback is running Suricata directly on the
-target PLC host's own interface instead of a proper mirror port. Less
-architecturally clean, but still real detection, and much faster to stand
-up if the mirror port fights you.
+The OVS mirror port (`s1-mon`) does not work in WSL2 — the interface shows
+`NO-CARRIER, state DOWN` and captures zero packets. This is a WSL2 kernel
+limitation. The fallback (and current working solution) is running Suricata
+directly on the attacker's switch port (`s1-eth7`). This sees all attack
+traffic but not SCADA-to-PLC polling responses. For full visibility, consider
+running on a native Linux host or using `tcpdump` captures for offline analysis.

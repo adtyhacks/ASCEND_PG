@@ -10,7 +10,7 @@ Automates the entire WSL2 startup in a single command:
 3. Automatically launches all 5 Modbus PLC servers in their network namespaces.
 4. Automatically launches the SCADA polling client.
 5. Automatically sets up the OVS port mirror (s1-mon tap interface).
-6. Optionally starts Suricata IDS on s1-mon.
+6. Optionally starts Suricata IDS on s1-eth7 (attacker switch port).
 7. Provides an interactive menu to trigger attack cycles, test ping, or open CLI.
 8. Automatically terminates and cleans all background processes on exit.
 
@@ -56,7 +56,6 @@ class TestbedOrchestrator:
         print("[1/5] Cleaning stale Mininet and OVS state...")
         subprocess.run(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["ovs-vsctl", "clear", "bridge", "s1", "mirrors"], stderr=subprocess.DEVNULL)
-        subprocess.run(["ip", "link", "delete", "s1-mon"], stderr=subprocess.DEVNULL)
 
     def start_network(self):
         print("[2/5] Starting 7-host Mininet ICS topology...")
@@ -100,12 +99,12 @@ class TestbedOrchestrator:
         if start_suricata:
             suricata_yaml = Path("/etc/suricata/suricata.yaml")
             if suricata_yaml.exists():
-                print("      Starting Suricata IDS on s1-mon...")
+                print("      Starting Suricata IDS on s1-eth7 (attacker port)...")
                 self.suricata_proc = subprocess.Popen(
-                    ["suricata", "-c", str(suricata_yaml), "-i", "s1-mon"],
+                    ["suricata", "-c", str(suricata_yaml), "-i", "s1-eth7"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                print("      Suricata IDS active.")
+                print("      Suricata IDS active on s1-eth7.")
 
     def run_attack_cycle(self):
         print("\n" + "=" * 70)
@@ -153,7 +152,6 @@ class TestbedOrchestrator:
         if self.net:
             self.net.stop()
         subprocess.run(["ovs-vsctl", "clear", "bridge", "s1", "mirrors"], stderr=subprocess.DEVNULL)
-        subprocess.run(["ip", "link", "delete", "s1-mon"], stderr=subprocess.DEVNULL)
         print("Cleanup complete. All testbed services stopped.")
 
     def run_ppo_watcher(self):
