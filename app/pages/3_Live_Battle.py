@@ -173,7 +173,7 @@ def _write_pending_step(technique_id: str, step_name: str):
     }), encoding="utf-8")
 
 
-def _poll_step_result(timeout: float = 120.0, poll_interval: float = 0.5) -> dict | None:
+def _poll_step_result(timeout: float = 300.0, poll_interval: float = 0.5) -> dict | None:
     """Poll for the watcher's result file. Returns None on timeout."""
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -331,7 +331,7 @@ def _step_campaign_real():
         _write_pending_step(technique_id, step_name)
 
         with st.spinner(f"Executing {technique_id} ({tech['name']}) on testbed..."):
-            result = _poll_step_result(timeout=150.0)
+            result = _poll_step_result(timeout=300.0)
 
         if result and result.get("success", False):
             detected = result.get("detected", False)

@@ -32,17 +32,7 @@ ATTACKS_DIR = REPO_ROOT / "attacks"
 DATA_DIR = REPO_ROOT / "data"
 LOG_STORE_PATH = DATA_DIR / "log_store.json"
 
-
-def _wsl_log_path() -> str:
-    """Convert Windows path to WSL2 path for attack scripts running via sudo."""
-    win_path = str(LOG_STORE_PATH)
-    if win_path[1] == ":":
-        drive = win_path[0].lower()
-        rest = win_path[2:].replace("\\", "/")
-        return f"/mnt/{drive}{rest}"
-    return win_path
-
-DETECTION_SEARCH_BUFFER_SEC = 3
+DETECTION_SEARCH_BUFFER_SEC = 5
 SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
 
 _hybrid_detector = None
@@ -79,7 +69,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "recon_step.py"),
         "args": ["--subnet", "10.0.0.0/24", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000004],
-        "timeout": 180,
+        "timeout": 240,
     },
     "recon_fc_scan": {
         "name": "recon_fc_scan",
@@ -87,7 +77,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "fc_scan.py"),
         "args": ["--target", "10.0.0.1", "--safe", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000005, 9000006],
-        "timeout": 45,
+        "timeout": 120,
     },
     "fdi_attack": {
         "name": "fdi_attack",
@@ -95,7 +85,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "fdi_attack.py"),
         "args": ["--target", "10.0.0.1", "-a", "0", "-v", "9999"],
         "detect_sids": [9000001],
-        "timeout": 90,
+        "timeout": 120,
     },
     "naive_response_injection": {
         "name": "naive_response_injection",
@@ -105,7 +95,7 @@ STEP_DEFS = {
                   "--duration", "5", "--interval", "1.0",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001],
-        "timeout": 90,
+        "timeout": 120,
     },
     "complex_response_injection": {
         "name": "complex_response_injection",
@@ -115,7 +105,7 @@ STEP_DEFS = {
                   "--magnitude", "5", "--duration", "5", "--interval", "1.0",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001],
-        "timeout": 90,
+        "timeout": 120,
     },
     "cmd_inject_coil": {
         "name": "cmd_inject_coil",
@@ -124,7 +114,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--address", "0", "--value", "True",
                   "--count", "5", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000007],
-        "timeout": 90,
+        "timeout": 120,
     },
     "cmd_inject_register": {
         "name": "cmd_inject_register",
@@ -133,7 +123,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--address", "50", "--value", "0",
                   "--count", "5", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001],
-        "timeout": 90,
+        "timeout": 120,
     },
     "malicious_fc": {
         "name": "malicious_fc",
@@ -142,7 +132,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--action", "all",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000006, 9000008, 9000009],
-        "timeout": 90,
+        "timeout": 120,
     },
     "dos_quiet": {
         "name": "dos_quiet",
@@ -151,7 +141,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--count", "100", "--delay", "0.05",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000002],
-        "timeout": 90,
+        "timeout": 120,
     },
     "dos_loud": {
         "name": "dos_loud",
@@ -160,7 +150,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--count", "600", "--delay", "0",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000002],
-        "timeout": 90,
+        "timeout": 120,
     },
     "dos_conn_exhaust": {
         "name": "dos_conn_exhaust",
@@ -169,7 +159,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--connections", "30",
                   "--hold-time", "10", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000002, 9000010],
-        "timeout": 60,
+        "timeout": 120,
     },
     "replay_attack": {
         "name": "replay_attack",
@@ -179,7 +169,7 @@ STEP_DEFS = {
                   "--capture-time", "3", "--replay-count", "1",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [],
-        "timeout": 120,
+        "timeout": 180,
     },
     "mitm_proxy": {
         "name": "mitm_proxy",
@@ -189,7 +179,7 @@ STEP_DEFS = {
                   "--mode", "offset", "--magnitude", "100",
                   "--duration", "10", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [],
-        "timeout": 30,
+        "timeout": 120,
     },
     "device_restart": {
         "name": "device_restart",
@@ -197,7 +187,7 @@ STEP_DEFS = {
         "script": str(ATTACKS_DIR / "device_restart.py"),
         "args": ["--target", "10.0.0.1", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000007],
-        "timeout": 30,
+        "timeout": 90,
     },
     "brute_force_io": {
         "name": "brute_force_io",
@@ -206,7 +196,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--count", "200", "--delay", "0.01",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000002],
-        "timeout": 60,
+        "timeout": 120,
     },
     "denial_of_view": {
         "name": "denial_of_view",
@@ -215,7 +205,7 @@ STEP_DEFS = {
         "args": ["--scada-ip", "10.0.0.10", "--plc-ip", "10.0.0.1",
                   "--count", "100", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001],
-        "timeout": 30,
+        "timeout": 90,
     },
     "manipulate_io_image": {
         "name": "manipulate_io_image",
@@ -224,7 +214,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
                   "--delay", "0.05", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000007],
-        "timeout": 30,
+        "timeout": 90,
     },
     "monitor_process_state": {
         "name": "monitor_process_state",
@@ -233,7 +223,7 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
                   "--count", "5", "--delay", "0.5", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000002],
-        "timeout": 30,
+        "timeout": 90,
     },
 }
 
@@ -254,15 +244,14 @@ def log_event(event: dict):
     """Append one event to the shared JSON log store."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
     events = []
-    log_path = Path(_wsl_log_path())
-    if log_path.exists():
+    if LOG_STORE_PATH.exists():
         try:
-            events = json.loads(log_path.read_text())
+            events = json.loads(LOG_STORE_PATH.read_text())
         except (json.JSONDecodeError, OSError):
             events = []
     events.append(event)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(events, indent=2))
+    LOG_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOG_STORE_PATH.write_text(json.dumps(events, indent=2))
 
 
 def run_step(step: dict) -> dict:
@@ -281,21 +270,9 @@ def run_step(step: dict) -> dict:
 
     step_timeout = step.get("timeout", 90)
 
-    wsl_log = _wsl_log_path()
-    converted_args = []
-    i = 0
-    while i < len(step["args"]):
-        if step["args"][i] == "--log" and i + 1 < len(step["args"]):
-            converted_args.append("--log")
-            converted_args.append(wsl_log)
-            i += 2
-        else:
-            converted_args.append(step["args"][i])
-            i += 1
-
     try:
         result = subprocess.run(
-            ["sudo", sys.executable, step["script"], *converted_args],
+            ["sudo", sys.executable, step["script"], *step["args"]],
             capture_output=True, text=True, timeout=step_timeout,
         )
     except subprocess.TimeoutExpired:
