@@ -12,7 +12,7 @@
 # autoencoder_detector.py, fusion.py — §5 of the master file) remain the final
 # deliverable; these signatures give a working, real-IDS ground truth now.
 #
-# SID allocation: 9000001–9000025 reserved for ASCEND-PG testbed rules.
+# SID allocation: 9000001–9000024 reserved for ASCEND-PG testbed rules.
 # (SIDs 9000003, 9000011–9000019, 9000021 are unused/reserved)
 
 # ===== FDI / RESPONSE INJECTION (T0836) — writes to holding registers =====
@@ -68,11 +68,6 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Diagnostics Clear Co
 # (sid:9000002) may also fire. Additional TCP-level detection:
 alert tcp any any -> any 502 (msg:"ASCEND-PG DoS - Rapid TCP SYN to Modbus (T0814)"; flags:S; threshold:type both, track by_src, count 20, seconds 5; classtype:attempted-dos; sid:9000010; rev:1;)
 
-# ===== DoS — Sub-Threshold Read Flood (T0814) =====
-# Detects dos_quiet: 100 FC03 reads in 5s on one connection.
-# Falls below modbus.flooded threshold (500) so uses rate-based detection.
-alert modbus any any -> any 502 (msg:"ASCEND-PG DoS - Sub-Threshold Read Flood (T0814)"; flow:to_server, established; dsize:<20; threshold:type both, track by_src, count 50, seconds 5; classtype:attempted-dos; sid:9000020; rev:1;)
-
 # ===== MITM — Modbus on Non-Standard Port 503 (T0830) =====
 # mitm_proxy.py listens on TCP 503 and forwards to PLC on 502.
 # Suricata's Modbus decoder only inspects detection-ports 502, so
@@ -89,8 +84,11 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG BruteForce - Rapid Register Enum
 # Raw byte match as fallback when Suricata's Modbus decoder rejects
 # unsolicited responses (no matching request in TCP flow state).
 alert tcp any any -> any 502 (msg:"ASCEND-PG DoV - Forged FC06 Write (T0815)"; flow:to_server, established; dsize:12; content: "|00 00|"; offset:2; depth:2; content: "|00|"; offset:6; depth:1; content: "|06|"; offset:7; depth:1; classtype:attempted-admin; sid:9000024; rev:1;)
+<<<<<<< HEAD
 
 # ===== Recon — Coil Read (T0801) =====
 # Detect coil reads (FC01) — uncommon in normal SCADA polling.
 # No attack script currently uses FC01; kept as defense-in-depth.
 alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Coil Read FC01 (T0801)"; modbus: function 1; classtype:attempted-recon; sid:9000025; rev:1;)
+=======
+>>>>>>> 6c216f2 (Remove dead code, fix Suricata syntax, update output labels)
