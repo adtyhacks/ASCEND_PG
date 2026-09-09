@@ -21,6 +21,7 @@ Run attack scripts ON THE ATTACKER HOST inside the Mininet topology.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 ATTACKS_DIR = REPO_ROOT / "attacks"
 DATA_DIR = REPO_ROOT / "data"
 LOG_STORE_PATH = DATA_DIR / "log_store.json"
@@ -36,6 +38,30 @@ WSL_LOG_PATH = str(LOG_STORE_PATH).replace("\\", "/")
 DETECTION_SEARCH_BUFFER_SEC = 5
 
 _hybrid_detector = None
+
+# Interface auto-detection: s1-eth7 in root namespace, attacker-eth0 in Mininet host ns
+_INTERFACE_CACHE = None
+
+def _detect_interface():
+    """Auto-detect the capture interface.
+    Returns 's1-eth7' if running in root namespace (Suricata side),
+    or 'attacker-eth0' if running inside a Mininet host namespace.
+    """
+    global _INTERFACE_CACHE
+    if _INTERFACE_CACHE is not None:
+        return _INTERFACE_CACHE
+    import subprocess as _sp
+    for iface in ("s1-eth7", "attacker-eth0"):
+        try:
+            _sp.run(["ip", "link", "show", iface],
+                    capture_output=True, timeout=5, check=True)
+            _INTERFACE_CACHE = iface
+            print(f"[executor] Auto-detected interface: {iface}")
+            return iface
+        except Exception:
+            continue
+    _INTERFACE_CACHE = "s1-eth7"
+    return _INTERFACE_CACHE
 
 # ---------------------------------------------------------------------------
 # PPO technique ID -> testbed step name mapping
@@ -260,7 +286,12 @@ def run_step(step: dict) -> dict:
 
     Returns dict with: name, start, end, detect_sids, techniques.
     """
+    detected_iface = _detect_interface()
+    # Replace s1-eth7 in step args with the actual interface
+    step_args = [detected_iface if a == "s1-eth7" else a for a in step["args"]]
+
     print(f"\n=== [executor] Running: {step['name']} ({'+'.join(step['techniques'])}) ===")
+    print(f"[executor] Using interface: {detected_iface}")
     start = datetime.now(timezone.utc)
 
     log_event({
@@ -271,9 +302,13 @@ def run_step(step: dict) -> dict:
 
     step_timeout = step.get("timeout", 90)
 
+    # When running inside Mininet (as root), skip sudo to preserve namespace
+    is_root = os.geteuid() == 0 if hasattr(os, "geteuid") else False
+    cmd_prefix = [sys.executable] if is_root else ["sudo", sys.executable]
+
     try:
         result = subprocess.run(
-            ["sudo", sys.executable, step["script"], *step["args"]],
+            cmd_prefix + [step["script"], *step_args],
             capture_output=True, text=True, timeout=step_timeout,
         )
     except subprocess.TimeoutExpired:
@@ -314,12 +349,13 @@ def run_step(step: dict) -> dict:
 from defense.hybrid_detector import _find_suricata_alerts as find_alerts_for_window
 
 
-def get_hybrid_detector(interface="s1-eth7", use_ml=True, use_suricata=True):
+def get_hybrid_detector(interface=None, use_ml=True, use_suricata=True):
     global _hybrid_detector
     if _hybrid_detector is not None:
         return _hybrid_detector
+    if interface is None:
+        interface = _detect_interface()
     try:
-        sys.path.insert(0, str(REPO_ROOT))
         from defense.hybrid_detector import HybridDetector
         _hybrid_detector = HybridDetector(
             interface=interface, use_ml=use_ml, use_suricata=use_suricata
