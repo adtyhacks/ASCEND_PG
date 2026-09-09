@@ -13,8 +13,6 @@ Usage:
 
 import json
 import threading
-import time
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -218,7 +216,3 @@ class FlowLogger:
                 pass
 
         return flows
-
-    def get_recent(self, n=20):
-        with self._lock:
-            return list(self._completed[-n:])

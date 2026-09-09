@@ -17,7 +17,6 @@ import json
 import os
 import tempfile
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -219,8 +218,3 @@ class ModbusLogger:
             self._packets.clear()
 
         return packets
-
-    def get_recent(self, n=50):
-        """Get the last N packets without stopping capture."""
-        with self._lock:
-            return list(self._packets[-n:])
