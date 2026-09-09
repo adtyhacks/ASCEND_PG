@@ -10,10 +10,11 @@ Detection modes:
   - hybrid:        Both signals combined (recommended)
 """
 
-from datetime import datetime, timezone
+import json
+from datetime import datetime
 from pathlib import Path
 
-from .flow_extractor import FlowExtractor, FEATURE_COLS
+from .flow_extractor import FlowExtractor
 from .ml_detector import MLDetector
 
 
@@ -35,7 +36,6 @@ def _find_suricata_alerts(sids, start, end):
                 if not line or '"event_type"' not in line:
                     continue
                 try:
-                    import json
                     entry = json.loads(line)
                 except Exception:
                     continue
@@ -81,7 +81,7 @@ class HybridDetector:
                 self.use_ml = False
 
     def is_ml_available(self) -> bool:
-        return self.ml_detector.is_loaded()
+        return self.use_ml and self.ml_detector.is_loaded()
 
     def start_capture(self):
         if self.extractor and self.use_ml:
@@ -90,6 +90,11 @@ class HybridDetector:
     def stop_capture(self):
         if self.extractor and self.use_ml:
             self.extractor.stop_capture()
+
+    def clear_flows(self):
+        """Clear accumulated flow state between detection steps."""
+        if self.extractor and self.use_ml:
+            self.extractor.clear_flows()
 
     def get_verdict(self, step_start, step_end, detect_sids=None):
         detect_sids = detect_sids or []
@@ -126,7 +131,7 @@ class HybridDetector:
             method = "ml"
         else:
             combined = False
-            method = "none"
+            method = "undetected"
 
         return {
             "suricata_detected": suricata_detected,

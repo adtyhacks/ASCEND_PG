@@ -44,10 +44,8 @@ plc1 up on 10.0.0.1.
 
 import argparse
 import json
-import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 # --- path anchors (repo-relative, cwd-independent) --------------------
@@ -60,7 +58,6 @@ REPORT_PATH = DATA_DIR / "cycle_report.json"
 # Import shared utilities from testbed_executor
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.testbed_executor import (
-    log_event as _log_event,
     run_step as _run_step,
     find_alerts_for_window as _find_alerts,
     get_hybrid_detector,
@@ -263,7 +260,6 @@ FLOW_TIMEOUT_SEC = 660  # 11 minutes — covers Suricata's default TCP flow time
 ATTACKER_LOG_STORE = LOG_STORE_PATH
 
 # Use shared utilities from testbed_executor
-log_event = _log_event
 run_step = _run_step
 find_alerts_for_window = _find_alerts
 
@@ -360,6 +356,7 @@ def main():
 
     for step in STEPS:
         if detector and detector.is_ml_available():
+            detector.clear_flows()
             detector.start_capture()
         try:
             timing = run_step(step)

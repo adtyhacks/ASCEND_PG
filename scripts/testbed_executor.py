@@ -34,14 +34,13 @@ LOG_STORE_PATH = DATA_DIR / "log_store.json"
 WSL_LOG_PATH = str(LOG_STORE_PATH).replace("\\", "/")
 
 DETECTION_SEARCH_BUFFER_SEC = 5
-SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
 
 _hybrid_detector = None
 
 # ---------------------------------------------------------------------------
 # PPO technique ID -> testbed step name mapping
 # Only techniques with real attack scripts are mapped.
-# None means fallback to mock mode.
+# None means fallback to calibrated detection mode.
 # ---------------------------------------------------------------------------
 TECHNIQUE_TO_STEP_NAME = {
     # Stage 0: Reconnaissance
@@ -311,44 +310,8 @@ def run_step(step: dict) -> dict:
     }
 
 
-def find_alerts_for_window(sids: list, start: datetime, end: datetime) -> list:
-    """Scan Suricata's eve.json for alerts matching the given SIDs
-    within the time window [start, end + buffer].
-
-    Returns list of matching alert entry dicts.
-    """
-    if not SURICATA_EVE_LOG.exists():
-        return []
-
-    window_end = end.timestamp() + DETECTION_SEARCH_BUFFER_SEC
-    matches = []
-
-    with open(SURICATA_EVE_LOG) as f:
-        for line in f:
-            line = line.strip()
-            if not line or '"event_type"' not in line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if entry.get("event_type") != "alert":
-                continue
-            alert = entry.get("alert", {})
-            if alert.get("signature_id") not in sids:
-                continue
-
-            flow = entry.get("flow", {})
-            flow_start_str = flow.get("start")
-            if flow_start_str:
-                ts = datetime.fromisoformat(flow_start_str.replace("Z", "+00:00"))
-            else:
-                ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
-
-            if start.timestamp() <= ts.timestamp() <= window_end:
-                matches.append(entry)
-
-    return matches
+# Re-export from hybrid_detector to avoid duplicate implementation
+from defense.hybrid_detector import _find_suricata_alerts as find_alerts_for_window
 
 
 def get_hybrid_detector(interface="s1-eth7", use_ml=True, use_suricata=True):
@@ -379,6 +342,7 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
     detector = get_hybrid_detector(use_ml=use_ml, use_suricata=use_suricata)
 
     if detector and use_ml:
+        detector.clear_flows()
         detector.start_capture()
 
     timing = run_step(step)
@@ -409,9 +373,8 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
             detector.stop_capture()
 
     # Suricata-only fallback
-    from defense.hybrid_detector import _find_suricata_alerts
     if use_suricata:
-        alerts = _find_suricata_alerts(
+        alerts = find_alerts_for_window(
             timing["detect_sids"], timing["start"], timing["end"]
         )
     else:
@@ -428,7 +391,7 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
         "ml_ae_score": 0.0,
         "ml_available": False,
         "ml_error": "Detector unavailable" if not use_suricata else None,
-        "detection_method": "suricata" if use_suricata else "none",
+        "detection_method": "suricata" if use_suricata else "undetected",
         "step_name": timing["name"],
         "techniques": timing["techniques"],
         "mode": detection_mode,

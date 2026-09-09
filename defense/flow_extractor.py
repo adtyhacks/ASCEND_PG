@@ -8,20 +8,18 @@ Usage:
     extractor = FlowExtractor(interface="s1-eth7")
     extractor.start()
     # ... attack runs ...
-    flows_df = extractor.stop()  # returns DataFrame with 78 feature columns
+    window_df = extractor.get_window()  # returns last WINDOW_SIZE flows as DataFrame
+    extractor.clear_flows()  # reset state between detection steps
 """
 
 import threading
-import time
 from collections import defaultdict
-from datetime import datetime, timezone
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 try:
-    from scapy.all import AsyncSniffer, TCP, IP, Raw
+    from scapy.all import AsyncSniffer, TCP, IP
     SCAPY_AVAILABLE = True
 except ImportError:
     SCAPY_AVAILABLE = False
@@ -310,31 +308,6 @@ class FlowExtractor:
         )
         self._sniffer.start()
 
-    def stop(self):
-        """Stop capture and return flow features as DataFrame."""
-        if self._sniffer is not None:
-            try:
-                self._sniffer.stop()
-            except Exception:
-                pass
-            self._sniffer = None
-
-        with self._lock:
-            flows = {}
-            for flow_id, state in self._flows.items():
-                if state.packets >= 2:
-                    flows[flow_id] = _compute_flow_features(flow_id, state)
-            self._flows.clear()
-
-        if not flows:
-            return pd.DataFrame(columns=FEATURE_COLS)
-
-        df = pd.DataFrame(list(flows.values()))
-        for col in FEATURE_COLS:
-            if col not in df.columns:
-                df[col] = 0.0
-        return df[FEATURE_COLS].fillna(0.0)
-
     def stop_capture(self):
         """Stop capture without clearing flow state."""
         if self._sniffer is not None:
@@ -343,6 +316,11 @@ class FlowExtractor:
             except Exception:
                 pass
             self._sniffer = None
+
+    def clear_flows(self):
+        """Clear accumulated flow state between detection steps."""
+        with self._lock:
+            self._flows.clear()
 
     def get_window(self):
         """Get last WINDOW_SIZE flows for LSTM input. Does NOT stop capture."""
@@ -364,5 +342,5 @@ class FlowExtractor:
         if len(df) >= WINDOW_SIZE:
             return df.iloc[-WINDOW_SIZE:]
         pad_count = WINDOW_SIZE - len(df)
-        padding = pd.concat([df.iloc[:1]] * pad_count, ignore_index=True)
+        padding = pd.DataFrame(np.zeros((pad_count, len(FEATURE_COLS))), columns=FEATURE_COLS)
         return pd.concat([padding, df], ignore_index=True)

@@ -4,8 +4,8 @@ ASCEND-PG — Live Battle & Defense Evaluation (Streamlit page)
 Unified interface for PPO-driven attack campaigns with three operational modes:
 1. PPO + Real Testbed: PPO selects MITRE techniques, real attack scripts run
    on the Mininet testbed via file-based handoff to ppo_step_watcher.py.
-2. PPO + Mock: PPO selects techniques, detection evaluated via calibrated
-   mock probabilities (no testbed required).
+2. PPO + Simulation: PPO selects techniques, detection evaluated via calibrated
+   probabilistic model (no testbed required).
 3. Mininet Testbed Only: Raw event viewer for live testbed monitoring.
 
 File-based handoff protocol (PPO + Real Testbed mode):
@@ -263,7 +263,7 @@ def _record_completed_campaign():
 
 
 def _step_campaign_mock():
-    """Execute one PPO step using mock detection (no testbed)."""
+    """Execute one PPO step using calibrated detection (no testbed)."""
     if not st.session_state.get("battle_active"):
         return
     env = st.session_state["battle_env"]
@@ -293,10 +293,10 @@ def _step_campaign_mock():
         "ML Confidence": "0.000",
         "LSTM Score": "0.000",
         "AE Score": "0.000",
-        "Detection Method": "mock",
+        "Detection Method": "calibrated",
         "Status": "Detected" if detected else "Compromised",
         "Detected": detected,
-        "Mode": "Mock",
+        "Mode": "Simulation",
     }
     st.session_state["battle_events"].append(event)
     st.session_state["battle_explanations"].append(explanation)
@@ -345,7 +345,7 @@ def _step_campaign_real():
             mode_label = f"Real ({detection_method})"
         else:
             error_msg = result.get("error", "timeout") if result else "timeout"
-            status_box.warning(f"Testbed failed: {error_msg}. Falling back to mock.")
+            status_box.warning(f"Testbed failed: {error_msg}. Using calibrated detection.")
             time.sleep(3)
             status_box.empty()
             _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
@@ -354,8 +354,8 @@ def _step_campaign_real():
             ml_confidence = 0.0
             ml_lstm = 0.0
             ml_ae = 0.0
-            detection_method = "mock"
-            mode_label = "Mock (fallback)"
+            detection_method = "calibrated"
+            mode_label = "Simulation (fallback)"
     else:
         _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
         st.session_state["battle_reward"] += float(mock_reward)
@@ -364,8 +364,8 @@ def _step_campaign_real():
         ml_confidence = 0.0
         ml_lstm = 0.0
         ml_ae = 0.0
-        detection_method = "mock"
-        mode_label = "Mock" if not has_testbed else "Mock (busy)"
+        detection_method = "calibrated"
+        mode_label = "Simulation" if not has_testbed else "Simulation (queued)"
 
     # Compute reward (same logic as rl_env.py)
     reward = -0.1
@@ -537,7 +537,7 @@ m1.metric("Current step", len(events))
 m2.metric("Evasion", f"{current_evasion:.0%}" if events else "---")
 m3.metric("Campaigns", len(campaigns))
 m4.metric("Plateau", "Detected" if plateaued else "Monitoring")
-mode_text = "Real Testbed" if use_real else "Mock"
+mode_text = "Real Testbed" if use_real else "Simulation"
 m5.metric("Mode", mode_text)
 
 if plateaued:
@@ -742,7 +742,7 @@ if use_real:
 
 
 # =============================================================================
-# Section: Legacy Mininet Testbed Monitor (mock mode only)
+# Section: Legacy Mininet Testbed Monitor (simulation mode only)
 # =============================================================================
 else:
     st.divider()

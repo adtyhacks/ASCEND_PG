@@ -6,7 +6,6 @@ on Mininet traffic features.
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 
