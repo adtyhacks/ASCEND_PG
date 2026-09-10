@@ -766,16 +766,23 @@ if LOG_STORE.exists():
                     src = "10.0.0.10"
                     dst = target
                     info = f"{action} | {technique}"
-                elif "hybrid_detection" in action or "suricata" in action.lower():
+                elif e.get("detected") is not None or "hybrid_detection" in action or "suricata" in action.lower():
                     proto = "IDS Alert"
                     src = "Suricata"
                     dst = "-"
                     method = e.get("detection_method", "-")
-                    conf = e.get("ml_confidence", 0)
-                    info = f"{technique} | method={method} conf={conf:.2f}"
-                elif stage in ("recon", "attack", "Impair Process Control"):
-                    proto = "Attack"
-                    src = "10.0.0.66"
+                    conf = e.get("ml_confidence", e.get("confidence", 0))
+                    detected = e.get("detected", False)
+                    info = f"{technique} | {'DETECTED' if detected else 'clean'} | {method} conf={conf:.2f}"
+                elif stage == "normal_traffic":
+                    proto = "SCADA Poll"
+                    src = "10.0.0.10"
+                    dst = target
+                    info = f"{action}"
+                elif technique.startswith("T0") or stage != "-":
+                    is_modbus_op = action.startswith("fc") or "modbus" in action.lower()
+                    proto = "Modbus TCP" if is_modbus_op else "Attack"
+                    src = e.get("source_ip", "10.0.0.66")
                     dst = target
                     info = f"{technique} | {action}"
                 else:
@@ -820,6 +827,44 @@ if FLOW_LOG.exists():
     except Exception:
         pass
 
+# 4. From cycle_report.json (detection results from run_cycle)
+CYCLE_REPORT = DATA_DIR / "cycle_report.json"
+if CYCLE_REPORT.exists():
+    try:
+        cycle_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
+        steps = cycle_data if isinstance(cycle_data, list) else cycle_data.get("steps", [])
+        for step in steps:
+            ts = step.get("end_time", step.get("start_time", ""))
+            if "T" in ts:
+                ts = ts.split("T")[1][:12]
+            detected = step.get("detected", False)
+            method = step.get("detection_method", "suricata")
+            ml_conf = step.get("ml_confidence", 0)
+            techniques = "+".join(step.get("techniques", []))
+            step_name = step.get("name", "-")
+            alert_count = step.get("alert_count", 0)
+
+            if detected:
+                proto = "IDS Alert"
+                src = "Suricata" if method == "suricata" else "ML"
+                info = f"{techniques} | {step_name} | DETECTED | {method} alerts={alert_count} conf={ml_conf:.2f}"
+            else:
+                proto = "Attack"
+                src = "10.0.0.66"
+                info = f"{techniques} | {step_name} | EVASION | no alerts"
+
+            all_packets.append({
+                "Time": ts,
+                "Source": src,
+                "Destination": step.get("target", "-"),
+                "Protocol": proto,
+                "Length": 0,
+                "Info": info,
+                "_type": proto.lower().replace(" ", "_"),
+            })
+    except Exception:
+        pass
+
 # Sort by time (most recent last for sniffer view)
 all_packets.sort(key=lambda x: x.get("Time", ""))
 
@@ -832,7 +877,8 @@ if proto_filter != "All":
         "IDS Alert": "ids_alert",
     }
     filter_type = filter_map.get(proto_filter, "")
-    all_packets = [p for p in all_packets if p["_type"] == filter_type]
+    if filter_type:
+        all_packets = [p for p in all_packets if p["_type"] == filter_type or (filter_type == "modbus" and p["_type"] == "modbus_tcp")]
 
 # Limit to max
 display_packets = all_packets[-max_packets:]
@@ -844,7 +890,7 @@ if display_packets:
     # Packet stats
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Packets", len(all_packets))
-    col2.metric("Modbus TCP", sum(1 for p in all_packets if p["_type"] == "modbus"))
+    col2.metric("Modbus TCP", sum(1 for p in all_packets if p["_type"] in ("modbus", "modbus_tcp")))
     col3.metric("Attacks", sum(1 for p in all_packets if p["_type"] == "attack"))
     col4.metric("IDS Alerts", sum(1 for p in all_packets if p["_type"] in ("ids_alert", "ids")))
 else:
