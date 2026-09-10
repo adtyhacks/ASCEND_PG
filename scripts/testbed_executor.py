@@ -248,7 +248,7 @@ STEP_DEFS = {
         "name": "denial_of_view",
         "techniques": ["T0815"],
         "script": str(ATTACKS_DIR / "denial_of_view.py"),
-        "args": ["--scada-ip", "10.0.0.10", "--plc-ip", "10.0.0.1",
+        "args": ["--scada-ip", "10.0.0.20", "--plc-ip", "10.0.0.1",
                   "--count", "100", "--log", WSL_LOG_PATH],
         "detect_sids": [9000001, 9000024],
         "timeout": 90,
@@ -276,7 +276,7 @@ STEP_DEFS = {
         "name": "remote_services",
         "techniques": ["T0886"],
         "script": str(ATTACKS_DIR / "remote_services.py"),
-        "args": ["--target", "10.0.0.1", "--scada-ip", "10.0.0.10",
+        "args": ["--target", "10.0.0.1", "--scada-ip", "10.0.0.20",
                   "--log", WSL_LOG_PATH],
         "detect_sids": [9000026],
         "timeout": 120,
@@ -359,16 +359,10 @@ def build_step(technique_id: str, target_ip: str = "10.0.0.1",
 def log_event(event: dict):
     """Append one event to the shared JSON log store."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
-    events = []
     log_path = Path(WSL_LOG_PATH)
-    if log_path.exists():
-        try:
-            events = json.loads(log_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            events = []
-    events.append(event)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(events, indent=2))
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
 
 
 def run_step(step: dict) -> dict:

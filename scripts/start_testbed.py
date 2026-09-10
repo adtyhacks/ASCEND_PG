@@ -83,8 +83,11 @@ class TestbedOrchestrator:
             proc = host.popen([sys.executable, plc_script, "-i", ip, "-p", "502",
                                "--bus-id", str(i)])
             self.plc_procs.append(proc)
-        time.sleep(1.5)
-        print("      14 Modbus PLCs running (IEEE-14 bus data seeded).")
+        time.sleep(3)
+        alive = sum(1 for p in self.plc_procs if p.poll() is None)
+        print(f"      {alive}/14 Modbus PLCs running (IEEE-14 bus data seeded).")
+        if alive < 14:
+            print(f"      [!] WARNING: {14 - alive} PLC servers failed to start!")
 
     def start_scada(self):
         print("[4/6] Launching SCADA polling client...")
@@ -330,6 +333,7 @@ def main():
         orch.clean_stale()
         orch.start_network()
         orch.start_plcs()
+        orch.pingall()
         orch.start_scada()
         orch.start_suricata()
         orch.start_loggers()

