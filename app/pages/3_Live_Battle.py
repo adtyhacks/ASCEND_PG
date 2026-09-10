@@ -33,7 +33,11 @@ if PROJECT_ROOT not in sys.path:
 from testbed.grid_env import build_baseline
 from testbed.network_topology import build_ot_topology
 from testbed.visualize_topology import render_topology
-from testbed.topology import Topology, load_topology, set_topology, get_topology, save_topology_csv
+from testbed.cytoscape_topology import generate_cytoscape_json, generate_cytoscape_html
+from testbed.visjs_topology import generate_vis_json, generate_vis_html
+from testbed.export_gephi import export_graphml, export_gexf
+from testbed.export_pkt import export_pkt_xml
+from testbed.topology import get_topology
 from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES, MAX_BUSES
 from xai.attack_decision_explain import explain_step_decision
 from metrics.dvs import PlateauTracker
@@ -75,80 +79,6 @@ def _bus_to_ip(bus: int) -> str:
 st.set_page_config(page_title="Live Battle | ASCEND-PG", layout="wide")
 st.title("Live Battle & Defense Evaluation")
 st.caption("Evaluate the trained adaptive attacker against active ICS defenses.")
-
-# --- Topology Upload Section ---
-with st.expander("Topology Configuration", expanded=False):
-    st.markdown("""
-    Upload a custom topology or use the default IEEE-14 bus system.
-
-    **CSV Format:**
-
-    `nodes.csv` columns: `bus_id, name, type, voltage, ip, plc_type, bus_role`
-    - type: `slack` (reference gen), `pv` (voltage-controlled gen), `pq` (load bus)
-    - plc_type: `siemens_s7_1200`, `siemens_s7_1500`, `allen_bradley_compactlogix`, `schneider_modicon_m340`, `generic_modbus`
-    - bus_role: `generator`, `load`, `substation`
-
-    `edges.csv` columns: `from_bus, to_bus`
-    """)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        nodes_file = st.file_uploader("nodes.csv", type=["csv"], key="nodes_csv")
-    with col2:
-        edges_file = st.file_uploader("edges.csv", type=["csv"], key="edges_csv")
-
-    if nodes_file and edges_file:
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            nodes_path = os.path.join(tmpdir, "nodes.csv")
-            edges_path = os.path.join(tmpdir, "edges.csv")
-            with open(nodes_path, "wb") as f:
-                f.write(nodes_file.read())
-            with open(edges_path, "wb") as f:
-                f.write(edges_file.read())
-            try:
-                topo = load_topology(tmpdir)
-                set_topology(topo)
-                st.success(f"Loaded: {topo.num_buses} buses, {len(topo.edges)} edges, "
-                           f"{len(topo.gen_buses)} generators")
-                st.session_state["custom_topology"] = topo
-                # Save to data dir for testbed
-                save_topology_csv(topo, str(_REPO / "data" / "topology"))
-            except Exception as e:
-                st.error(f"Error loading topology: {e}")
-
-    # Show current topology summary
-    topo = get_topology()
-    col_a, col_b, col_c, col_d = st.columns(4)
-    col_a.metric("Buses", topo.num_buses)
-    col_b.metric("Edges", len(topo.edges))
-    col_c.metric("Generators", len(topo.gen_buses))
-    col_d.metric("Max Degree", topo.max_degree)
-
-    # Download current topology as CSV
-    if st.button("Export Current Topology as CSV"):
-        save_topology_csv(topo, str(_REPO / "data" / "topology_export"))
-        st.success("Exported to data/topology_export/")
-        st.download_button(
-            "Download nodes.csv",
-            data=open(_REPO / "data" / "topology_export" / "nodes.csv").read(),
-            file_name="nodes.csv",
-            mime="text/csv",
-        )
-        st.download_button(
-            "Download edges.csv",
-            data=open(_REPO / "data" / "topology_export" / "edges.csv").read(),
-            file_name="edges.csv",
-            mime="text/csv",
-        )
-
-    # Template download
-    st.markdown("---")
-    st.markdown("**Download CSV Templates:**")
-    template_nodes = "bus_id,name,type,voltage,ip,plc_type,bus_role,pg,qg,pl,ql\n0,Bus1,slack,1.060,10.0.0.1,siemens_s7_1200,generator,232.4,-16.9,0.0,0.0\n1,Bus2,pv,1.045,10.0.0.2,allen_bradley_compactlogix,generator,40.0,42.4,21.7,12.7\n2,Bus3,pq,1.010,10.0.0.3,generic_modbus,load,0.0,0.0,94.2,19.0\n"
-    template_edges = "from_bus,to_bus\n0,1\n0,2\n1,2\n"
-    st.download_button("Template nodes.csv", template_nodes, "nodes_template.csv", "text/csv")
-    st.download_button("Template edges.csv", template_edges, "edges_template.csv", "text/csv")
 
 # Ensure baseline topology exists in session state
 if "topo_nodes" not in st.session_state or "topo_edges" not in st.session_state:
@@ -648,20 +578,118 @@ else:
 # --- Topology (only when events exist) ---
 if events:
     st.subheader("Compromise & Defense Topology")
+
+    # Visualization mode selector
+    viz_col1, viz_col2, viz_col3 = st.columns([2, 1, 1])
+    with viz_col1:
+        viz_mode = st.selectbox("Visualization Mode",
+                                ["Pyvis (Interactive)", "Cytoscape.js", "vis.js (Standalone)"],
+                                key="viz_mode")
+    with viz_col2:
+        show_tooltips = st.checkbox("Show Tooltips", value=True, key="show_tooltips")
+
+    def _target_to_topo_node(target_host):
+        """Map event Target Host to topology node ID."""
+        if target_host.startswith("plc"):
+            num = target_host[3:]
+            if num.isdigit():
+                return f"rtu_{int(num) - 1}"
+        elif target_host == "scada":
+            return "scada_server"
+        elif target_host == "hmi":
+            return "hmi"
+        elif target_host == "historian":
+            return "historian"
+        return target_host
+
     compromised = set()
     detected_nodes = set()
+    attack_paths = []
     for event in events:
         target = event["Target Host"]
+        topo_id = _target_to_topo_node(target)
         if event["Detected"]:
-            detected_nodes.add(target)
+            detected_nodes.add(topo_id)
         else:
-            compromised.add(target)
+            compromised.add(topo_id)
 
-    topology_html = render_topology(
-        st.session_state["topo_nodes"], st.session_state["topo_edges"],
-        compromised_ids=compromised, detected_ids=detected_nodes,
-    )
-    components.html(topology_html, height=500, scrolling=True)
+    # Build attack path from event chain (non-detected targets in order)
+    if len(events) > 1:
+        path = []
+        for evt in events:
+            if not evt.get("Detected", True):
+                path.append(_target_to_topo_node(evt["Target Host"]))
+        if len(path) >= 2:
+            attack_paths = [path]
+
+    if viz_mode == "Pyvis (Interactive)":
+        topology_html = render_topology(
+            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            compromised_ids=compromised, detected_ids=detected_nodes,
+            live_events=events, attack_paths=attack_paths,
+            show_tooltips=show_tooltips,
+        )
+        components.html(topology_html, height=500, scrolling=True)
+    elif viz_mode == "Cytoscape.js":
+        cyto_html = generate_cytoscape_html(
+            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            compromised_ids=compromised, detected_ids=detected_nodes,
+            attack_paths=attack_paths,
+        )
+        components.html(cyto_html, height=500, scrolling=True)
+    else:
+        vis_html = generate_vis_html(
+            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            compromised_ids=compromised, detected_ids=detected_nodes,
+            attack_paths=attack_paths,
+        )
+        components.html(vis_html, height=500, scrolling=True)
+
+    # Export buttons
+    with st.expander("Export Topology", expanded=False):
+        exp_col1, exp_col2, exp_col3 = st.columns(3)
+        with exp_col1:
+            if st.button("Export Gephi (.graphml)"):
+                import tempfile
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".graphml", delete=False) as tmp:
+                        export_graphml(st.session_state["topo_nodes"],
+                                       st.session_state["topo_edges"], tmp.name)
+                    st.success("GraphML exported!")
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("Download .graphml", f.read(),
+                                           "ascend_pg_topology.graphml", "application/xml")
+                finally:
+                    if os.path.exists(tmp.name):
+                        os.unlink(tmp.name)
+        with exp_col2:
+            if st.button("Export Gephi (.gexf)"):
+                import tempfile
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".gexf", delete=False) as tmp:
+                        export_gexf(st.session_state["topo_nodes"],
+                                    st.session_state["topo_edges"], tmp.name)
+                    st.success("GEXF exported!")
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("Download .gexf", f.read(),
+                                           "ascend_pg_topology.gexf", "application/xml")
+                finally:
+                    if os.path.exists(tmp.name):
+                        os.unlink(tmp.name)
+        with exp_col3:
+            if st.button("Export Packet Tracer (.xml)"):
+                import tempfile
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
+                        export_pkt_xml(st.session_state["topo_nodes"],
+                                       st.session_state["topo_edges"], tmp.name)
+                    st.success("Packet Tracer XML exported!")
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("Download .xml", f.read(),
+                                           "ascend_pg_pkt_topology.xml", "application/xml")
+                finally:
+                    if os.path.exists(tmp.name):
+                        os.unlink(tmp.name)
 
 # --- PPO Tactical Rationale ---
 if events:
