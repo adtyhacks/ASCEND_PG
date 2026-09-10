@@ -18,8 +18,18 @@ from .flow_extractor import FlowExtractor
 from .ml_detector import MLDetector
 
 
+import re
+
 SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
 DETECTION_BUFFER_SEC = 3
+
+
+def _parse_suricata_ts(ts_str: str) -> datetime:
+    """Parse Suricata timestamps like '2026-09-09T14:48:03.781984+0530'."""
+    ts_str = ts_str.replace("Z", "+00:00")
+    if re.search(r'[+-]\d{4}$', ts_str):
+        ts_str = ts_str[:-2] + ':' + ts_str[-2:]
+    return datetime.fromisoformat(ts_str)
 
 
 def _find_suricata_alerts(sids, start, end):
@@ -48,9 +58,9 @@ def _find_suricata_alerts(sids, start, end):
                 flow = entry.get("flow", {})
                 flow_start_str = flow.get("start")
                 if flow_start_str:
-                    ts = datetime.fromisoformat(flow_start_str.replace("Z", "+00:00"))
+                    ts = _parse_suricata_ts(flow_start_str)
                 else:
-                    ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
+                    ts = _parse_suricata_ts(entry["timestamp"])
 
                 if start.timestamp() <= ts.timestamp() <= window_end:
                     matches.append(entry)

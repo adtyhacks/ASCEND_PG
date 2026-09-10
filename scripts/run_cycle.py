@@ -47,6 +47,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from testbed.topology import load_topology, get_topology
 
 # --- path anchors (repo-relative, cwd-independent) --------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent   # scripts/ -> ascend-pg-webapp/
@@ -111,14 +112,14 @@ STEPS = [
         "name": "fdi_attack",
         "techniques": ["T0836"],
         "script": str(ATTACKS_DIR / "fdi_attack.py"),
-        "args": ["--target", "10.0.0.1", "-a", "0", "-v", "9999"],
+        "args": ["--target", "10.0.0.1", "-a", "40000", "-v", "9999"],
         "detect_sids": [9000001],
     },
     {
         "name": "naive_response_injection",
         "techniques": ["T0836"],
         "script": str(ATTACKS_DIR / "naive_response_injection.py"),
-        "args": ["--target", "10.0.0.1", "--address", "0", "--value", "65535",
+        "args": ["--target", "10.0.0.1", "--address", "40000", "--value", "65535",
                   "--duration", "5", "--interval", "1.0",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001],
@@ -127,7 +128,7 @@ STEPS = [
         "name": "complex_response_injection",
         "techniques": ["T0836"],
         "script": str(ATTACKS_DIR / "complex_response_injection.py"),
-        "args": ["--target", "10.0.0.1", "--address", "0", "--mode", "ramp",
+        "args": ["--target", "10.0.0.1", "--address", "40000", "--mode", "ramp",
                   "--magnitude", "5", "--duration", "5", "--interval", "1.0",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001],
@@ -146,7 +147,7 @@ STEPS = [
         "name": "cmd_inject_register",
         "techniques": ["T0855"],
         "script": str(ATTACKS_DIR / "cmd_inject_register.py"),
-        "args": ["--target", "10.0.0.1", "--address", "50", "--value", "0",
+        "args": ["--target", "10.0.0.1", "--address", "40050", "--value", "0",
                   "--count", "5", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001],  # Caught by holding register write rule
     },
@@ -247,7 +248,7 @@ STEPS = [
         "name": "manipulate_io_image",
         "techniques": ["T0835"],
         "script": str(ATTACKS_DIR / "manipulate_io_image.py"),
-        "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
+        "args": ["--target", "10.0.0.1", "--coil-start", "0", "--coil-count", "20",
                   "--delay", "0.05", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000007],  # Coil writes detected
         "timeout": 30,
@@ -258,7 +259,7 @@ STEPS = [
         "name": "monitor_process_state",
         "techniques": ["T0801"],
         "script": str(ATTACKS_DIR / "monitor_process_state.py"),
-        "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
+        "args": ["--target", "10.0.0.1", "--start-reg", "30000", "--end-reg", "30099",
                   "--count", "5", "--delay", "0.5", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000023],  # Register enumeration
         "timeout": 30,
@@ -334,7 +335,17 @@ def main():
     parser.add_argument("--report", default=str(REPORT_PATH),
                          help="path to write the merged log + verdicts JSON "
                               "(defaults to <repo>/data/cycle_report.json)")
+    parser.add_argument("--topology", default=None,
+                         help="path to topology directory or JSON file")
     args = parser.parse_args()
+
+    # Load topology for dynamic IPs
+    topology = load_topology(args.topology)
+    print(f"[run_cycle] Loaded topology: {topology.num_buses} buses")
+    
+    # Get default target IP from topology (first bus)
+    default_target = topology.get_ip(0) if topology.num_buses > 0 else "10.0.0.1"
+    print(f"[run_cycle] Default target IP: {default_target}")
 
     step_results = []
     detector = get_hybrid_detector(use_ml=True, use_suricata=True)
@@ -366,7 +377,16 @@ def main():
         except ImportError as e:
             diag.write(f"scapy available: False, error: {e}\n")
 
+    # Update STEPS with dynamic target IP
+    import copy
+    dynamic_steps = []
     for step in STEPS:
+        step_copy = copy.deepcopy(step)
+        # Replace hardcoded 10.0.0.1 with dynamic target
+        step_copy["args"] = [default_target if a == "10.0.0.1" else a for a in step_copy["args"]]
+        dynamic_steps.append(step_copy)
+
+    for step in dynamic_steps:
         if detector and detector.is_ml_available():
             detector.clear_flows()
             detector.start_capture()

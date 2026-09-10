@@ -1,0 +1,16 @@
+Python: /usr/bin/python3
+Python version: 3.10.12 (main, Jul 15 2026, 23:40:17) [GCC 11.4.0]
+REPO_ROOT: /mnt/c/project/ascend-pg-webapp
+sys.path[0:5]: ['/mnt/c/project/ascend-pg-webapp', '/mnt/c/project/ascend-pg-webapp/scripts', '/usr/lib/python310.zip', '/usr/lib/python3.10', '/usr/lib/python3.10/lib-dynload']
+Imports OK
+Python: /usr/bin/python3
+Python version: 3.10.12 (main, Jul 15 2026, 23:40:17) [GCC 11.4.0]
+REPO_ROOT: /mnt/c/project/ascend-pg-webapp
+sys.path[0:5]: ['/mnt/c/project/ascend-pg-webapp/detection', '/mnt/c/project/ascend-pg-webapp', '/mnt/c/project/ascend-pg-webapp', '/mnt/c/project/ascend-pg-webapp/scripts', '/usr/lib/python310.zip']
+detector created: True
+detector.is_ml_available(): True
+detector.use_ml: True
+detector.use_suricata: True
+ml_detector._loaded: True
+torch available: True, version: 2.14.0+cpu
+scapy available: True

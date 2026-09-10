@@ -2,54 +2,335 @@
   {
     "events": [
       {
-        "Timestamp": "14:55:26",
+        "Timestamp": "05:23:39",
+        "Step": 1,
+        "MITRE ID": "T0842",
+        "Technique Name": "Network Sniffing",
+        "Stage": 0,
+        "Target Host": "substation_0",
+        "Detector Confidence": "0.333",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Simulation (queued)"
+      },
+      {
+        "Timestamp": "05:23:46",
+        "Step": 2,
+        "MITRE ID": "T0815",
+        "Technique Name": "Denial of View",
+        "Stage": 3,
+        "Target Host": "pmu_0",
+        "Detector Confidence": "0.624",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation (queued)"
+      },
+      {
+        "Timestamp": "05:23:48",
+        "Step": 3,
+        "MITRE ID": "T0869",
+        "Technique Name": "Standard App Layer Protocol",
+        "Stage": 1,
+        "Target Host": "rtu_0",
+        "Detector Confidence": "0.507",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:23:52",
+        "Step": 4,
+        "MITRE ID": "T0881",
+        "Technique Name": "Service Stop",
+        "Stage": 2,
+        "Target Host": "substation_1",
+        "Detector Confidence": "0.759",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:23:53",
+        "Step": 5,
+        "MITRE ID": "T0814",
+        "Technique Name": "Denial of Service",
+        "Stage": 2,
+        "Target Host": "pmu_1",
+        "Detector Confidence": "0.789",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation (queued)"
+      },
+      {
+        "Timestamp": "05:23:54",
+        "Step": 6,
+        "MITRE ID": "T0832",
+        "Technique Name": "Manipulation of View (Replay)",
+        "Stage": 3,
+        "Target Host": "rtu_1",
+        "Detector Confidence": "0.268",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Simulation (queued)"
+      }
+    ],
+    "evasion_rate": 0.33333333333333337,
+    "campaign_complete": true,
+    "max_stage": 3,
+    "reward": 11.10379755269906,
+    "chain": [
+      {
+        "technique_id": "T0842",
+        "technique_name": "Network Sniffing",
+        "stage": 0,
+        "detected": false,
+        "confidence": 0.333
+      },
+      {
+        "technique_id": "T0815",
+        "technique_name": "Denial of View",
+        "stage": 3,
+        "detected": true,
+        "confidence": 0.624
+      },
+      {
+        "technique_id": "T0869",
+        "technique_name": "Standard App Layer Protocol",
+        "stage": 1,
+        "detected": true,
+        "confidence": 0.507
+      },
+      {
+        "technique_id": "T0881",
+        "technique_name": "Service Stop",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.759
+      },
+      {
+        "technique_id": "T0814",
+        "technique_name": "Denial of Service",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.789
+      },
+      {
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of View (Replay)",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.268
+      }
+    ],
+    "timestamp": "2026-09-10T05:23:54.524347+00:00"
+  },
+  {
+    "events": [
+      {
+        "Timestamp": "05:30:24",
         "Step": 1,
         "MITRE ID": "T0888",
         "Technique Name": "Remote System Info Discovery",
         "Stage": 0,
         "Target Host": "substation_0",
         "Detector Confidence": "1.000",
+        "ML Confidence": "1.000",
+        "LSTM Score": "1.000",
+        "AE Score": "1.000",
+        "Detection Method": "both",
         "Status": "Detected",
-        "Detected": true
+        "Detected": true,
+        "Mode": "Real (both)"
       },
       {
-        "Timestamp": "14:55:26",
+        "Timestamp": "05:30:36",
         "Step": 2,
-        "MITRE ID": "T0801",
-        "Technique Name": "Monitor Process State",
-        "Stage": 1,
+        "MITRE ID": "T0842",
+        "Technique Name": "Network Sniffing",
+        "Stage": 0,
         "Target Host": "pmu_0",
         "Detector Confidence": "1.000",
+        "ML Confidence": "1.000",
+        "LSTM Score": "1.000",
+        "AE Score": "1.000",
+        "Detection Method": "both",
         "Status": "Detected",
-        "Detected": true
+        "Detected": true,
+        "Mode": "Real (both)"
       },
       {
-        "Timestamp": "14:55:26",
+        "Timestamp": "05:30:44",
         "Step": 3,
-        "MITRE ID": "T0878",
-        "Technique Name": "Alarm Suppression",
+        "MITRE ID": "T0814",
+        "Technique Name": "Denial of Service",
         "Stage": 2,
         "Target Host": "rtu_0",
-        "Detector Confidence": "1.000",
+        "Detector Confidence": "0.998",
+        "ML Confidence": "0.998",
+        "LSTM Score": "0.996",
+        "AE Score": "1.000",
+        "Detection Method": "both",
         "Status": "Detected",
-        "Detected": true
+        "Detected": true,
+        "Mode": "Real (both)"
       },
       {
-        "Timestamp": "14:55:26",
+        "Timestamp": "05:30:51",
         "Step": 4,
+        "MITRE ID": "T0835",
+        "Technique Name": "Manipulate I/O Image",
+        "Stage": 2,
+        "Target Host": "substation_1",
+        "Detector Confidence": "0.579",
+        "ML Confidence": "0.579",
+        "LSTM Score": "0.158",
+        "AE Score": "1.000",
+        "Detection Method": "ml",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (ml)"
+      },
+      {
+        "Timestamp": "05:31:00",
+        "Step": 5,
         "MITRE ID": "T0832",
         "Technique Name": "Manipulation of View (Replay)",
         "Stage": 3,
-        "Target Host": "substation_1",
-        "Detector Confidence": "0.128",
+        "Target Host": "pmu_1",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
         "Status": "Compromised",
-        "Detected": false
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      },
+      {
+        "Timestamp": "05:31:00",
+        "Step": 6,
+        "MITRE ID": "T0886",
+        "Technique Name": "Remote Services",
+        "Stage": 0,
+        "Target Host": "rtu_1",
+        "Detector Confidence": "0.580",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:31:06",
+        "Step": 7,
+        "MITRE ID": "T0815",
+        "Technique Name": "Denial of View",
+        "Stage": 3,
+        "Target Host": "substation_2",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      },
+      {
+        "Timestamp": "05:31:12",
+        "Step": 8,
+        "MITRE ID": "T0815",
+        "Technique Name": "Denial of View",
+        "Stage": 3,
+        "Target Host": "pmu_2",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      },
+      {
+        "Timestamp": "05:31:34",
+        "Step": 9,
+        "MITRE ID": "T0846",
+        "Technique Name": "Remote System Discovery",
+        "Stage": 0,
+        "Target Host": "rtu_2",
+        "Detector Confidence": "1.000",
+        "ML Confidence": "1.000",
+        "LSTM Score": "1.000",
+        "AE Score": "1.000",
+        "Detection Method": "both",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (both)"
+      },
+      {
+        "Timestamp": "05:31:42",
+        "Step": 10,
+        "MITRE ID": "T0806",
+        "Technique Name": "Brute Force I/O",
+        "Stage": 2,
+        "Target Host": "substation_3",
+        "Detector Confidence": "0.966",
+        "ML Confidence": "0.966",
+        "LSTM Score": "0.933",
+        "AE Score": "1.000",
+        "Detection Method": "both",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (both)"
+      },
+      {
+        "Timestamp": "05:31:42",
+        "Step": 11,
+        "MITRE ID": "T0802",
+        "Technique Name": "Automated Collection",
+        "Stage": 1,
+        "Target Host": "pmu_3",
+        "Detector Confidence": "0.635",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
       }
     ],
-    "evasion_rate": 0.25,
+    "evasion_rate": 0.2727272727272727,
     "campaign_complete": true,
     "max_stage": 3,
-    "reward": 13.4082304215803,
+    "reward": -24.233340415163873,
     "chain": [
       {
         "technique_id": "T0888",
@@ -59,9 +340,186 @@
         "confidence": 1.0
       },
       {
-        "technique_id": "T0801",
-        "technique_name": "Monitor Process State",
+        "technique_id": "T0842",
+        "technique_name": "Network Sniffing",
+        "stage": 0,
+        "detected": true,
+        "confidence": 1.0
+      },
+      {
+        "technique_id": "T0814",
+        "technique_name": "Denial of Service",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.998
+      },
+      {
+        "technique_id": "T0835",
+        "technique_name": "Manipulate I/O Image",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.579
+      },
+      {
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of View (Replay)",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      },
+      {
+        "technique_id": "T0886",
+        "technique_name": "Remote Services",
+        "stage": 0,
+        "detected": true,
+        "confidence": 0.58
+      },
+      {
+        "technique_id": "T0815",
+        "technique_name": "Denial of View",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      },
+      {
+        "technique_id": "T0815",
+        "technique_name": "Denial of View",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      },
+      {
+        "technique_id": "T0846",
+        "technique_name": "Remote System Discovery",
+        "stage": 0,
+        "detected": true,
+        "confidence": 1.0
+      },
+      {
+        "technique_id": "T0806",
+        "technique_name": "Brute Force I/O",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.966
+      },
+      {
+        "technique_id": "T0802",
+        "technique_name": "Automated Collection",
         "stage": 1,
+        "detected": true,
+        "confidence": 0.635
+      }
+    ],
+    "timestamp": "2026-09-10T05:31:42.495831+00:00"
+  },
+  {
+    "events": [
+      {
+        "Timestamp": "05:34:59",
+        "Step": 1,
+        "MITRE ID": "T0842",
+        "Technique Name": "Network Sniffing",
+        "Stage": 0,
+        "Target Host": "substation_0",
+        "Detector Confidence": "1.000",
+        "ML Confidence": "1.000",
+        "LSTM Score": "1.000",
+        "AE Score": "1.000",
+        "Detection Method": "both",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (both)"
+      },
+      {
+        "Timestamp": "05:34:59",
+        "Step": 2,
+        "MITRE ID": "T0878",
+        "Technique Name": "Alarm Suppression",
+        "Stage": 2,
+        "Target Host": "pmu_0",
+        "Detector Confidence": "0.725",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:34:59",
+        "Step": 3,
+        "MITRE ID": "T0802",
+        "Technique Name": "Automated Collection",
+        "Stage": 1,
+        "Target Host": "rtu_0",
+        "Detector Confidence": "0.637",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:34:59",
+        "Step": 4,
+        "MITRE ID": "T0869",
+        "Technique Name": "Standard App Layer Protocol",
+        "Stage": 1,
+        "Target Host": "substation_1",
+        "Detector Confidence": "0.356",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:35:06",
+        "Step": 5,
+        "MITRE ID": "T0806",
+        "Technique Name": "Brute Force I/O",
+        "Stage": 2,
+        "Target Host": "pmu_1",
+        "Detector Confidence": "0.966",
+        "ML Confidence": "0.966",
+        "LSTM Score": "0.932",
+        "AE Score": "1.000",
+        "Detection Method": "both",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (both)"
+      },
+      {
+        "Timestamp": "05:35:16",
+        "Step": 6,
+        "MITRE ID": "T0832",
+        "Technique Name": "Manipulation of View (Replay)",
+        "Stage": 3,
+        "Target Host": "rtu_1",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      }
+    ],
+    "evasion_rate": 0.33333333333333337,
+    "campaign_complete": true,
+    "max_stage": 3,
+    "reward": 4.307403904614752,
+    "chain": [
+      {
+        "technique_id": "T0842",
+        "technique_name": "Network Sniffing",
+        "stage": 0,
         "detected": true,
         "confidence": 1.0
       },
@@ -70,16 +528,404 @@
         "technique_name": "Alarm Suppression",
         "stage": 2,
         "detected": true,
-        "confidence": 1.0
+        "confidence": 0.725
+      },
+      {
+        "technique_id": "T0802",
+        "technique_name": "Automated Collection",
+        "stage": 1,
+        "detected": true,
+        "confidence": 0.637
+      },
+      {
+        "technique_id": "T0869",
+        "technique_name": "Standard App Layer Protocol",
+        "stage": 1,
+        "detected": false,
+        "confidence": 0.356
+      },
+      {
+        "technique_id": "T0806",
+        "technique_name": "Brute Force I/O",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.966
       },
       {
         "technique_id": "T0832",
         "technique_name": "Manipulation of View (Replay)",
         "stage": 3,
         "detected": false,
-        "confidence": 0.128
+        "confidence": 0.0
       }
     ],
-    "timestamp": "2026-09-07T14:55:26.416519+00:00"
+    "timestamp": "2026-09-10T05:35:16.102119+00:00"
+  },
+  {
+    "events": [
+      {
+        "Timestamp": "05:38:11",
+        "Step": 1,
+        "MITRE ID": "T0814",
+        "Technique Name": "Denial of Service",
+        "Stage": 2,
+        "Target Host": "substation_0",
+        "Detector Confidence": "0.996",
+        "ML Confidence": "0.996",
+        "LSTM Score": "0.992",
+        "AE Score": "1.000",
+        "Detection Method": "ml",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (ml)"
+      },
+      {
+        "Timestamp": "05:38:20",
+        "Step": 2,
+        "MITRE ID": "T0832",
+        "Technique Name": "Manipulation of View (Replay)",
+        "Stage": 3,
+        "Target Host": "pmu_0",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      },
+      {
+        "Timestamp": "05:38:29",
+        "Step": 3,
+        "MITRE ID": "T0832",
+        "Technique Name": "Manipulation of View (Replay)",
+        "Stage": 3,
+        "Target Host": "rtu_0",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      },
+      {
+        "Timestamp": "05:38:36",
+        "Step": 4,
+        "MITRE ID": "T0835",
+        "Technique Name": "Manipulate I/O Image",
+        "Stage": 2,
+        "Target Host": "substation_1",
+        "Detector Confidence": "0.578",
+        "ML Confidence": "0.578",
+        "LSTM Score": "0.157",
+        "AE Score": "1.000",
+        "Detection Method": "ml",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (ml)"
+      },
+      {
+        "Timestamp": "05:38:36",
+        "Step": 5,
+        "MITRE ID": "T0886",
+        "Technique Name": "Remote Services",
+        "Stage": 0,
+        "Target Host": "pmu_1",
+        "Detector Confidence": "0.497",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:38:46",
+        "Step": 6,
+        "MITRE ID": "T0832",
+        "Technique Name": "Manipulation of View (Replay)",
+        "Stage": 3,
+        "Target Host": "rtu_1",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      },
+      {
+        "Timestamp": "05:38:53",
+        "Step": 7,
+        "MITRE ID": "T0801",
+        "Technique Name": "Monitor Process State",
+        "Stage": 1,
+        "Target Host": "substation_2",
+        "Detector Confidence": "0.578",
+        "ML Confidence": "0.578",
+        "LSTM Score": "0.157",
+        "AE Score": "1.000",
+        "Detection Method": "ml",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (ml)"
+      },
+      {
+        "Timestamp": "05:39:11",
+        "Step": 8,
+        "MITRE ID": "T0836",
+        "Technique Name": "Modify Parameter (FDI)",
+        "Stage": 2,
+        "Target Host": "pmu_2",
+        "Detector Confidence": "0.956",
+        "ML Confidence": "0.956",
+        "LSTM Score": "0.911",
+        "AE Score": "1.000",
+        "Detection Method": "both",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (both)"
+      },
+      {
+        "Timestamp": "05:39:11",
+        "Step": 9,
+        "MITRE ID": "T0886",
+        "Technique Name": "Remote Services",
+        "Stage": 0,
+        "Target Host": "rtu_2",
+        "Detector Confidence": "0.576",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:39:21",
+        "Step": 10,
+        "MITRE ID": "T0832",
+        "Technique Name": "Manipulation of View (Replay)",
+        "Stage": 3,
+        "Target Host": "substation_3",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      }
+    ],
+    "evasion_rate": 0.5,
+    "campaign_complete": true,
+    "max_stage": 3,
+    "reward": 6.160479605254043,
+    "chain": [
+      {
+        "technique_id": "T0814",
+        "technique_name": "Denial of Service",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.996
+      },
+      {
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of View (Replay)",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      },
+      {
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of View (Replay)",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      },
+      {
+        "technique_id": "T0835",
+        "technique_name": "Manipulate I/O Image",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.578
+      },
+      {
+        "technique_id": "T0886",
+        "technique_name": "Remote Services",
+        "stage": 0,
+        "detected": false,
+        "confidence": 0.497
+      },
+      {
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of View (Replay)",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      },
+      {
+        "technique_id": "T0801",
+        "technique_name": "Monitor Process State",
+        "stage": 1,
+        "detected": true,
+        "confidence": 0.578
+      },
+      {
+        "technique_id": "T0836",
+        "technique_name": "Modify Parameter (FDI)",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.956
+      },
+      {
+        "technique_id": "T0886",
+        "technique_name": "Remote Services",
+        "stage": 0,
+        "detected": true,
+        "confidence": 0.576
+      },
+      {
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of View (Replay)",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      }
+    ],
+    "timestamp": "2026-09-10T05:39:21.365952+00:00"
+  },
+  {
+    "events": [
+      {
+        "Timestamp": "05:40:55",
+        "Step": 1,
+        "MITRE ID": "T0842",
+        "Technique Name": "Network Sniffing",
+        "Stage": 0,
+        "Target Host": "substation_0",
+        "Detector Confidence": "0.917",
+        "ML Confidence": "0.917",
+        "LSTM Score": "0.834",
+        "AE Score": "1.000",
+        "Detection Method": "both",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (both)"
+      },
+      {
+        "Timestamp": "05:40:55",
+        "Step": 2,
+        "MITRE ID": "T0802",
+        "Technique Name": "Automated Collection",
+        "Stage": 1,
+        "Target Host": "pmu_0",
+        "Detector Confidence": "0.637",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "calibrated",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Simulation"
+      },
+      {
+        "Timestamp": "05:41:02",
+        "Step": 3,
+        "MITRE ID": "T0835",
+        "Technique Name": "Manipulate I/O Image",
+        "Stage": 2,
+        "Target Host": "rtu_0",
+        "Detector Confidence": "0.578",
+        "ML Confidence": "0.578",
+        "LSTM Score": "0.157",
+        "AE Score": "1.000",
+        "Detection Method": "ml",
+        "Status": "Detected",
+        "Detected": true,
+        "Mode": "Real (ml)"
+      },
+      {
+        "Timestamp": "05:41:18",
+        "Step": 4,
+        "MITRE ID": "T0830",
+        "Technique Name": "Adversary-in-the-Middle",
+        "Stage": 1,
+        "Target Host": "substation_1",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      },
+      {
+        "Timestamp": "05:41:27",
+        "Step": 5,
+        "MITRE ID": "T0832",
+        "Technique Name": "Manipulation of View (Replay)",
+        "Stage": 3,
+        "Target Host": "pmu_1",
+        "Detector Confidence": "0.000",
+        "ML Confidence": "0.000",
+        "LSTM Score": "0.000",
+        "AE Score": "0.000",
+        "Detection Method": "undetected",
+        "Status": "Compromised",
+        "Detected": false,
+        "Mode": "Real (undetected)"
+      }
+    ],
+    "evasion_rate": 0.4,
+    "campaign_complete": true,
+    "max_stage": 3,
+    "reward": 12.477509181688896,
+    "chain": [
+      {
+        "technique_id": "T0842",
+        "technique_name": "Network Sniffing",
+        "stage": 0,
+        "detected": true,
+        "confidence": 0.917
+      },
+      {
+        "technique_id": "T0802",
+        "technique_name": "Automated Collection",
+        "stage": 1,
+        "detected": true,
+        "confidence": 0.637
+      },
+      {
+        "technique_id": "T0835",
+        "technique_name": "Manipulate I/O Image",
+        "stage": 2,
+        "detected": true,
+        "confidence": 0.578
+      },
+      {
+        "technique_id": "T0830",
+        "technique_name": "Adversary-in-the-Middle",
+        "stage": 1,
+        "detected": false,
+        "confidence": 0.0
+      },
+      {
+        "technique_id": "T0832",
+        "technique_name": "Manipulation of View (Replay)",
+        "stage": 3,
+        "detected": false,
+        "confidence": 0.0
+      }
+    ],
+    "timestamp": "2026-09-10T05:41:27.168365+00:00"
   }
 ]

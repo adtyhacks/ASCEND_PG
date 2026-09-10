@@ -45,20 +45,23 @@ def log_event(event: dict):
     LOG_STORE.write_text(json.dumps(events, indent=2))
 
 
-def poll_plc(ip, port, count, device_id=1):
+def poll_plc(ip, port, count, device_id=1, address=0):
     """
     Connects to one PLC, reads its holding registers once, and
     returns the register list (or None on failure).
 
     NOTE: pymodbus 3.12+ renamed the `slave=` kwarg to `device_id=`.
     """
+    if address == 0:
+        log.warning("Reading from address 0 - ensure this matches PLC template (Siemens uses 40000+, AB uses 0)")
+    
     client = ModbusTcpClient(ip, port=port, timeout=3)
     if not client.connect():
         log.warning("Could not connect to PLC at %s:%d", ip, port)
         return None
     try:
         result = client.read_holding_registers(
-            address=0, count=count, device_id=device_id
+            address=address, count=count, device_id=device_id
         )
         if result.isError():
             log.warning("Modbus error reading %s:%d -> %s", ip, port, result)
@@ -75,6 +78,8 @@ def main():
     parser.add_argument("-p", "--port", type=int, default=502)
     parser.add_argument("-n", "--num-registers", type=int, default=10,
                         help="how many holding registers to read per poll")
+    parser.add_argument("-a", "--address", type=int, default=0,
+                        help="starting register address (default: 0, use 40000 for Siemens HR)")
     parser.add_argument("--interval", type=float, default=1.0,
                         help="seconds between poll cycles")
     parser.add_argument("--log", default=None,
@@ -91,7 +96,7 @@ def main():
     try:
         while True:
             for ip in args.targets:
-                registers = poll_plc(ip, args.port, args.num_registers)
+                registers = poll_plc(ip, args.port, args.num_registers, address=args.address)
                 if registers is not None:
                     log.info("%s -> %s", ip, registers)
                     log_event({

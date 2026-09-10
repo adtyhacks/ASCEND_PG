@@ -73,9 +73,11 @@ env = AttackStrategyEnv(real_mode=True)
 model = PPO.load(os.path.join(PROJECT_ROOT, "models", "rl_agent.zip"))
 obs, _ = env.reset()
 action, _ = model.predict(obs, deterministic=True)
-next_obs, reward, terminated, truncated, info = env.step(int(action))
-chosen_tech = MITRE_TECHNIQUES[int(action)]
+action = np.asarray(action, dtype=np.int64).flatten()
+next_obs, reward, terminated, truncated, info = env.step(action)
+chosen_tech = MITRE_TECHNIQUES[int(action[0])]
 print(f"      PPO executed action: {chosen_tech['id']} ({chosen_tech['name']})")
+print(f"      Register: {info.get('register_address')} | Value: {info.get('value_magnitude', 0):.3f} | Target Bus: {info.get('target_bus')}")
 print(f"      Stage: {chosen_tech['stage']} | Reward: {reward:.3f} | Evaded: {info.get('evaded')}")
 print("      Module 7 (RL Agent): OK")
 
@@ -84,7 +86,7 @@ print("\n[5/7] Testing Explainability & Decision Explainer...")
 from xai.attack_decision_explain import explain_action
 from xai.recommendation_templates import get_technique_recommendations, format_report
 
-exp = explain_action(model, obs, int(action))
+exp = explain_action(model, obs, int(action[0]))
 tech_rec = get_technique_recommendations(chosen_tech['id'])
 print(f"      RL Decision Rationale: {exp['rationale']}")
 print(f"      Top alternative technique: {exp['top_alternatives'][0]['id']} ({exp['top_alternatives'][0]['name']})")

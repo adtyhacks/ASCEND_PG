@@ -1,4 +1,4 @@
-"""Baseline grid simulation screen for the trained-model application flow."""
+"""Baseline grid simulation screen — auto-loads on page open."""
 
 import os
 import sys
@@ -18,18 +18,11 @@ from testbed.visualize_topology import render_topology
 
 st.set_page_config(page_title="Run Simulation | ASCEND-PG", layout="wide")
 st.title("Baseline Grid Simulation")
-st.caption("Run the normal IEEE-14 operating state before evaluating the trained Red/Blue components.")
+st.caption("Normal IEEE-14 operating state before evaluating the trained Red/Blue components.")
 
-config = st.session_state.get("config", {})
-topology = config.get("topology", {})
-if topology:
-    st.info(f"Selected configuration: **{topology.get('name', 'Custom topology')}** — "
-            f"{topology.get('description', 'Baseline IEEE-14 simulation is used by the current testbed adapter.')}")
-else:
-    st.warning("No saved configuration found. The default IEEE-14 baseline will be used.")
-
-if st.button("Run Baseline Power-Flow Simulation", type="primary"):
-    with st.spinner("Solving IEEE-14 AC power flow and generating normal telemetry..."):
+# Auto-load simulation if not already in session
+if not st.session_state.get("simulation_ready"):
+    with st.spinner("Running IEEE-14 AC power flow and generating normal telemetry..."):
         case_name = st.session_state.get("config", {}).get("topology", {}).get("pandapower_case", "case14")
         net_obj, grid_df, traffic_df = build_baseline(case_name=case_name)
         topo_nodes, topo_edges = build_ot_topology(net_obj)
@@ -41,10 +34,6 @@ if st.button("Run Baseline Power-Flow Simulation", type="primary"):
         "topo_edges": topo_edges,
         "simulation_ready": True,
     })
-    st.success("Baseline simulation is ready. No trained model or checkpoint was modified.")
-
-if not st.session_state.get("simulation_ready"):
-    st.stop()
 
 net_obj = st.session_state["net_obj"]
 grid_df = st.session_state["grid_df"]
