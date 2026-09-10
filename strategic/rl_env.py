@@ -30,7 +30,7 @@ from gymnasium import spaces
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "detection"))
 
-# 17 MITRE ATT&CK for ICS techniques organized by tactical stage
+# 18 MITRE ATT&CK for ICS techniques organized by tactical stage
 MITRE_TECHNIQUES = [
     # Stage 0: Initial Access & Discovery
     {"id": "T0886", "name": "Remote Services", "stage": 0, "mock_prob": 0.50},
@@ -50,6 +50,7 @@ MITRE_TECHNIQUES = [
     {"id": "T0836", "name": "Modify Parameter (FDI)", "stage": 2, "mock_prob": 0.65},
     {"id": "T0835", "name": "Manipulate I/O Image", "stage": 2, "mock_prob": 0.65},
     {"id": "T0806", "name": "Brute Force I/O", "stage": 2, "mock_prob": 0.80},
+    {"id": "T0855", "name": "Command Injection", "stage": 2, "mock_prob": 0.75},
     # Stage 3: Impact
     {"id": "T0832", "name": "Manipulation of View (Replay)", "stage": 3, "mock_prob": 0.40},
     {"id": "T0815", "name": "Denial of View", "stage": 3, "mock_prob": 0.70},
@@ -78,6 +79,7 @@ REGISTER_BASES = {
     "T0830": 40000,  # AITM: holding registers
     "T0832": 30000,  # replay: input registers
     "T0815": 30000,  # denial of view: input registers
+    "T0855": 40000,  # command injection: holding registers
 }
 
 # Value magnitude range: 0.9x to 1.1x in 10 steps

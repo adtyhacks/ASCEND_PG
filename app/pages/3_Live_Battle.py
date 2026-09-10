@@ -54,6 +54,7 @@ STEP_RESULT = DATA_DIR / "step_result.json"
 REAL_TESTBED_TECHNIQUES = {
     "T0846", "T0888", "T0842", "T0830", "T0801", "T0814", "T0816",
     "T0836", "T0806", "T0835", "T0832", "T0815",
+    "T0886", "T0802", "T0869", "T0878", "T0881", "T0855",
 }
 
 # Mininet host IP mapping (loaded from topology)
@@ -352,56 +353,6 @@ def _record_completed_campaign():
         print(f"Failed to export campaign history: {e}")
 
 
-def _step_campaign_mock():
-    """Execute one PPO step using calibrated detection (no testbed)."""
-    if not st.session_state.get("battle_active"):
-        return
-    env = st.session_state["battle_env"]
-    model = st.session_state["battle_model"]
-    obs = st.session_state["battle_obs"]
-
-    action, _ = model.predict(obs, deterministic=False)
-    action = np.asarray(action, dtype=np.int64).flatten()
-    technique_idx = int(action[0])
-    register_offset = int(action[1])
-    value_level = int(action[2])
-    target_bus = int(action[3]) % env._num_buses
-
-    explanation = explain_step_decision(model, obs, technique_idx)
-
-    next_obs, reward, terminated, truncated, info = env.step(action)
-    st.session_state["battle_reward"] += float(reward)
-    tech = MITRE_TECHNIQUES[technique_idx]
-    detected = bool(info.get("detected", False))
-    detector_conf = float(info.get("detection_confidence", 0.0))
-
-    target_host = _resolve_target_host(len(st.session_state["battle_events"]))
-
-    event = {
-        "Timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-        "Step": len(st.session_state["battle_events"]) + 1,
-        "MITRE ID": tech["id"],
-        "Technique Name": tech["name"],
-        "Stage": tech["stage"],
-        "Target Host": target_host,
-        "Detector Confidence": f"{detector_conf:.3f}",
-        "ML Confidence": "0.000",
-        "LSTM Score": "0.000",
-        "AE Score": "0.000",
-        "Detection Method": "calibrated",
-        "Status": "Detected" if detected else "Compromised",
-        "Detected": detected,
-        "Mode": "Simulation",
-    }
-    st.session_state["battle_events"].append(event)
-    st.session_state["battle_explanations"].append(explanation)
-    st.session_state["battle_obs"] = next_obs
-
-    if terminated or truncated:
-        st.session_state["battle_active"] = False
-        _record_completed_campaign()
-
-
 def _step_campaign_real():
     """Execute one PPO step using real testbed attacks via file handoff."""
     if not st.session_state.get("battle_active"):
@@ -464,26 +415,29 @@ def _step_campaign_real():
             mode_label = f"Real ({detection_method})"
         else:
             error_msg = result.get("error", "timeout") if result else "timeout"
-            status_box.warning(f"Testbed failed: {error_msg}. Using calibrated detection.")
+            status_box.error(f"Testbed failed: {error_msg}")
             time.sleep(3)
             status_box.empty()
-            _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action)
-            detected = bool(mock_info.get("detected", False))
-            detector_conf = float(mock_info.get("detection_confidence", 0.0))
+            # Step failed — record failure, do NOT fall back to mock
+            detected = False
+            detector_conf = 0.0
             ml_confidence = 0.0
             ml_lstm = 0.0
             ml_ae = 0.0
-            detection_method = "calibrated"
-            mode_label = "Simulation (fallback)"
+            detection_method = "failed"
+            mode_label = "Failed"
     else:
-        _, _, mock_terminated, mock_truncated, mock_info = env.step(action)
-        detected = bool(mock_info.get("detected", False))
-        detector_conf = float(mock_info.get("detection_confidence", 0.0))
+        # Technique has no testbed script — skip, do NOT fall back to mock
+        status_box.warning(f"No testbed script for {technique_id}, skipping")
+        time.sleep(2)
+        status_box.empty()
+        detected = False
+        detector_conf = 0.0
         ml_confidence = 0.0
         ml_lstm = 0.0
         ml_ae = 0.0
-        detection_method = "calibrated"
-        mode_label = "Simulation" if not has_testbed else "Simulation (queued)"
+        detection_method = "skipped"
+        mode_label = "Skipped"
 
     # Compute reward (same logic as rl_env.py)
     reward = -0.1

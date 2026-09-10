@@ -264,6 +264,62 @@ STEPS = [
         "detect_sids": [9000023],  # Register enumeration
         "timeout": 30,
     },
+
+    # === REMOTE SERVICES (T0886) ===
+    {
+        "name": "remote_services",
+        "techniques": ["T0886"],
+        "script": str(ATTACKS_DIR / "remote_services.py"),
+        "args": ["--target", "10.0.0.1", "--scada-ip", "10.0.0.10",
+                  "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000026],  # SSH to OT host
+        "timeout": 60,
+    },
+
+    # === AUTOMATED COLLECTION (T0802) ===
+    {
+        "name": "automated_collection",
+        "techniques": ["T0802"],
+        "script": str(ATTACKS_DIR / "automated_collection.py"),
+        "args": ["--target", "10.0.0.1", "--subnet", "10.0.0.0/24",
+                  "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000027],  # Broad register scan
+        "timeout": 120,
+    },
+
+    # === STANDARD APP LAYER PROTOCOL C2 (T0869) ===
+    {
+        "name": "standard_protocol_c2",
+        "techniques": ["T0869"],
+        "script": str(ATTACKS_DIR / "standard_protocol_c2.py"),
+        "args": ["--target", "10.0.0.1", "--command", "DEAD",
+                  "--count", "5", "--interval", "1.0",
+                  "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000028],  # Suspicious register writes
+        "timeout": 60,
+    },
+
+    # === ALARM SUPPRESSION (T0878) ===
+    {
+        "name": "alarm_suppression",
+        "techniques": ["T0878"],
+        "script": str(ATTACKS_DIR / "alarm_suppression.py"),
+        "args": ["--target", "10.0.0.1", "--duration", "5", "--interval", "1.0",
+                  "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000029],  # Alarm register clear
+        "timeout": 30,
+    },
+
+    # === SERVICE STOP (T0881) ===
+    {
+        "name": "service_stop",
+        "techniques": ["T0881"],
+        "script": str(ATTACKS_DIR / "service_stop.py"),
+        "args": ["--target", "10.0.0.1", "--mode", "combined", "--count", "100",
+                  "--log", str(LOG_STORE_PATH)],
+        "detect_sids": [9000030],  # Invalid function code flood
+        "timeout": 60,
+    },
 ]
 
 # Suricata's modbus.flooded fires on flow timeout, not immediately.
