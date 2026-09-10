@@ -237,7 +237,7 @@ STEPS = [
         "name": "denial_of_view",
         "techniques": ["T0815"],
         "script": str(ATTACKS_DIR / "denial_of_view.py"),
-        "args": ["--scada-ip", "10.0.0.10", "--plc-ip", "10.0.0.1",
+        "args": ["--scada-ip", "10.0.0.20", "--plc-ip", "10.0.0.1",
                   "--count", "100", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001, 9000024],  # Holding write + raw byte fallback
         "timeout": 30,
@@ -270,7 +270,7 @@ STEPS = [
         "name": "remote_services",
         "techniques": ["T0886"],
         "script": str(ATTACKS_DIR / "remote_services.py"),
-        "args": ["--target", "10.0.0.1", "--scada-ip", "10.0.0.10",
+        "args": ["--target", "10.0.0.1", "--scada-ip", "10.0.0.20",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000026],  # SSH to OT host
         "timeout": 60,

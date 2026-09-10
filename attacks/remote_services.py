@@ -19,7 +19,7 @@ PPO Parameters Used:
 Detection: Suricata detects SSH connections to OT-zone hosts (SID 9000026).
 
 Run this ON THE ATTACKER HOST:
-    python3 attacks/remote_services.py --target 10.0.0.1 --scada-ip 10.0.0.10
+    python3 attacks/remote_services.py --target 10.0.0.1 --scada-ip 10.0.0.20
 
 ACADEMIC USE ONLY — isolated testbed, no production systems.
 """
@@ -54,7 +54,7 @@ def ssh_pivot(scada_ip: str, attacker_ip: str, log_path: Path) -> bool:
     """Simulate SSH pivot to dual-homed SCADA host.
 
     In the real testbed, this would use paramiko to establish an SSH session
-    to the SCADA host (10.0.0.10) which sits on both corporate and OT networks.
+    to the SCADA host (10.0.0.20) which sits on both corporate and OT networks.
     For the testbed, we simulate this by logging the pivot event and verifying
     connectivity.
     """
@@ -161,8 +161,8 @@ def main():
     )
     parser.add_argument("--target", required=True,
                         help="Target PLC IP to attack via pivot")
-    parser.add_argument("--scada-ip", default="10.0.0.10",
-                        help="SCADA host to pivot through (default: 10.0.0.10)")
+    parser.add_argument("--scada-ip", default="10.0.0.20",
+                        help="SCADA host to pivot through (default: 10.0.0.20)")
     parser.add_argument("-a", "--register-address", type=int, default=40000,
                         help="Modbus register address to target (default: 40000)")
     parser.add_argument("-v", "--value-magnitude", type=float, default=1.0,

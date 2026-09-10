@@ -17,6 +17,10 @@ Run on Mininet host:
 
 import argparse
 import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pymodbus.server import StartTcpServer
 from pymodbus.datastore import (
@@ -103,8 +107,9 @@ def build_context(bus_id: int, num_registers: int = 100):
                 idx = addr - start_addr
                 if 0 <= idx < count:
                     values[idx] = max(0, min(65535, int(val)))
-        # pymodbus 3.15+ requires address >= 1
-        effective_addr = max(1, start_addr)
+        # pymodbus 3.15+ requires address >= 1; normalize to address 1
+        # so SCADA client can read all PLCs from a single address
+        effective_addr = 1
         return ModbusSequentialDataBlock(effective_addr, values)
 
     # Coils (digital outputs)

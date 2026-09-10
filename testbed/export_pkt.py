@@ -56,7 +56,7 @@ def export_pkt_xml(nodes, edges, filepath):
             if bus_num.isdigit():
                 ET.SubElement(dev_el, "ip_address").text = f"10.0.0.{int(bus_num) + 1}"
         elif n["id"] == "scada_server":
-            ET.SubElement(dev_el, "ip_address").text = "10.0.0.10"
+            ET.SubElement(dev_el, "ip_address").text = "10.0.0.20"
         elif n["id"] == "hmi":
             ET.SubElement(dev_el, "ip_address").text = "10.0.0.11"
         elif n["id"] == "historian":

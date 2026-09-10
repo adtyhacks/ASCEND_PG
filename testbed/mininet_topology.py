@@ -18,7 +18,7 @@ from mininet.log import setLogLevel
 
 # --- addressing -------------------------------------------------------
 NETMASK = "/24"
-SCADA_IP = "10.0.0.10"
+SCADA_IP = "10.0.0.20"
 ATTACKER_IP = "10.0.0.66"
 
 # Topology loaded dynamically

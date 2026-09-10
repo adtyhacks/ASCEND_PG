@@ -50,6 +50,22 @@ LOG_STORE = DATA_DIR / "log_store.json"
 CYCLE_REPORT = DATA_DIR / "cycle_report.json"
 MODEL_PATH = _REPO / "models" / "rl_agent.zip"
 
+
+def _read_log_store():
+    """Read log_store.json supporting both JSON array and JSONL formats."""
+    if not LOG_STORE.exists():
+        return []
+    try:
+        text = LOG_STORE.read_text(encoding="utf-8")
+        text = text.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            return json.loads(text)
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+    except (json.JSONDecodeError, OSError):
+        return []
+
 # File-based handoff paths
 PENDING_STEP = DATA_DIR / "pending_step.json"
 STEP_RESULT = DATA_DIR / "step_result.json"
@@ -64,7 +80,7 @@ REAL_TESTBED_TECHNIQUES = {
 # Mininet host IP mapping (loaded from topology)
 _topo = get_topology()
 MININET_IPS = {f"plc{i+1}": _topo.get_ip(i) for i in range(_topo.num_buses)}
-MININET_IPS["scada"] = "10.0.0.10"
+MININET_IPS["scada"] = "10.0.0.20"
 
 # Bus-to-IP and IP-to-host mappings
 _ip_to_host = {v: k for k, v in MININET_IPS.items()}
@@ -316,13 +332,14 @@ def _step_campaign_real():
     step_name = TECHNIQUE_TO_STEP_NAME.get(technique_id)
     has_testbed = step_name is not None
 
+    status_box = st.empty()
+
     if has_testbed and not PENDING_STEP.exists() and not STEP_RESULT.exists():
         _write_pending_step(technique_id, step_name, target_ip,
                            register_address=register_address,
                            value_magnitude=value_magnitude,
                            target_bus=target_bus)
 
-        status_box = st.empty()
         status_box.info(f"Executing {technique_id} ({tech['name']}) on testbed...")
         result = _poll_step_result(timeout=300.0)
         status_box.empty()
@@ -774,62 +791,57 @@ if MODBUS_LOG.exists():
         pass
 
 # 2. From log_store.json (attack events, SCADA polls, IDS alerts)
-if LOG_STORE.exists():
-    try:
-        raw_logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-        if isinstance(raw_logs, list):
-            for e in raw_logs:
-                ts = e.get("timestamp", "")
-                if "T" in ts:
-                    ts = ts.split("T")[1][:12]
+raw_logs = _read_log_store()
+for e in raw_logs:
+    ts = e.get("timestamp", "")
+    if "T" in ts:
+        ts = ts.split("T")[1][:12]
 
-                action = e.get("action", "")
-                target = e.get("target", e.get("spoofed_source", "-"))
-                stage = e.get("stage", "-")
-                technique = e.get("technique", "-")
+    action = e.get("action", "")
+    target = e.get("target", e.get("spoofed_source", "-"))
+    stage = e.get("stage", "-")
+    technique = e.get("technique", "-")
 
-                # Determine protocol type
-                if "poll_" in action or "scada" in action.lower():
-                    proto = "SCADA Poll"
-                    src = "10.0.0.10"
-                    dst = target
-                    info = f"{action} | {technique}"
-                elif e.get("detected") is not None or "hybrid_detection" in action or "suricata" in action.lower():
-                    proto = "IDS Alert"
-                    src = "Suricata"
-                    dst = "-"
-                    method = e.get("detection_method", "-")
-                    conf = e.get("ml_confidence", e.get("confidence", 0))
-                    detected = e.get("detected", False)
-                    info = f"{technique} | {'DETECTED' if detected else 'clean'} | {method} conf={conf:.2f}"
-                elif stage == "normal_traffic":
-                    proto = "SCADA Poll"
-                    src = "10.0.0.10"
-                    dst = target
-                    info = f"{action}"
-                elif technique.startswith("T0") or stage != "-":
-                    is_modbus_op = action.startswith("fc") or "modbus" in action.lower()
-                    proto = "Modbus TCP" if is_modbus_op else "Attack"
-                    src = e.get("source_ip", "10.0.0.66")
-                    dst = target
-                    info = f"{technique} | {action}"
-                else:
-                    proto = "Other"
-                    src = "-"
-                    dst = target
-                    info = f"{action} | {technique}"
+    # Determine protocol type
+    if "poll_" in action or "scada" in action.lower():
+        proto = "SCADA Poll"
+        src = "10.0.0.20"
+        dst = target
+        info = f"{action} | {technique}"
+    elif e.get("detected") is not None or "hybrid_detection" in action or "suricata" in action.lower():
+        proto = "IDS Alert"
+        src = "Suricata"
+        dst = "-"
+        method = e.get("detection_method", "-")
+        conf = e.get("ml_confidence", e.get("confidence", 0))
+        detected = e.get("detected", False)
+        info = f"{technique} | {'DETECTED' if detected else 'clean'} | {method} conf={conf:.2f}"
+    elif stage == "normal_traffic":
+        proto = "SCADA Poll"
+        src = "10.0.0.20"
+        dst = target
+        info = f"{action}"
+    elif technique.startswith("T0") or stage != "-":
+        is_modbus_op = action.startswith("fc") or "modbus" in action.lower()
+        proto = "Modbus TCP" if is_modbus_op else "Attack"
+        src = e.get("source_ip", "10.0.0.66")
+        dst = target
+        info = f"{technique} | {action}"
+    else:
+        proto = "Other"
+        src = "-"
+        dst = target
+        info = f"{action} | {technique}"
 
-                all_packets.append({
-                    "Time": ts,
-                    "Source": src,
-                    "Destination": dst,
-                    "Protocol": proto,
-                    "Length": 0,
-                    "Info": info,
-                    "_type": proto.lower().replace(" ", "_"),
-                })
-    except Exception:
-        pass
+    all_packets.append({
+        "Time": ts,
+        "Source": src,
+        "Destination": dst,
+        "Protocol": proto,
+        "Length": 0,
+        "Info": info,
+        "_type": proto.lower().replace(" ", "_"),
+    })
 
 # 3. From flow_log.json (NetFlow/IPFIX)
 FLOW_LOG = DATA_DIR / "flow_log.json"
@@ -906,7 +918,7 @@ if proto_filter != "All":
     }
     filter_type = filter_map.get(proto_filter, "")
     if filter_type:
-        all_packets = [p for p in all_packets if p["_type"] == filter_type or (filter_type == "modbus" and p["_type"] == "modbus_tcp")]
+        all_packets = [p for p in all_packets if p["_type"] == filter_type]
 
 # Limit to max
 display_packets = all_packets[-max_packets:]
@@ -916,11 +928,12 @@ if display_packets:
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
 
     # Packet stats
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total Packets", len(all_packets))
-    col2.metric("Modbus TCP", sum(1 for p in all_packets if p["_type"] in ("modbus", "modbus_tcp")))
-    col3.metric("Attacks", sum(1 for p in all_packets if p["_type"] == "attack"))
-    col4.metric("IDS Alerts", sum(1 for p in all_packets if p["_type"] in ("ids_alert", "ids")))
+    col2.metric("Modbus TCP", sum(1 for p in all_packets if p["_type"] == "modbus"))
+    col3.metric("SCADA Poll", sum(1 for p in all_packets if p["_type"] == "scada_poll"))
+    col4.metric("Attacks", sum(1 for p in all_packets if p["_type"] == "attack"))
+    col5.metric("IDS Alerts", sum(1 for p in all_packets if p["_type"] == "ids_alert"))
 else:
     st.info("No packets yet. Start a campaign to see live packet flow.")
 
@@ -947,14 +960,7 @@ if report_action:
     from reports.pentest_report import generate_report, render_html, render_pdf
 
     # Build campaign events from log store
-    events = []
-    if LOG_STORE.exists():
-        try:
-            raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-            if isinstance(raw_log, list):
-                events = raw_log
-        except Exception:
-            pass
+    events = _read_log_store()
 
     if not events:
         st.warning("No campaign events found. Run a battle first to generate a report.")
