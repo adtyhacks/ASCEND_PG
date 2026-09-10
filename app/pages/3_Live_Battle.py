@@ -676,8 +676,6 @@ m1.metric("Current step", len(events))
 m2.metric("Evasion", f"{current_evasion:.0%}" if events else "---")
 m3.metric("Campaigns", len(campaigns))
 m4.metric("Plateau", "Detected" if plateaued else "Monitoring")
-mode_text = "Real Testbed" if use_real else "Simulation"
-m5.metric("Mode", mode_text)
 
 if plateaued:
     st.warning("Defense-evasion plateau detected across completed campaigns. "
@@ -940,114 +938,27 @@ if report_action:
         }
         report = generate_report(events, campaign_info)
 
-    # Suricata cycle report (if available)
-    if CYCLE_REPORT.exists():
-        try:
-            report_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
-            with st.expander("Latest Suricata Cycle Report", expanded=False):
-                steps = report_data.get("steps", [])
-                if steps:
-                    formatted = []
-                    for i, step in enumerate(steps, 1):
-                        start_time = step.get("start", "").split(".")[0].replace("T", " ")
-                        formatted.append({
-                            "Step": i,
-                            "Attack": step.get("name", "Unknown"),
-                            "MITRE": ", ".join(step.get("techniques", [])),
-                            "Status": "Detected" if step.get("detected") else "Evaded",
-                            "Alerts": step.get("alert_count", 0),
-                            "Time": start_time,
-                        })
-                    st.dataframe(pd.DataFrame(formatted), hide_index=True, width="stretch")
-        except Exception:
-            pass
-
-    # Modbus Packet Log (realistic ICS traffic)
-    MODBUS_LOG = DATA_DIR / "modbus_log.json"
-    if MODBUS_LOG.exists():
-        try:
-            modbus_data = json.loads(MODBUS_LOG.read_text(encoding="utf-8"))
-            if isinstance(modbus_data, list) and modbus_data:
-                with st.expander(f"Modbus TCP Packet Log ({len(modbus_data)} packets)", expanded=True):
-                    recent_modbus = modbus_data[-50:]
-                    modbus_rows = []
-                    for pkt in reversed(recent_modbus):
-                        ts = pkt.get("timestamp", "")
-                        if "T" in ts:
-                            ts = ts.split("T")[1][:12]
-                        modbus_rows.append({
-                            "Time": ts,
-                            "Src": pkt.get("src_ip", "-"),
-                            "Dst": pkt.get("dst_ip", "-"),
-                            "Direction": pkt.get("direction", "-"),
-                            "Function": pkt.get("function_name", "-"),
-                            "Unit": pkt.get("mbap_unit_id", "-"),
-                            "Addr": pkt.get("start_address", "-"),
-                            "Values": str(pkt.get("values", []))[:30],
-                            "Exception": pkt.get("exception_code", "-"),
-                            "Length": pkt.get("packet_length", 0),
-                        })
-                    st.dataframe(pd.DataFrame(modbus_rows), use_container_width=True, hide_index=True, height=350)
-        except Exception:
-            pass
-
-    # Network Flow Log (NetFlow/IPFIX style)
-    FLOW_LOG = DATA_DIR / "flow_log.json"
-    if FLOW_LOG.exists():
-        try:
-            flow_data = json.loads(FLOW_LOG.read_text(encoding="utf-8"))
-            if isinstance(flow_data, list) and flow_data:
-                with st.expander(f"Network Flow Log ({len(flow_data)} flows)", expanded=True):
-                    recent_flows = flow_data[-30:]
-                    flow_rows = []
-                    for flow in reversed(recent_flows):
-                        flow_rows.append({
-                            "Start": flow.get("timestamp", "-").split("T")[1][:8] if "T" in flow.get("timestamp", "") else "-",
-                            "Src": flow.get("src_ip", "-"),
-                            "Dst": flow.get("dst_ip", "-"),
-                            "Sport": flow.get("src_port", "-"),
-                            "Dport": flow.get("dst_port", "-"),
-                            "Duration": f"{flow.get('duration_sec', 0):.3f}s",
-                            "Packets": flow.get("total_packets", 0),
-                            "Bytes": flow.get("total_bytes", 0),
-                            "B/s": f"{flow.get('bytes_per_sec', 0):.0f}",
-                            "SYN": flow.get("syn_count", 0),
-                            "ACK": flow.get("ack_count", 0),
-                            "RST": flow.get("rst_count", 0),
-                            "FIN": flow.get("fin_count", 0),
-                        })
-                    st.dataframe(pd.DataFrame(flow_rows), use_container_width=True, hide_index=True, height=350)
-        except Exception:
-            pass
-
-    # Auto-refresh every 3 seconds
-    if auto_refresh_log:
-        time.sleep(3)
-        st.rerun()
-
-
-# =============================================================================
-# Section: Legacy Mininet Testbed Monitor (simulation mode only)
-# =============================================================================
-else:
-    st.divider()
-    with st.expander("Mininet Testbed Monitor (raw events)", expanded=False):
-        st.caption("Reads telemetry from data/log_store.json.")
-
-        col_ctrl, col_auto = st.columns([2, 1])
-        with col_ctrl:
-            auto_refresh = st.checkbox("Auto-refresh (every 3s)", value=False)
-        with col_auto:
-            if st.button("Refresh Now"):
-                st.rerun()
-
-        if LOG_STORE.exists():
-            try:
-                raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-                if isinstance(raw_log, list) and raw_log:
-                    st.write(f"Total Events: **{len(raw_log)}**")
-                    st.dataframe(pd.DataFrame(raw_log).astype(str), width="stretch", height=300)
-                else:
-                    st.info("Log store exists but contains no events yet.")
-            except Exception as err:
-                st.warning(f"Could not parse log store: {err}")
+        if report_format == "HTML":
+            html = render_html(report)
+            st.success(f"Report generated: {len(events)} events, {report['risk_summary']['total']} findings")
+            st.download_button(
+                "Download HTML Report",
+                data=html,
+                file_name=f"ASCEND-PG_Pentest_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                mime="text/html",
+                use_container_width=True,
+            )
+            components.html(html, height=800, scrolling=True)
+        else:
+            pdf_path = str(DATA_DIR / f"ASCEND-PG_Pentest_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+            render_pdf(report, pdf_path)
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+            st.success(f"PDF report generated: {len(events)} events, {report['risk_summary']['total']} findings")
+            st.download_button(
+                "Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"ASCEND-PG_Pentest_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
