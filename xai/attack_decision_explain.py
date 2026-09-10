@@ -188,13 +188,17 @@ def explain_chain(model: PPO, env: AttackStrategyEnv = None,
     explanations = []
 
     for step_num in range(max_steps):
-        # Get the agent's action
+        # Get the agent's action (multi-discrete: [technique, register, value, target])
         action, _states = model.predict(obs, deterministic=True)
-        action = int(action)
+        action = np.asarray(action, dtype=np.int64).flatten()
+        technique_idx = int(action[0])
 
         # Explain the decision BEFORE stepping
-        explanation = explain_action(model, obs, action)
+        explanation = explain_action(model, obs, technique_idx)
         explanation["step"] = step_num + 1
+        explanation["register_offset"] = int(action[1])
+        explanation["value_level"] = int(action[2])
+        explanation["target_bus"] = int(action[3])
 
         # Step the environment
         obs, reward, terminated, truncated, info = env.step(action)

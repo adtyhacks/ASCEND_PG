@@ -33,7 +33,8 @@ if PROJECT_ROOT not in sys.path:
 from testbed.grid_env import build_baseline
 from testbed.network_topology import build_ot_topology
 from testbed.visualize_topology import render_topology
-from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES
+from testbed.topology import Topology, load_topology, set_topology, get_topology, save_topology_csv
+from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES, MAX_BUSES
 from xai.attack_decision_explain import explain_step_decision
 from metrics.dvs import PlateauTracker
 from stable_baselines3 import PPO
@@ -55,15 +56,98 @@ REAL_TESTBED_TECHNIQUES = {
     "T0836", "T0806", "T0835", "T0832", "T0815",
 }
 
-# Mininet host IP mapping
-MININET_IPS = {
-    "plc1": "10.0.0.1", "plc2": "10.0.0.2", "plc3": "10.0.0.3",
-    "plc4": "10.0.0.4", "plc5": "10.0.0.5", "scada": "10.0.0.10",
-}
+# Mininet host IP mapping (loaded from topology)
+_topo = get_topology()
+MININET_IPS = {f"plc{i+1}": _topo.get_ip(i) for i in range(_topo.num_buses)}
+MININET_IPS["scada"] = "10.0.0.10"
+
+# Bus-to-IP and IP-to-host mappings
+_ip_to_host = {v: k for k, v in MININET_IPS.items()}
+
+def _bus_to_ip(bus: int) -> str:
+    """Convert a bus index to its IP address."""
+    topo = get_topology()
+    if topo and 0 <= bus < topo.num_buses:
+        return topo.get_ip(bus)
+    return f"10.0.0.{bus + 1}"
 
 st.set_page_config(page_title="Live Battle | ASCEND-PG", layout="wide")
 st.title("Live Battle & Defense Evaluation")
 st.caption("Evaluate the trained adaptive attacker against active ICS defenses.")
+
+# --- Topology Upload Section ---
+with st.expander("Topology Configuration", expanded=False):
+    st.markdown("""
+    Upload a custom topology or use the default IEEE-14 bus system.
+
+    **CSV Format:**
+
+    `nodes.csv` columns: `bus_id, name, type, voltage, ip, plc_type, bus_role`
+    - type: `slack` (reference gen), `pv` (voltage-controlled gen), `pq` (load bus)
+    - plc_type: `siemens_s7_1200`, `siemens_s7_1500`, `allen_bradley_compactlogix`, `schneider_modicon_m340`, `generic_modbus`
+    - bus_role: `generator`, `load`, `substation`
+
+    `edges.csv` columns: `from_bus, to_bus`
+    """)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        nodes_file = st.file_uploader("nodes.csv", type=["csv"], key="nodes_csv")
+    with col2:
+        edges_file = st.file_uploader("edges.csv", type=["csv"], key="edges_csv")
+
+    if nodes_file and edges_file:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nodes_path = os.path.join(tmpdir, "nodes.csv")
+            edges_path = os.path.join(tmpdir, "edges.csv")
+            with open(nodes_path, "wb") as f:
+                f.write(nodes_file.read())
+            with open(edges_path, "wb") as f:
+                f.write(edges_file.read())
+            try:
+                topo = load_topology(tmpdir)
+                set_topology(topo)
+                st.success(f"Loaded: {topo.num_buses} buses, {len(topo.edges)} edges, "
+                           f"{len(topo.gen_buses)} generators")
+                st.session_state["custom_topology"] = topo
+                # Save to data dir for testbed
+                save_topology_csv(topo, str(_REPO / "data" / "topology"))
+            except Exception as e:
+                st.error(f"Error loading topology: {e}")
+
+    # Show current topology summary
+    topo = get_topology()
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("Buses", topo.num_buses)
+    col_b.metric("Edges", len(topo.edges))
+    col_c.metric("Generators", len(topo.gen_buses))
+    col_d.metric("Max Degree", topo.max_degree)
+
+    # Download current topology as CSV
+    if st.button("Export Current Topology as CSV"):
+        save_topology_csv(topo, str(_REPO / "data" / "topology_export"))
+        st.success("Exported to data/topology_export/")
+        st.download_button(
+            "Download nodes.csv",
+            data=open(_REPO / "data" / "topology_export" / "nodes.csv").read(),
+            file_name="nodes.csv",
+            mime="text/csv",
+        )
+        st.download_button(
+            "Download edges.csv",
+            data=open(_REPO / "data" / "topology_export" / "edges.csv").read(),
+            file_name="edges.csv",
+            mime="text/csv",
+        )
+
+    # Template download
+    st.markdown("---")
+    st.markdown("**Download CSV Templates:**")
+    template_nodes = "bus_id,name,type,voltage,ip,plc_type,bus_role,pg,qg,pl,ql\n0,Bus1,slack,1.060,10.0.0.1,siemens_s7_1200,generator,232.4,-16.9,0.0,0.0\n1,Bus2,pv,1.045,10.0.0.2,allen_bradley_compactlogix,generator,40.0,42.4,21.7,12.7\n2,Bus3,pq,1.010,10.0.0.3,generic_modbus,load,0.0,0.0,94.2,19.0\n"
+    template_edges = "from_bus,to_bus\n0,1\n0,2\n1,2\n"
+    st.download_button("Template nodes.csv", template_nodes, "nodes_template.csv", "text/csv")
+    st.download_button("Template edges.csv", template_edges, "edges_template.csv", "text/csv")
 
 # Ensure baseline topology exists in session state
 if "topo_nodes" not in st.session_state or "topo_edges" not in st.session_state:
@@ -163,12 +247,18 @@ def _format_log_detail(event: dict) -> str:
     return " | ".join(parts) if parts else "-"
 
 
-def _write_pending_step(technique_id: str, step_name: str):
+def _write_pending_step(technique_id: str, step_name: str, target_ip: str = "10.0.0.1",
+                        register_address: int = 40000, value_magnitude: float = 1.0,
+                        target_bus: int = 0):
     """Write a step command for the PPO watcher to execute."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     PENDING_STEP.write_text(json.dumps({
         "technique_id": technique_id,
         "step_name": step_name,
+        "target_ip": target_ip,
+        "register_address": register_address,
+        "value_magnitude": value_magnitude,
+        "target_bus": target_bus,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }), encoding="utf-8")
 
@@ -271,12 +361,17 @@ def _step_campaign_mock():
     obs = st.session_state["battle_obs"]
 
     action, _ = model.predict(obs, deterministic=False)
-    action_idx = int(action)
-    explanation = explain_step_decision(model, obs, action_idx)
+    action = np.asarray(action, dtype=np.int64).flatten()
+    technique_idx = int(action[0])
+    register_offset = int(action[1])
+    value_level = int(action[2])
+    target_bus = int(action[3]) % env._num_buses
 
-    next_obs, reward, terminated, truncated, info = env.step(action_idx)
+    explanation = explain_step_decision(model, obs, technique_idx)
+
+    next_obs, reward, terminated, truncated, info = env.step(action)
     st.session_state["battle_reward"] += float(reward)
-    tech = MITRE_TECHNIQUES[action_idx]
+    tech = MITRE_TECHNIQUES[technique_idx]
     detected = bool(info.get("detected", False))
     detector_conf = float(info.get("detection_confidence", 0.0))
 
@@ -316,19 +411,35 @@ def _step_campaign_real():
     env = st.session_state["battle_env"]
 
     action, _ = model.predict(obs, deterministic=False)
-    action_idx = int(action)
-    explanation = explain_step_decision(model, obs, action_idx)
-    tech = MITRE_TECHNIQUES[action_idx]
+    # Multi-parameter action: [technique, register, value, target]
+    action = np.asarray(action, dtype=np.int64).flatten()
+    technique_idx = int(action[0])
+    register_offset = int(action[1])
+    value_level = int(action[2])
+    target_bus = int(action[3]) % env._num_buses
+
+    explanation = explain_step_decision(model, obs, technique_idx)
+    tech = MITRE_TECHNIQUES[technique_idx]
     technique_id = tech["id"]
 
-    target_host = _resolve_target_host(len(st.session_state["battle_events"]))
+    # Resolve target IP from agent-selected bus
+    target_ip = _bus_to_ip(target_bus)
+    target_host = _ip_to_host.get(target_ip, f"PLC-{target_bus}")
+
+    # Calculate actual register address and value magnitude
+    from strategic.rl_env import REGISTER_BASES, VALUE_MAGNITUDES
+    register_address = REGISTER_BASES.get(technique_id, 40000) + register_offset
+    value_magnitude = float(VALUE_MAGNITUDES[value_level])
 
     # Check if this technique has a real testbed script
     step_name = TECHNIQUE_TO_STEP_NAME.get(technique_id)
     has_testbed = step_name is not None
 
     if has_testbed and not PENDING_STEP.exists() and not STEP_RESULT.exists():
-        _write_pending_step(technique_id, step_name)
+        _write_pending_step(technique_id, step_name, target_ip,
+                           register_address=register_address,
+                           value_magnitude=value_magnitude,
+                           target_bus=target_bus)
 
         status_box = st.empty()
         status_box.info(f"Executing {technique_id} ({tech['name']}) on testbed...")
@@ -337,18 +448,26 @@ def _step_campaign_real():
 
         if result and result.get("success", False):
             detected = result.get("detected", False)
-            detector_conf = result.get("ml_confidence", 1.0 if detected else 0.0)
             ml_confidence = result.get("ml_confidence", 0.0)
             ml_lstm = result.get("ml_lstm_confidence", 0.0)
             ml_ae = result.get("ml_ae_score", 0.0)
             detection_method = result.get("detection_method", "suricata")
+            alert_count = result.get("alert_count", 0)
+            if ml_confidence > 0:
+                detector_conf = ml_confidence
+            elif detection_method == "suricata" and alert_count > 0:
+                detector_conf = min(1.0, 0.3 + alert_count * 0.05)
+            elif detected:
+                detector_conf = 0.5
+            else:
+                detector_conf = 0.0
             mode_label = f"Real ({detection_method})"
         else:
             error_msg = result.get("error", "timeout") if result else "timeout"
             status_box.warning(f"Testbed failed: {error_msg}. Using calibrated detection.")
             time.sleep(3)
             status_box.empty()
-            _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
+            _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action)
             detected = bool(mock_info.get("detected", False))
             detector_conf = float(mock_info.get("detection_confidence", 0.0))
             ml_confidence = 0.0
@@ -357,7 +476,7 @@ def _step_campaign_real():
             detection_method = "calibrated"
             mode_label = "Simulation (fallback)"
     else:
-        _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action_idx)
+        _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action)
         st.session_state["battle_reward"] += float(mock_reward)
         detected = bool(mock_info.get("detected", False))
         detector_conf = float(mock_info.get("detection_confidence", 0.0))
@@ -391,8 +510,10 @@ def _step_campaign_real():
 
     st.session_state["battle_reward"] += float(reward)
     env._history.append(1 if detected else 0)
-    env._last_action = action_idx
+    env._last_action = action
     env._last_confidence = detector_conf
+    env._last_register = register_offset
+    env._last_value_mag = value_magnitude
     env._step_count += 1
     env._chain.append(technique_id)
 
@@ -400,17 +521,42 @@ def _step_campaign_real():
     recent = env._history[-5:]
     recent_evasion_rate = (sum(1 - x for x in recent) / len(recent)) if recent else 1.0
     one_hot_action = np.zeros(NUM_TECHNIQUES, dtype=np.float32)
-    one_hot_action[action_idx] = 1.0
+    one_hot_action[technique_idx] = 1.0
     stages_vec = np.zeros(4, dtype=np.float32)
     for s in env._completed_stages:
         if 0 <= s < 4:
             stages_vec[s] = 1.0
+    # Last action parameters (normalized)
+    last_register_norm = register_offset / 50.0  # NUM_REGISTERS
+    last_value_norm = (value_magnitude - 0.9) / 0.2  # VALUE_MAGNITUDES range
+    last_target_norm = target_bus / env._num_buses
+
+    # Topology features (from env state)
+    voltages = env._voltages / 1.1
+    degrees = env._degrees / env._max_degree
+    bus_type_map = {3: 1.0, 1: 0.5, 2: 0.0}
+    bus_types = np.array([bus_type_map.get(int(t), 0.0) for t in env._bus_types_arr], dtype=np.float32)
+    compromised = np.zeros(MAX_BUSES, dtype=np.float32)
+    for b in env._compromised_buses:
+        if 0 < b < MAX_BUSES:
+            compromised[b] = 1.0
+    frac_compromised = len(env._compromised_buses) / env._num_buses
+
     next_obs = np.concatenate([
         [float(env._current_stage) / 3.0],
         [float(recent_evasion_rate)],
         [float(detector_conf)],
         one_hot_action,
         stages_vec,
+        [last_register_norm],
+        [last_value_norm],
+        [last_target_norm],
+        voltages,
+        degrees,
+        bus_types,
+        compromised,
+        [frac_compromised],
+        [0.0],  # attack_depth (simplified)
     ]).astype(np.float32)
 
     event = {
@@ -428,6 +574,9 @@ def _step_campaign_real():
         "Status": "Detected" if detected else "Compromised",
         "Detected": detected,
         "Mode": mode_label,
+        "Register": register_address,
+        "Value Magnitude": value_magnitude,
+        "Target Bus": target_bus,
     }
     st.session_state["battle_events"].append(event)
     st.session_state["battle_explanations"].append(explanation)
@@ -447,67 +596,60 @@ def _step_campaign_real():
 
 # --- Mode Selector ---
 st.subheader("Operational Mode")
-mode_col1, mode_col2, mode_col3 = st.columns(3)
+mode_col1, mode_col2 = st.columns(2)
 with mode_col1:
-    use_real = st.checkbox("Use Real Testbed", value=False,
-                           help="Execute real attack scripts on the Mininet testbed. "
-                                "Requires ppo_step_watcher.py running on the attacker host.")
+    use_real = True  # Always use real testbed
+    st.success("Real Testbed Mode — all attacks execute on Mininet")
 with mode_col2:
     watcher_status = "Connected" if PENDING_STEP.exists() or STEP_RESULT.exists() else "Checking..."
     st.metric("Watcher Status", watcher_status)
-with mode_col3:
-    if use_real:
-        watcher_ready = not PENDING_STEP.exists()
-        if watcher_ready:
-            st.success("Ready for steps")
-        else:
-            st.warning("Watcher busy")
+    watcher_ready = not PENDING_STEP.exists()
+    if watcher_ready:
+        st.success("Ready for steps")
+    else:
+        st.warning("Watcher busy")
 
 # --- Hybrid Defense Status ---
-if use_real:
-    st.divider()
-    with st.expander("Hybrid Defense Configuration", expanded=True):
-        hcol1, hcol2, hcol3 = st.columns(3)
-        with hcol1:
-            st.markdown("**Suricata IDS**")
-            st.caption("Signature-based detection (SIDs 9000001-9000010)")
-            st.success("Active")
-        with hcol2:
-            st.markdown("**LSTM + Autoencoder**")
-            st.caption("ML anomaly detection (78 CIC-IDS features)")
-            ml_key = "_ml_status_shown"
-            if ml_key not in st.session_state:
-                try:
-                    sys.path.insert(0, PROJECT_ROOT)
-                    from defense.ml_detector import MLDetector
-                    ml = MLDetector()
-                    ml.load()
-                    st.session_state[ml_key] = True
-                except Exception:
-                    st.session_state[ml_key] = False
-            if st.session_state.get(ml_key):
-                st.success("Models Loaded")
-            else:
-                st.warning("Models unavailable")
-        with hcol3:
-            st.markdown("**Detection Fusion**")
-            st.caption("50% LSTM + 50% AE -> Combined verdict")
-            st.info("Threshold: 0.50")
+st.divider()
+with st.expander("Hybrid Defense Configuration", expanded=True):
+    hcol1, hcol2, hcol3 = st.columns(3)
+    with hcol1:
+        st.markdown("**Suricata IDS**")
+        st.caption("Signature-based detection (SIDs 9000001-9000010)")
+        st.success("Active")
+    with hcol2:
+        st.markdown("**LSTM + Autoencoder**")
+        st.caption("ML anomaly detection (78 CIC-IDS features)")
+        ml_key = "_ml_status_shown"
+        if ml_key not in st.session_state:
+            try:
+                sys.path.insert(0, PROJECT_ROOT)
+                from defense.ml_detector import MLDetector
+                ml = MLDetector()
+                ml.load()
+                st.session_state[ml_key] = True
+            except Exception:
+                st.session_state[ml_key] = False
+        if st.session_state.get(ml_key):
+            st.success("Models Loaded")
+        else:
+            st.warning("Models unavailable")
+    with hcol3:
+        st.markdown("**Detection Fusion**")
+        st.caption("50% LSTM + 50% AE -> Combined verdict")
+        st.info("Threshold: 0.50")
 
 # --- Campaign Controls ---
 st.subheader("Campaign Controls")
 ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
 with ctrl1:
     if st.button("Start New Campaign", type="primary"):
-        _new_campaign(use_real_testbed=use_real)
+        _new_campaign(use_real_testbed=True)
         st.rerun()
 with ctrl2:
     next_disabled = not st.session_state.get("battle_active", False)
     if st.button("Run Next Tactic", disabled=next_disabled):
-        if use_real:
-            _step_campaign_real()
-        else:
-            _step_campaign_mock()
+        _step_campaign_real()
         st.rerun()
 with ctrl3:
     run_all_disabled = not st.session_state.get("battle_active", False)
@@ -515,10 +657,7 @@ with ctrl3:
         max_steps = 12
         step_count = 0
         while st.session_state.get("battle_active", False) and step_count < max_steps:
-            if use_real:
-                _step_campaign_real()
-            else:
-                _step_campaign_mock()
+            _step_campaign_real()
             step_count += 1
         st.rerun()
 with ctrl4:
@@ -532,7 +671,7 @@ latest = pd.DataFrame(events) if events else pd.DataFrame()
 current_evasion = 1.0 - (latest["Detected"].mean() if not latest.empty else 0.0)
 plateaued = st.session_state.get("battle_results", {}).get("plateau_detected", False)
 
-m1, m2, m3, m4, m5 = st.columns(5)
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("Current step", len(events))
 m2.metric("Evasion", f"{current_evasion:.0%}" if events else "---")
 m3.metric("Campaigns", len(campaigns))
@@ -592,68 +731,214 @@ if campaigns:
 
 
 # =============================================================================
-# Section: Live Testbed Activity Log (real-time from data/log_store.json)
+# Section: Live Packet Sniffer (always active)
 # =============================================================================
-if use_real:
-    st.divider()
-    st.subheader("Live Testbed Activity")
-    st.caption("Real-time events from attack scripts, SCADA client, and Suricata IDS. "
-               "Polls data/log_store.json every 3 seconds.")
+st.divider()
+st.subheader("Live Packet Sniffer")
+st.caption("Real-time packet flow — all Modbus TCP traffic, SCADA polls, attack packets, and IDS alerts. "
+           "Auto-refreshes every 3 seconds.")
 
-    log_ctrl1, log_ctrl2, log_ctrl3 = st.columns([2, 1, 1])
-    with log_ctrl1:
-        auto_refresh_log = st.checkbox("Auto-refresh logs (every 3s)", value=True,
-                                        key="auto_refresh_live_log")
-    with log_ctrl2:
-        log_filter = st.selectbox("Filter by stage",
-                                   ["All", "recon", "attack", "Impair Process Control",
-                                    "normal_traffic"],
-                                   key="log_stage_filter")
-    with log_ctrl3:
-        max_events = st.slider("Max events to show", 10, 200, 50, key="max_log_events")
+sniffer_ctrl1, sniffer_ctrl2, sniffer_ctrl3 = st.columns([2, 1, 1])
+with sniffer_ctrl1:
+    auto_refresh_log = st.checkbox("Auto-refresh (every 3s)", value=True,
+                                    key="auto_refresh_sniffer")
+with sniffer_ctrl2:
+    proto_filter = st.selectbox("Protocol filter",
+                                 ["All", "Modbus TCP", "SCADA Poll", "Attack", "IDS Alert"],
+                                 key="proto_filter")
+with sniffer_ctrl3:
+    max_packets = st.slider("Max packets", 50, 500, 100, key="max_packets")
 
-    # Read and display live log events
+# Collect all packets from all sources
+all_packets = []
+
+# 1. From modbus_log.json (Modbus TCP packets)
+MODBUS_LOG = DATA_DIR / "modbus_log.json"
+if MODBUS_LOG.exists():
+    try:
+        modbus_data = json.loads(MODBUS_LOG.read_text(encoding="utf-8"))
+        if isinstance(modbus_data, list):
+            for pkt in modbus_data:
+                ts = pkt.get("timestamp", "")
+                if "T" in ts:
+                    ts = ts.split("T")[1][:12]
+                direction = pkt.get("direction", "->")
+                src = pkt.get("src_ip", "-")
+                dst = pkt.get("dst_ip", "-")
+                func = pkt.get("function_name", "-")
+                addr = pkt.get("start_address", "-")
+                values = pkt.get("values", [])
+                exc = pkt.get("exception_code", "-")
+                length = pkt.get("packet_length", 0)
+                unit = pkt.get("mbap_unit_id", "-")
+
+                # Build info string like Wireshark
+                if exc and exc != "-":
+                    info = f"Exception {exc}"
+                elif "Read" in func:
+                    info = f"{func} Unit={unit} Addr={addr} Count={len(values) if values else 0}"
+                elif "Write" in func:
+                    info = f"{func} Unit={unit} Addr={addr} Values={str(values)[:20]}"
+                else:
+                    info = f"{func} Unit={unit} Addr={addr}"
+
+                all_packets.append({
+                    "Time": ts,
+                    "Source": src,
+                    "Destination": dst,
+                    "Protocol": "Modbus TCP",
+                    "Length": length,
+                    "Info": info,
+                    "_type": "modbus",
+                })
+    except Exception:
+        pass
+
+# 2. From log_store.json (attack events, SCADA polls, IDS alerts)
+if LOG_STORE.exists():
+    try:
+        raw_logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+        if isinstance(raw_logs, list):
+            for e in raw_logs:
+                ts = e.get("timestamp", "")
+                if "T" in ts:
+                    ts = ts.split("T")[1][:12]
+
+                action = e.get("action", "")
+                target = e.get("target", e.get("spoofed_source", "-"))
+                stage = e.get("stage", "-")
+                technique = e.get("technique", "-")
+
+                # Determine protocol type
+                if "poll_" in action or "scada" in action.lower():
+                    proto = "SCADA Poll"
+                    src = "10.0.0.10"
+                    dst = target
+                    info = f"{action} | {technique}"
+                elif "hybrid_detection" in action or "suricata" in action.lower():
+                    proto = "IDS Alert"
+                    src = "Suricata"
+                    dst = "-"
+                    method = e.get("detection_method", "-")
+                    conf = e.get("ml_confidence", 0)
+                    info = f"{technique} | method={method} conf={conf:.2f}"
+                elif stage in ("recon", "attack", "Impair Process Control"):
+                    proto = "Attack"
+                    src = "10.0.0.66"
+                    dst = target
+                    info = f"{technique} | {action}"
+                else:
+                    proto = "Other"
+                    src = "-"
+                    dst = target
+                    info = f"{action} | {technique}"
+
+                all_packets.append({
+                    "Time": ts,
+                    "Source": src,
+                    "Destination": dst,
+                    "Protocol": proto,
+                    "Length": 0,
+                    "Info": info,
+                    "_type": proto.lower().replace(" ", "_"),
+                })
+    except Exception:
+        pass
+
+# 3. From flow_log.json (NetFlow/IPFIX)
+FLOW_LOG = DATA_DIR / "flow_log.json"
+if FLOW_LOG.exists():
+    try:
+        flow_data = json.loads(FLOW_LOG.read_text(encoding="utf-8"))
+        if isinstance(flow_data, list):
+            for flow in flow_data:
+                ts = flow.get("timestamp", "")
+                if "T" in ts:
+                    ts = ts.split("T")[1][:12]
+                all_packets.append({
+                    "Time": ts,
+                    "Source": flow.get("src_ip", "-"),
+                    "Destination": flow.get("dst_ip", "-"),
+                    "Protocol": "TCP",
+                    "Length": flow.get("total_bytes", 0),
+                    "Info": f"Sport={flow.get('src_port','-')} Dport={flow.get('dst_port','-')} "
+                            f"Duration={flow.get('duration_sec',0):.3f}s "
+                            f"Packets={flow.get('total_packets',0)}",
+                    "_type": "flow",
+                })
+    except Exception:
+        pass
+
+# Sort by time (most recent last for sniffer view)
+all_packets.sort(key=lambda x: x.get("Time", ""))
+
+# Apply protocol filter
+if proto_filter != "All":
+    filter_map = {
+        "Modbus TCP": "modbus",
+        "SCADA Poll": "scada_poll",
+        "Attack": "attack",
+        "IDS Alert": "ids_alert",
+    }
+    filter_type = filter_map.get(proto_filter, "")
+    all_packets = [p for p in all_packets if p["_type"] == filter_type]
+
+# Limit to max
+display_packets = all_packets[-max_packets:]
+
+if display_packets:
+    display_df = pd.DataFrame(display_packets)[["Time", "Source", "Destination", "Protocol", "Length", "Info"]]
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+    # Packet stats
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Packets", len(all_packets))
+    col2.metric("Modbus TCP", sum(1 for p in all_packets if p["_type"] == "modbus"))
+    col3.metric("Attacks", sum(1 for p in all_packets if p["_type"] == "attack"))
+    col4.metric("IDS Alerts", sum(1 for p in all_packets if p["_type"] in ("ids_alert", "ids")))
+else:
+    st.info("No packets yet. Start a campaign to see live packet flow.")
+
+# Auto-refresh every 3 seconds
+if auto_refresh_log:
+    time.sleep(3)
+    st.rerun()
+
+
+# =============================================================================
+# Section: Pentest Report Generation
+# =============================================================================
+st.divider()
+st.subheader("Security Assessment Report")
+st.caption("Generate a professional penetration test report from the campaign results.")
+
+col_rpt1, col_rpt2 = st.columns(2)
+with col_rpt1:
+    report_format = st.radio("Report Format", ["HTML", "PDF"], horizontal=True)
+with col_rpt2:
+    report_action = st.button("Generate Report", type="primary", use_container_width=True)
+
+if report_action:
+    from reports.pentest_report import generate_report, render_html, render_pdf
+
+    # Build campaign events from log store
+    events = []
     if LOG_STORE.exists():
         try:
-            raw_logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-            if isinstance(raw_logs, list) and raw_logs:
-                # Filter by stage if needed
-                if log_filter != "All":
-                    filtered = [e for e in raw_logs if e.get("stage", "") == log_filter]
-                else:
-                    filtered = raw_logs
+            raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
+            if isinstance(raw_log, list):
+                events = raw_log
+        except Exception:
+            pass
 
-                # Show most recent first, limit to max_events
-                recent_events = list(reversed(filtered[-max_events:]))
-
-                # Build display table
-                log_rows = []
-                for e in recent_events:
-                    ts = e.get("timestamp", "")
-                    if "T" in ts:
-                        ts = ts.split("T")[1][:8]
-
-                    log_rows.append({
-                        "Time": ts,
-                        "Stage": e.get("stage", "-"),
-                        "Technique": e.get("technique", "-"),
-                        "Action": e.get("action", "-"),
-                        "Target": e.get("target", e.get("spoofed_source", "-")),
-                        "Detail": _format_log_detail(e),
-                    })
-
-                log_df = pd.DataFrame(log_rows)
-                st.write(f"**{len(filtered)}** events total, showing **{len(log_rows)}** most recent:")
-                st.dataframe(log_df, use_container_width=True, hide_index=True, height=400)
-
-                st.metric("Total events in log store", len(raw_logs))
-            else:
-                st.info("Log store exists but contains no events yet. "
-                        "Events will appear here as attacks execute on the testbed.")
-        except Exception as err:
-            st.warning(f"Could not parse log store: {err}")
+    if not events:
+        st.warning("No campaign events found. Run a battle first to generate a report.")
     else:
-        st.info("No testbed log found. Events will appear here once attacks run on the testbed.")
+        campaign_info = {
+            "battle_mode": battle_mode if "battle_mode" in dir() else "simulation",
+            "total_steps": len(events),
+        }
+        report = generate_report(events, campaign_info)
 
     # Suricata cycle report (if available)
     if CYCLE_REPORT.exists():
@@ -766,5 +1051,3 @@ else:
                     st.info("Log store exists but contains no events yet.")
             except Exception as err:
                 st.warning(f"Could not parse log store: {err}")
-        else:
-            st.info("No testbed log found. Run `scripts/start_testbed.py` on WSL2.")

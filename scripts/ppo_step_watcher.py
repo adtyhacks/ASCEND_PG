@@ -96,12 +96,23 @@ def main():
             if pending is not None:
                 technique_id = pending.get("technique_id", "")
                 step_name = pending.get("step_name", "unknown")
+                # Extract multi-parameter action info
+                register_address = pending.get("register_address", 40000)
+                value_magnitude = pending.get("value_magnitude", 1.0)
+                target_bus = pending.get("target_bus", 0)
+                target_ip = pending.get("target_ip", "10.0.0.1")
+
                 print(f"\n[watcher] Received step: {step_name} ({technique_id})")
+                print(f"  Target: {target_ip} (Bus {target_bus})")
+                print(f"  Register: {register_address} | Value magnitude: {value_magnitude:.3f}")
 
                 log_event({
                     "stage": step_name,
                     "technique": technique_id,
                     "action": "watcher_received",
+                    "target": target_ip,
+                    "register": register_address,
+                    "value_magnitude": value_magnitude,
                 })
 
                 try:
@@ -115,9 +126,15 @@ def main():
                             "mode": "real",
                         }
                     else:
-                        result = execute_single_attack(technique_id, detection_mode="hybrid")
+                        result = execute_single_attack(technique_id, detection_mode="hybrid",
+                                                       target_ip=target_ip,
+                                                       register_address=register_address,
+                                                       value_magnitude=value_magnitude)
                         result["success"] = True
                         result["technique_id"] = technique_id
+                        result["register_address"] = register_address
+                        result["value_magnitude"] = value_magnitude
+                        result["target_bus"] = target_bus
 
                     steps_executed += 1
                     method = result.get("detection_method", "suricata")

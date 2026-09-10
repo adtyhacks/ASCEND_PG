@@ -36,7 +36,12 @@ from mininet.node import OVSController
 from mininet.cli import CLI
 from mininet.log import setLogLevel
 
-from testbed.mininet_topology import IcsTopo, PLC_IPS, SCADA_IP, ATTACKER_IP
+from testbed.mininet_topology import IcsTopo, SCADA_IP, ATTACKER_IP
+from testbed.topology import get_topology, load_topology
+
+# Load topology
+_topo = get_topology()
+PLC_IPS = [_topo.get_ip(i) for i in range(_topo.num_buses)]
 
 
 class TestbedOrchestrator:
@@ -60,25 +65,26 @@ class TestbedOrchestrator:
         subprocess.run(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def start_network(self):
-        print("[2/6] Starting 7-host Mininet ICS topology...")
+        print("[2/6] Starting 16-host Mininet ICS topology (IEEE-14)...")
         setLogLevel("error")
         topo = IcsTopo()
         self.net = Mininet(topo=topo, controller=OVSController)
         self.net.start()
         print("      Network up on 10.0.0.0/24:")
-        print(f"      - PLCs: plc1..plc5 ({PLC_IPS[0]} - {PLC_IPS[-1]})")
+        print(f"      - PLCs: plc1..plc14 ({PLC_IPS[0]} - {PLC_IPS[-1]})")
         print(f"      - SCADA: scada ({SCADA_IP})")
         print(f"      - Attacker: attacker ({ATTACKER_IP})")
 
     def start_plcs(self):
-        print("[3/6] Launching 5 Modbus PLC servers...")
+        print("[3/6] Launching 14 Modbus PLC servers (IEEE-14 buses)...")
         plc_script = str(PROJECT_ROOT / "testbed" / "plc_server.py")
-        for i, ip in enumerate(PLC_IPS, start=1):
-            host = self.net.get(f"plc{i}")
-            proc = host.popen([sys.executable, plc_script, "-i", ip, "-p", "502"])
+        for i, ip in enumerate(PLC_IPS):
+            host = self.net.get(f"plc{i+1}")
+            proc = host.popen([sys.executable, plc_script, "-i", ip, "-p", "502",
+                               "--bus-id", str(i)])
             self.plc_procs.append(proc)
-        time.sleep(1.0)
-        print("      5 Modbus PLCs running (addresses 1-100 initialized).")
+        time.sleep(1.5)
+        print("      14 Modbus PLCs running (IEEE-14 bus data seeded).")
 
     def start_scada(self):
         print("[4/6] Launching SCADA polling client...")

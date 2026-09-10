@@ -63,6 +63,15 @@ def _detect_interface():
     _INTERFACE_CACHE = "s1-eth7"
     return _INTERFACE_CACHE
 
+
+def _parse_suricata_ts(ts_str: str) -> datetime:
+    """Parse Suricata timestamps like '2026-09-09T14:48:03.781984+0530'."""
+    import re
+    ts_str = ts_str.replace("Z", "+00:00")
+    if re.search(r'[+-]\d{4}$', ts_str):
+        ts_str = ts_str[:-2] + ':' + ts_str[-2:]
+    return datetime.fromisoformat(ts_str)
+
 # ---------------------------------------------------------------------------
 # PPO technique ID -> testbed step name mapping
 # Only techniques with real attack scripts are mapped.
@@ -109,7 +118,7 @@ STEP_DEFS = {
         "name": "fdi_attack",
         "techniques": ["T0836"],
         "script": str(ATTACKS_DIR / "fdi_attack.py"),
-        "args": ["--target", "10.0.0.1", "-a", "0", "-v", "9999"],
+        "args": ["--target", "10.0.0.1", "-a", "40000", "-v", "9999"],
         "detect_sids": [9000001],
         "timeout": 120,
     },
@@ -117,7 +126,7 @@ STEP_DEFS = {
         "name": "naive_response_injection",
         "techniques": ["T0836"],
         "script": str(ATTACKS_DIR / "naive_response_injection.py"),
-        "args": ["--target", "10.0.0.1", "--address", "0", "--value", "65535",
+        "args": ["--target", "10.0.0.1", "--address", "40000", "--value", "65535",
                   "--duration", "5", "--interval", "1.0",
                   "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
@@ -127,7 +136,7 @@ STEP_DEFS = {
         "name": "complex_response_injection",
         "techniques": ["T0836"],
         "script": str(ATTACKS_DIR / "complex_response_injection.py"),
-        "args": ["--target", "10.0.0.1", "--address", "0", "--mode", "ramp",
+        "args": ["--target", "10.0.0.1", "--address", "40000", "--mode", "ramp",
                   "--magnitude", "5", "--duration", "5", "--interval", "1.0",
                   "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
@@ -146,7 +155,7 @@ STEP_DEFS = {
         "name": "cmd_inject_register",
         "techniques": ["T0855"],
         "script": str(ATTACKS_DIR / "cmd_inject_register.py"),
-        "args": ["--target", "10.0.0.1", "--address", "50", "--value", "0",
+        "args": ["--target", "10.0.0.1", "--address", "40050", "--value", "0",
                   "--count", "5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
         "timeout": 120,
@@ -237,7 +246,7 @@ STEP_DEFS = {
         "name": "manipulate_io_image",
         "techniques": ["T0835"],
         "script": str(ATTACKS_DIR / "manipulate_io_image.py"),
-        "args": ["--target", "10.0.0.1", "--start-coil", "0", "--end-coil", "19",
+        "args": ["--target", "10.0.0.1", "--coil-start", "0", "--coil-count", "20",
                   "--delay", "0.05", "--log", WSL_LOG_PATH],
         "detect_sids": [9000007],
         "timeout": 90,
@@ -246,7 +255,7 @@ STEP_DEFS = {
         "name": "monitor_process_state",
         "techniques": ["T0801"],
         "script": str(ATTACKS_DIR / "monitor_process_state.py"),
-        "args": ["--target", "10.0.0.1", "--start-reg", "0", "--end-reg", "99",
+        "args": ["--target", "10.0.0.1", "--start-reg", "30000", "--end-reg", "30099",
                   "--count", "5", "--delay", "0.5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000023],
         "timeout": 90,
@@ -254,15 +263,25 @@ STEP_DEFS = {
 }
 
 
-def build_step(technique_id: str) -> dict | None:
+def build_step(technique_id: str, target_ip: str = "10.0.0.1",
+               register_address: int = 40000,
+               value_magnitude: float = 1.0) -> dict | None:
     """Resolve a PPO technique ID to a testbed step definition.
 
-    Returns the step dict if a real testbed script exists, None otherwise
-    (caller should fall back to mock mode).
+    Returns the step dict if a real testbed script exists, None otherwise.
+    Replaces hardcoded 10.0.0.1 with the provided target_ip.
+    Adds register_address and value_magnitude to step args.
     """
     step_name = TECHNIQUE_TO_STEP_NAME.get(technique_id)
     if step_name and step_name in STEP_DEFS:
-        return STEP_DEFS[step_name]
+        import copy
+        step = copy.deepcopy(STEP_DEFS[step_name])
+        # Replace hardcoded target IP with dynamic one
+        new_args = [target_ip if a == "10.0.0.1" else a for a in step["args"]]
+        # Add register and value parameters if the script supports them
+        new_args.extend([str(register_address), str(value_magnitude)])
+        step["args"] = new_args
+        return step
     return None
 
 
@@ -346,7 +365,12 @@ def run_step(step: dict) -> dict:
 
 
 # Re-export from hybrid_detector to avoid duplicate implementation
-from defense.hybrid_detector import _find_suricata_alerts as find_alerts_for_window
+try:
+    from defense.hybrid_detector import _find_suricata_alerts as find_alerts_for_window
+except ImportError:
+    # Guard against missing torch/scapy on Windows (Streamlit host)
+    def find_alerts_for_window(sids, start, end):
+        return []
 
 
 def get_hybrid_detector(interface=None, use_ml=True, use_suricata=True):
@@ -368,8 +392,13 @@ def get_hybrid_detector(interface=None, use_ml=True, use_suricata=True):
     return _hybrid_detector
 
 
-def execute_single_attack(technique_id: str, detection_mode="hybrid") -> dict:
-    step = build_step(technique_id)
+def execute_single_attack(technique_id: str, detection_mode="hybrid",
+                          target_ip: str = "10.0.0.1",
+                          register_address: int = 40000,
+                          value_magnitude: float = 1.0) -> dict:
+    step = build_step(technique_id, target_ip=target_ip,
+                      register_address=register_address,
+                      value_magnitude=value_magnitude)
     if step is None:
         raise ValueError(f"No testbed step for technique {technique_id}")
 
