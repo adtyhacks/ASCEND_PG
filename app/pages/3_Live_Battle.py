@@ -476,8 +476,7 @@ def _step_campaign_real():
             detection_method = "calibrated"
             mode_label = "Simulation (fallback)"
     else:
-        _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action)
-        st.session_state["battle_reward"] += float(mock_reward)
+        _, _, mock_terminated, mock_truncated, mock_info = env.step(action)
         detected = bool(mock_info.get("detected", False))
         detector_conf = float(mock_info.get("detection_confidence", 0.0))
         ml_confidence = 0.0
@@ -538,7 +537,7 @@ def _step_campaign_real():
     bus_types = np.array([bus_type_map.get(int(t), 0.0) for t in env._bus_types_arr], dtype=np.float32)
     compromised = np.zeros(MAX_BUSES, dtype=np.float32)
     for b in env._compromised_buses:
-        if 0 < b < MAX_BUSES:
+        if 0 <= b < MAX_BUSES:
             compromised[b] = 1.0
     frac_compromised = len(env._compromised_buses) / env._num_buses
 
@@ -933,7 +932,7 @@ if report_action:
         st.warning("No campaign events found. Run a battle first to generate a report.")
     else:
         campaign_info = {
-            "battle_mode": battle_mode if "battle_mode" in dir() else "simulation",
+            "battle_mode": "real" if use_real else "simulation",
             "total_steps": len(events),
         }
         report = generate_report(events, campaign_info)

@@ -105,7 +105,8 @@ def evaluate_agent(model_path: str = None, num_episodes: int = 20,
         done = False
         while not done:
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(int(action))
+            action = np.asarray(action, dtype=np.int64).flatten()
+            obs, reward, terminated, truncated, info = env.step(action)
             total_reward += reward
             step_count += 1
 

@@ -121,6 +121,8 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "-a", "40000", "-v", "9999"],
         "detect_sids": [9000001],
         "timeout": 120,
+        "register_arg": "-a",
+        "value_arg": "-v",
     },
     "naive_response_injection": {
         "name": "naive_response_injection",
@@ -150,6 +152,8 @@ STEP_DEFS = {
                   "--count", "5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000007],
         "timeout": 120,
+        "register_arg": "--address",
+        "value_arg": "--value",
     },
     "cmd_inject_register": {
         "name": "cmd_inject_register",
@@ -159,6 +163,8 @@ STEP_DEFS = {
                   "--count", "5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
         "timeout": 120,
+        "register_arg": "--address",
+        "value_arg": "--value",
     },
     "malicious_fc": {
         "name": "malicious_fc",
@@ -278,8 +284,12 @@ def build_step(technique_id: str, target_ip: str = "10.0.0.1",
         step = copy.deepcopy(STEP_DEFS[step_name])
         # Replace hardcoded target IP with dynamic one
         new_args = [target_ip if a == "10.0.0.1" else a for a in step["args"]]
-        # Add register and value parameters if the script supports them
-        new_args.extend([str(register_address), str(value_magnitude)])
+        # Add register and value parameters only if the script supports them
+        reg_flag = step.get("register_arg")
+        val_flag = step.get("value_arg")
+        if reg_flag and val_flag:
+            new_args.extend([reg_flag, str(register_address),
+                             val_flag, str(value_magnitude)])
         step["args"] = new_args
         return step
     return None
