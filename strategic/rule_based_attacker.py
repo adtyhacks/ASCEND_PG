@@ -9,7 +9,6 @@ ATTACK_TYPES = ["FDI", "DoS", "Replay", "MITM"]
 class RuleBasedAttacker:
     def __init__(self):
         self.detection_history = {a: [] for a in ATTACK_TYPES}
-        self.current_attack_index = 0
 
     def choose_attack(self):
         """Pick the attack type with the lowest recent detection rate."""

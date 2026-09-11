@@ -83,8 +83,11 @@ class TestbedOrchestrator:
             proc = host.popen([sys.executable, plc_script, "-i", ip, "-p", "502",
                                "--bus-id", str(i)])
             self.plc_procs.append(proc)
-        time.sleep(1.5)
-        print("      14 Modbus PLCs running (IEEE-14 bus data seeded).")
+        time.sleep(3)
+        alive = sum(1 for p in self.plc_procs if p.poll() is None)
+        print(f"      {alive}/14 Modbus PLCs running (IEEE-14 bus data seeded).")
+        if alive < 14:
+            print(f"      [!] WARNING: {14 - alive} PLC servers failed to start!")
 
     def start_scada(self):
         print("[4/6] Launching SCADA polling client...")
@@ -181,7 +184,18 @@ class TestbedOrchestrator:
         if log_store.exists():
             import json
             try:
-                data = json.loads(log_store.read_text())
+                text = log_store.read_text(encoding="utf-8").strip()
+                data = []
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        if isinstance(obj, dict):
+                            data.append(obj)
+                    except json.JSONDecodeError:
+                        pass
                 print(f"\nTotal Logged Events: {len(data)}")
                 recent = data[-5:] if len(data) >= 5 else data
                 for item in recent:
@@ -330,6 +344,7 @@ def main():
         orch.clean_stale()
         orch.start_network()
         orch.start_plcs()
+        orch.pingall()
         orch.start_scada()
         orch.start_suricata()
         orch.start_loggers()

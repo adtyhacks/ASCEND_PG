@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Diagnostic script to check Suricata detection pipeline."""
-import json, sys, os
+import json, sys
 sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
 from pathlib import Path
 from datetime import datetime, timezone

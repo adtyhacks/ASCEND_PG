@@ -82,15 +82,20 @@ TECHNIQUE_TO_STEP_NAME = {
     "T0846": "recon_nmap_devid",
     "T0888": "recon_nmap_devid",
     "T0842": "recon_fc_scan",
+    "T0886": "remote_services",
     # Stage 1: Lateral Movement / Collection
     "T0830": "mitm_proxy",
     "T0801": "monitor_process_state",
+    "T0802": "automated_collection",
+    "T0869": "standard_protocol_c2",
     # Stage 2: Impair Process Control
     "T0814": "dos_loud",
     "T0816": "device_restart",
     "T0836": "fdi_attack",
     "T0806": "brute_force_io",
     "T0835": "manipulate_io_image",
+    "T0878": "alarm_suppression",
+    "T0881": "service_stop",
     # Stage 3: Impact
     "T0832": "replay_attack",
     "T0815": "denial_of_view",
@@ -121,6 +126,8 @@ STEP_DEFS = {
         "args": ["--target", "10.0.0.1", "-a", "40000", "-v", "9999"],
         "detect_sids": [9000001],
         "timeout": 120,
+        "register_arg": "-a",
+        "value_arg": "-v",
     },
     "naive_response_injection": {
         "name": "naive_response_injection",
@@ -150,6 +157,8 @@ STEP_DEFS = {
                   "--count", "5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000007],
         "timeout": 120,
+        "register_arg": "--address",
+        "value_arg": "--value",
     },
     "cmd_inject_register": {
         "name": "cmd_inject_register",
@@ -159,6 +168,8 @@ STEP_DEFS = {
                   "--count", "5", "--log", WSL_LOG_PATH],
         "detect_sids": [9000001],
         "timeout": 120,
+        "register_arg": "--address",
+        "value_arg": "--value",
     },
     "malicious_fc": {
         "name": "malicious_fc",
@@ -237,7 +248,7 @@ STEP_DEFS = {
         "name": "denial_of_view",
         "techniques": ["T0815"],
         "script": str(ATTACKS_DIR / "denial_of_view.py"),
-        "args": ["--scada-ip", "10.0.0.10", "--plc-ip", "10.0.0.1",
+        "args": ["--scada-ip", "10.0.0.20", "--plc-ip", "10.0.0.1",
                   "--count", "100", "--log", WSL_LOG_PATH],
         "detect_sids": [9000001, 9000024],
         "timeout": 90,
@@ -260,6 +271,62 @@ STEP_DEFS = {
         "detect_sids": [9000023],
         "timeout": 90,
     },
+    # === NEW TECHNIQUES (T0886, T0802, T0869, T0878, T0881) ===
+    "remote_services": {
+        "name": "remote_services",
+        "techniques": ["T0886"],
+        "script": str(ATTACKS_DIR / "remote_services.py"),
+        "args": ["--target", "10.0.0.1", "--scada-ip", "10.0.0.20",
+                  "--log", WSL_LOG_PATH],
+        "detect_sids": [9000026],
+        "timeout": 120,
+        "register_arg": "-a",
+        "value_arg": "-v",
+    },
+    "automated_collection": {
+        "name": "automated_collection",
+        "techniques": ["T0802"],
+        "script": str(ATTACKS_DIR / "automated_collection.py"),
+        "args": ["--target", "10.0.0.1", "--subnet", "10.0.0.0/24",
+                  "--log", WSL_LOG_PATH],
+        "detect_sids": [9000027],
+        "timeout": 180,
+        "register_arg": "-a",
+        "value_arg": "-v",
+    },
+    "standard_protocol_c2": {
+        "name": "standard_protocol_c2",
+        "techniques": ["T0869"],
+        "script": str(ATTACKS_DIR / "standard_protocol_c2.py"),
+        "args": ["--target", "10.0.0.1", "--command", "DEAD",
+                  "--count", "5", "--interval", "1.0",
+                  "--log", WSL_LOG_PATH],
+        "detect_sids": [9000028],
+        "timeout": 120,
+        "register_arg": "-a",
+        "value_arg": "-v",
+    },
+    "alarm_suppression": {
+        "name": "alarm_suppression",
+        "techniques": ["T0878"],
+        "script": str(ATTACKS_DIR / "alarm_suppression.py"),
+        "args": ["--target", "10.0.0.1", "--duration", "5", "--interval", "1.0",
+                  "--log", WSL_LOG_PATH],
+        "detect_sids": [9000029],
+        "timeout": 120,
+        "register_arg": "-a",
+        "value_arg": "-v",
+    },
+    "service_stop": {
+        "name": "service_stop",
+        "techniques": ["T0881"],
+        "script": str(ATTACKS_DIR / "service_stop.py"),
+        "args": ["--target", "10.0.0.1", "--mode", "combined", "--count", "100",
+                  "--log", WSL_LOG_PATH],
+        "detect_sids": [9000030],
+        "timeout": 120,
+        "value_arg": "-v",
+    },
 }
 
 
@@ -278,8 +345,12 @@ def build_step(technique_id: str, target_ip: str = "10.0.0.1",
         step = copy.deepcopy(STEP_DEFS[step_name])
         # Replace hardcoded target IP with dynamic one
         new_args = [target_ip if a == "10.0.0.1" else a for a in step["args"]]
-        # Add register and value parameters if the script supports them
-        new_args.extend([str(register_address), str(value_magnitude)])
+        # Add register and value parameters only if the script supports them
+        reg_flag = step.get("register_arg")
+        val_flag = step.get("value_arg")
+        if reg_flag and val_flag:
+            new_args.extend([reg_flag, str(register_address),
+                             val_flag, str(value_magnitude)])
         step["args"] = new_args
         return step
     return None
@@ -288,16 +359,10 @@ def build_step(technique_id: str, target_ip: str = "10.0.0.1",
 def log_event(event: dict):
     """Append one event to the shared JSON log store."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
-    events = []
     log_path = Path(WSL_LOG_PATH)
-    if log_path.exists():
-        try:
-            events = json.loads(log_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            events = []
-    events.append(event)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(events, indent=2))
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
 
 
 def run_step(step: dict) -> dict:
@@ -365,7 +430,12 @@ def run_step(step: dict) -> dict:
 
 
 # Re-export from hybrid_detector to avoid duplicate implementation
-from defense.hybrid_detector import _find_suricata_alerts as find_alerts_for_window
+try:
+    from defense.hybrid_detector import _find_suricata_alerts as find_alerts_for_window
+except ImportError:
+    # Guard against missing torch/scapy on Windows (Streamlit host)
+    def find_alerts_for_window(sids, start, end):
+        return []
 
 
 def get_hybrid_detector(interface=None, use_ml=True, use_suricata=True):

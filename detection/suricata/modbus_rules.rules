@@ -94,3 +94,28 @@ alert tcp any any -> any 502 (msg:"ASCEND-PG DoV - Forged FC06 Write (T0815)"; f
 # detect coil reads (FC01) — uncommon in normal SCADA polling.
 # Catches manipulate_io_image.py Phase 1 reads before writes.
 alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Coil Read FC01 (T0801)"; modbus: function 1; classtype:attempted-recon; sid:9000025; rev:1;)
+
+# ===== Remote Services (T0886) — SSH to OT-zone hosts =====
+# remote_services.py pivots via SSH to dual-homed SCADA host, then
+# reaches PLCs on port 502. Detect SSH connections to OT-zone hosts.
+alert tcp any any -> any 22 (msg:"ASCEND-PG Remote Services - SSH to OT Host (T0886)"; flags:S; threshold:type both, track by_src, count 3, seconds 60; classtype:attempted-lateral-movement; sid:9000026; rev:1;)
+
+# ===== Automated Collection (T0802) — Broad register scan =====
+# automated_collection.py scans all PLCs reading holding/input registers
+# and coils. High-volume Modbus reads from non-SCADA source.
+alert modbus any any -> any 502 (msg:"ASCEND-PG AutoCollection - Broad Register Scan (T0802)"; flow:to_server, established; dsize:<20; threshold:type both, track by_src, count 30, seconds 5; classtype:attempted-recon; sid:9000027; rev:1;)
+
+# ===== Standard App Layer Protocol C2 (T0869) — Suspicious register writes =====
+# standard_protocol_c2.py embeds C2 commands in Modbus register values.
+# Detect repeated writes to C2 command register range (40100-40110).
+alert modbus any any -> any 502 (msg:"ASCEND-PG C2 - Suspicious Register Write Pattern (T0869)"; modbus: access write holding; threshold:type both, track by_src, count 10, seconds 5; classtype:command-and-control; sid:9000028; rev:1;)
+
+# ===== Alarm Suppression (T0878) — Alarm register clear =====
+# alarm_suppression.py writes zeros to alarm registers (40050-40099).
+# Detect rapid writes to alarm register range from non-SCADA source.
+alert modbus any any -> any 502 (msg:"ASCEND-PG AlarmSupp - Alarm Register Clear (T0878)"; modbus: access write holding; threshold:type both, track by_src, count 10, seconds 5; classtype:attempted-admin; sid:9000029; rev:1;)
+
+# ===== Service Stop (T0881) — Invalid function code flood =====
+# service_stop.py floods PLC with invalid/unsupported function codes.
+# Detect function code 127 (always unsupported) and malformed packets.
+alert modbus any any -> any 502 (msg:"ASCEND-PG ServiceStop - Invalid Function Code Flood (T0881)"; modbus: function 127; classtype:attempted-admin; sid:9000030; rev:1;)

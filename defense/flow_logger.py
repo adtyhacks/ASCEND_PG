@@ -211,7 +211,9 @@ class FlowLogger:
         if flows:
             try:
                 FLOW_LOG_STORE.parent.mkdir(parents=True, exist_ok=True)
-                FLOW_LOG_STORE.write_text(json.dumps(flows, indent=2), encoding="utf-8")
+                with open(FLOW_LOG_STORE, "a", encoding="utf-8") as f:
+                    for flow in flows:
+                        f.write(json.dumps(flow) + "\n")
             except Exception:
                 pass
 

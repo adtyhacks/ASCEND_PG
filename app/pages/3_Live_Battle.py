@@ -33,8 +33,12 @@ if PROJECT_ROOT not in sys.path:
 from testbed.grid_env import build_baseline
 from testbed.network_topology import build_ot_topology
 from testbed.visualize_topology import render_topology
-from testbed.topology import Topology, load_topology, set_topology, get_topology, save_topology_csv
-from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES
+from testbed.cytoscape_topology import generate_cytoscape_json, generate_cytoscape_html
+from testbed.visjs_topology import generate_vis_json, generate_vis_html
+from testbed.export_gephi import export_graphml, export_gexf
+from testbed.export_pkt import export_pkt_xml
+from testbed.topology import get_topology
+from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES, MAX_BUSES
 from xai.attack_decision_explain import explain_step_decision
 from metrics.dvs import PlateauTracker
 from stable_baselines3 import PPO
@@ -46,6 +50,31 @@ LOG_STORE = DATA_DIR / "log_store.json"
 CYCLE_REPORT = DATA_DIR / "cycle_report.json"
 MODEL_PATH = _REPO / "models" / "rl_agent.zip"
 
+
+def _read_log_store():
+    """Read log_store.json supporting both JSON array and JSONL formats."""
+    if not LOG_STORE.exists():
+        return []
+    try:
+        text = LOG_STORE.read_text(encoding="utf-8")
+        text = text.strip()
+        if not text:
+            return []
+        entries = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line in ("[", "]", ",", "[,"):
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    entries.append(obj)
+            except json.JSONDecodeError:
+                pass
+        return entries
+    except OSError:
+        return []
+
 # File-based handoff paths
 PENDING_STEP = DATA_DIR / "pending_step.json"
 STEP_RESULT = DATA_DIR / "step_result.json"
@@ -54,12 +83,13 @@ STEP_RESULT = DATA_DIR / "step_result.json"
 REAL_TESTBED_TECHNIQUES = {
     "T0846", "T0888", "T0842", "T0830", "T0801", "T0814", "T0816",
     "T0836", "T0806", "T0835", "T0832", "T0815",
+    "T0886", "T0802", "T0869", "T0878", "T0881", "T0855",
 }
 
 # Mininet host IP mapping (loaded from topology)
 _topo = get_topology()
 MININET_IPS = {f"plc{i+1}": _topo.get_ip(i) for i in range(_topo.num_buses)}
-MININET_IPS["scada"] = "10.0.0.10"
+MININET_IPS["scada"] = "10.0.0.20"
 
 # Bus-to-IP and IP-to-host mappings
 _ip_to_host = {v: k for k, v in MININET_IPS.items()}
@@ -74,80 +104,6 @@ def _bus_to_ip(bus: int) -> str:
 st.set_page_config(page_title="Live Battle | ASCEND-PG", layout="wide")
 st.title("Live Battle & Defense Evaluation")
 st.caption("Evaluate the trained adaptive attacker against active ICS defenses.")
-
-# --- Topology Upload Section ---
-with st.expander("Topology Configuration", expanded=False):
-    st.markdown("""
-    Upload a custom topology or use the default IEEE-14 bus system.
-
-    **CSV Format:**
-
-    `nodes.csv` columns: `bus_id, name, type, voltage, ip, plc_type, bus_role`
-    - type: `slack` (reference gen), `pv` (voltage-controlled gen), `pq` (load bus)
-    - plc_type: `siemens_s7_1200`, `siemens_s7_1500`, `allen_bradley_compactlogix`, `schneider_modicon_m340`, `generic_modbus`
-    - bus_role: `generator`, `load`, `substation`
-
-    `edges.csv` columns: `from_bus, to_bus`
-    """)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        nodes_file = st.file_uploader("nodes.csv", type=["csv"], key="nodes_csv")
-    with col2:
-        edges_file = st.file_uploader("edges.csv", type=["csv"], key="edges_csv")
-
-    if nodes_file and edges_file:
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            nodes_path = os.path.join(tmpdir, "nodes.csv")
-            edges_path = os.path.join(tmpdir, "edges.csv")
-            with open(nodes_path, "wb") as f:
-                f.write(nodes_file.read())
-            with open(edges_path, "wb") as f:
-                f.write(edges_file.read())
-            try:
-                topo = load_topology(tmpdir)
-                set_topology(topo)
-                st.success(f"Loaded: {topo.num_buses} buses, {len(topo.edges)} edges, "
-                           f"{len(topo.gen_buses)} generators")
-                st.session_state["custom_topology"] = topo
-                # Save to data dir for testbed
-                save_topology_csv(topo, str(_REPO / "data" / "topology"))
-            except Exception as e:
-                st.error(f"Error loading topology: {e}")
-
-    # Show current topology summary
-    topo = get_topology()
-    col_a, col_b, col_c, col_d = st.columns(4)
-    col_a.metric("Buses", topo.num_buses)
-    col_b.metric("Edges", len(topo.edges))
-    col_c.metric("Generators", len(topo.gen_buses))
-    col_d.metric("Max Degree", topo.max_degree)
-
-    # Download current topology as CSV
-    if st.button("Export Current Topology as CSV"):
-        save_topology_csv(topo, str(_REPO / "data" / "topology_export"))
-        st.success("Exported to data/topology_export/")
-        st.download_button(
-            "Download nodes.csv",
-            data=open(_REPO / "data" / "topology_export" / "nodes.csv").read(),
-            file_name="nodes.csv",
-            mime="text/csv",
-        )
-        st.download_button(
-            "Download edges.csv",
-            data=open(_REPO / "data" / "topology_export" / "edges.csv").read(),
-            file_name="edges.csv",
-            mime="text/csv",
-        )
-
-    # Template download
-    st.markdown("---")
-    st.markdown("**Download CSV Templates:**")
-    template_nodes = "bus_id,name,type,voltage,ip,plc_type,bus_role,pg,qg,pl,ql\n0,Bus1,slack,1.060,10.0.0.1,siemens_s7_1200,generator,232.4,-16.9,0.0,0.0\n1,Bus2,pv,1.045,10.0.0.2,allen_bradley_compactlogix,generator,40.0,42.4,21.7,12.7\n2,Bus3,pq,1.010,10.0.0.3,generic_modbus,load,0.0,0.0,94.2,19.0\n"
-    template_edges = "from_bus,to_bus\n0,1\n0,2\n1,2\n"
-    st.download_button("Template nodes.csv", template_nodes, "nodes_template.csv", "text/csv")
-    st.download_button("Template edges.csv", template_edges, "edges_template.csv", "text/csv")
 
 # Ensure baseline topology exists in session state
 if "topo_nodes" not in st.session_state or "topo_edges" not in st.session_state:
@@ -352,56 +308,6 @@ def _record_completed_campaign():
         print(f"Failed to export campaign history: {e}")
 
 
-def _step_campaign_mock():
-    """Execute one PPO step using calibrated detection (no testbed)."""
-    if not st.session_state.get("battle_active"):
-        return
-    env = st.session_state["battle_env"]
-    model = st.session_state["battle_model"]
-    obs = st.session_state["battle_obs"]
-
-    action, _ = model.predict(obs, deterministic=False)
-    action = np.asarray(action, dtype=np.int64).flatten()
-    technique_idx = int(action[0])
-    register_offset = int(action[1])
-    value_level = int(action[2])
-    target_bus = int(action[3]) % env._num_buses
-
-    explanation = explain_step_decision(model, obs, technique_idx)
-
-    next_obs, reward, terminated, truncated, info = env.step(action)
-    st.session_state["battle_reward"] += float(reward)
-    tech = MITRE_TECHNIQUES[technique_idx]
-    detected = bool(info.get("detected", False))
-    detector_conf = float(info.get("detection_confidence", 0.0))
-
-    target_host = _resolve_target_host(len(st.session_state["battle_events"]))
-
-    event = {
-        "Timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-        "Step": len(st.session_state["battle_events"]) + 1,
-        "MITRE ID": tech["id"],
-        "Technique Name": tech["name"],
-        "Stage": tech["stage"],
-        "Target Host": target_host,
-        "Detector Confidence": f"{detector_conf:.3f}",
-        "ML Confidence": "0.000",
-        "LSTM Score": "0.000",
-        "AE Score": "0.000",
-        "Detection Method": "calibrated",
-        "Status": "Detected" if detected else "Compromised",
-        "Detected": detected,
-        "Mode": "Simulation",
-    }
-    st.session_state["battle_events"].append(event)
-    st.session_state["battle_explanations"].append(explanation)
-    st.session_state["battle_obs"] = next_obs
-
-    if terminated or truncated:
-        st.session_state["battle_active"] = False
-        _record_completed_campaign()
-
-
 def _step_campaign_real():
     """Execute one PPO step using real testbed attacks via file handoff."""
     if not st.session_state.get("battle_active"):
@@ -435,13 +341,14 @@ def _step_campaign_real():
     step_name = TECHNIQUE_TO_STEP_NAME.get(technique_id)
     has_testbed = step_name is not None
 
+    status_box = st.empty()
+
     if has_testbed and not PENDING_STEP.exists() and not STEP_RESULT.exists():
         _write_pending_step(technique_id, step_name, target_ip,
                            register_address=register_address,
                            value_magnitude=value_magnitude,
                            target_bus=target_bus)
 
-        status_box = st.empty()
         status_box.info(f"Executing {technique_id} ({tech['name']}) on testbed...")
         result = _poll_step_result(timeout=300.0)
         status_box.empty()
@@ -464,27 +371,29 @@ def _step_campaign_real():
             mode_label = f"Real ({detection_method})"
         else:
             error_msg = result.get("error", "timeout") if result else "timeout"
-            status_box.warning(f"Testbed failed: {error_msg}. Using calibrated detection.")
+            status_box.error(f"Testbed failed: {error_msg}")
             time.sleep(3)
             status_box.empty()
-            _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action)
-            detected = bool(mock_info.get("detected", False))
-            detector_conf = float(mock_info.get("detection_confidence", 0.0))
+            # Step failed — record failure, do NOT fall back to mock
+            detected = False
+            detector_conf = 0.0
             ml_confidence = 0.0
             ml_lstm = 0.0
             ml_ae = 0.0
-            detection_method = "calibrated"
-            mode_label = "Simulation (fallback)"
+            detection_method = "failed"
+            mode_label = "Failed"
     else:
-        _, mock_reward, mock_terminated, mock_truncated, mock_info = env.step(action)
-        st.session_state["battle_reward"] += float(mock_reward)
-        detected = bool(mock_info.get("detected", False))
-        detector_conf = float(mock_info.get("detection_confidence", 0.0))
+        # Technique has no testbed script — skip, do NOT fall back to mock
+        status_box.warning(f"No testbed script for {technique_id}, skipping")
+        time.sleep(2)
+        status_box.empty()
+        detected = False
+        detector_conf = 0.0
         ml_confidence = 0.0
         ml_lstm = 0.0
         ml_ae = 0.0
-        detection_method = "calibrated"
-        mode_label = "Simulation" if not has_testbed else "Simulation (queued)"
+        detection_method = "skipped"
+        mode_label = "Skipped"
 
     # Compute reward (same logic as rl_env.py)
     reward = -0.1
@@ -538,7 +447,7 @@ def _step_campaign_real():
     bus_types = np.array([bus_type_map.get(int(t), 0.0) for t in env._bus_types_arr], dtype=np.float32)
     compromised = np.zeros(MAX_BUSES, dtype=np.float32)
     for b in env._compromised_buses:
-        if 0 < b < MAX_BUSES:
+        if 0 <= b < MAX_BUSES:
             compromised[b] = 1.0
     frac_compromised = len(env._compromised_buses) / env._num_buses
 
@@ -637,7 +546,7 @@ with st.expander("Hybrid Defense Configuration", expanded=True):
     with hcol3:
         st.markdown("**Detection Fusion**")
         st.caption("50% LSTM + 50% AE -> Combined verdict")
-            st.info("Threshold: 0.50")
+        st.info("Threshold: 0.50")
 
 # --- Campaign Controls ---
 st.subheader("Campaign Controls")
@@ -695,20 +604,118 @@ else:
 # --- Topology (only when events exist) ---
 if events:
     st.subheader("Compromise & Defense Topology")
+
+    # Visualization mode selector
+    viz_col1, viz_col2, viz_col3 = st.columns([2, 1, 1])
+    with viz_col1:
+        viz_mode = st.selectbox("Visualization Mode",
+                                ["Pyvis (Interactive)", "Cytoscape.js", "vis.js (Standalone)"],
+                                key="viz_mode")
+    with viz_col2:
+        show_tooltips = st.checkbox("Show Tooltips", value=True, key="show_tooltips")
+
+    def _target_to_topo_node(target_host):
+        """Map event Target Host to topology node ID."""
+        if target_host.startswith("plc"):
+            num = target_host[3:]
+            if num.isdigit():
+                return f"rtu_{int(num) - 1}"
+        elif target_host == "scada":
+            return "scada_server"
+        elif target_host == "hmi":
+            return "hmi"
+        elif target_host == "historian":
+            return "historian"
+        return target_host
+
     compromised = set()
     detected_nodes = set()
+    attack_paths = []
     for event in events:
         target = event["Target Host"]
+        topo_id = _target_to_topo_node(target)
         if event["Detected"]:
-            detected_nodes.add(target)
+            detected_nodes.add(topo_id)
         else:
-            compromised.add(target)
+            compromised.add(topo_id)
 
-    topology_html = render_topology(
-        st.session_state["topo_nodes"], st.session_state["topo_edges"],
-        compromised_ids=compromised, detected_ids=detected_nodes,
-    )
-    components.html(topology_html, height=500, scrolling=True)
+    # Build attack path from event chain (non-detected targets in order)
+    if len(events) > 1:
+        path = []
+        for evt in events:
+            if not evt.get("Detected", True):
+                path.append(_target_to_topo_node(evt["Target Host"]))
+        if len(path) >= 2:
+            attack_paths = [path]
+
+    if viz_mode == "Pyvis (Interactive)":
+        topology_html = render_topology(
+            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            compromised_ids=compromised, detected_ids=detected_nodes,
+            live_events=events, attack_paths=attack_paths,
+            show_tooltips=show_tooltips,
+        )
+        components.html(topology_html, height=500, scrolling=True)
+    elif viz_mode == "Cytoscape.js":
+        cyto_html = generate_cytoscape_html(
+            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            compromised_ids=compromised, detected_ids=detected_nodes,
+            attack_paths=attack_paths,
+        )
+        components.html(cyto_html, height=500, scrolling=True)
+    else:
+        vis_html = generate_vis_html(
+            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            compromised_ids=compromised, detected_ids=detected_nodes,
+            attack_paths=attack_paths,
+        )
+        components.html(vis_html, height=500, scrolling=True)
+
+    # Export buttons
+    with st.expander("Export Topology", expanded=False):
+        exp_col1, exp_col2, exp_col3 = st.columns(3)
+        with exp_col1:
+            if st.button("Export Gephi (.graphml)"):
+                import tempfile
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".graphml", delete=False) as tmp:
+                        export_graphml(st.session_state["topo_nodes"],
+                                       st.session_state["topo_edges"], tmp.name)
+                    st.success("GraphML exported!")
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("Download .graphml", f.read(),
+                                           "ascend_pg_topology.graphml", "application/xml")
+                finally:
+                    if os.path.exists(tmp.name):
+                        os.unlink(tmp.name)
+        with exp_col2:
+            if st.button("Export Gephi (.gexf)"):
+                import tempfile
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".gexf", delete=False) as tmp:
+                        export_gexf(st.session_state["topo_nodes"],
+                                    st.session_state["topo_edges"], tmp.name)
+                    st.success("GEXF exported!")
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("Download .gexf", f.read(),
+                                           "ascend_pg_topology.gexf", "application/xml")
+                finally:
+                    if os.path.exists(tmp.name):
+                        os.unlink(tmp.name)
+        with exp_col3:
+            if st.button("Export Packet Tracer (.xml)"):
+                import tempfile
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
+                        export_pkt_xml(st.session_state["topo_nodes"],
+                                       st.session_state["topo_edges"], tmp.name)
+                    st.success("Packet Tracer XML exported!")
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("Download .xml", f.read(),
+                                           "ascend_pg_pkt_topology.xml", "application/xml")
+                finally:
+                    if os.path.exists(tmp.name):
+                        os.unlink(tmp.name)
 
 # --- PPO Tactical Rationale ---
 if events:
@@ -780,68 +787,79 @@ if MODBUS_LOG.exists():
                 else:
                     info = f"{func} Unit={unit} Addr={addr}"
 
+                # Classify: SCADA poll vs generic Modbus TCP
+                SCADA_IP = MININET_IPS.get("scada", "10.0.0.20")
+                if src == SCADA_IP or dst == SCADA_IP:
+                    proto_type = "SCADA Poll"
+                    pkt_type = "scada_poll"
+                else:
+                    proto_type = "Modbus TCP"
+                    pkt_type = "modbus"
+
                 all_packets.append({
                     "Time": ts,
                     "Source": src,
                     "Destination": dst,
-                    "Protocol": "Modbus TCP",
+                    "Protocol": proto_type,
                     "Length": length,
                     "Info": info,
-                    "_type": "modbus",
+                    "_type": pkt_type,
                 })
     except Exception:
         pass
 
 # 2. From log_store.json (attack events, SCADA polls, IDS alerts)
-if LOG_STORE.exists():
-    try:
-        raw_logs = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-        if isinstance(raw_logs, list):
-            for e in raw_logs:
-                ts = e.get("timestamp", "")
-                if "T" in ts:
-                    ts = ts.split("T")[1][:12]
+raw_logs = _read_log_store()
+for e in raw_logs:
+    ts = e.get("timestamp", "")
+    if "T" in ts:
+        ts = ts.split("T")[1][:12]
 
-                action = e.get("action", "")
-                target = e.get("target", e.get("spoofed_source", "-"))
-                stage = e.get("stage", "-")
-                technique = e.get("technique", "-")
+    action = e.get("action", "")
+    target = e.get("target", e.get("spoofed_source", "-"))
+    stage = e.get("stage", "-")
+    technique = e.get("technique", "-")
 
-                # Determine protocol type
-                if "poll_" in action or "scada" in action.lower():
-                    proto = "SCADA Poll"
-                    src = "10.0.0.10"
-                    dst = target
-                    info = f"{action} | {technique}"
-                elif "hybrid_detection" in action or "suricata" in action.lower():
-                    proto = "IDS Alert"
-                    src = "Suricata"
-                    dst = "-"
-                    method = e.get("detection_method", "-")
-                    conf = e.get("ml_confidence", 0)
-                    info = f"{technique} | method={method} conf={conf:.2f}"
-                elif stage in ("recon", "attack", "Impair Process Control"):
-                    proto = "Attack"
-                    src = "10.0.0.66"
-                    dst = target
-                    info = f"{technique} | {action}"
-                else:
-                    proto = "Other"
-                    src = "-"
-                    dst = target
-                    info = f"{action} | {technique}"
+    # Determine protocol type
+    if "poll_" in action or "scada" in action.lower():
+        proto = "SCADA Poll"
+        src = "10.0.0.20"
+        dst = target
+        info = f"{action} | {technique}"
+    elif e.get("detected") is not None or "hybrid_detection" in action or "suricata" in action.lower():
+        proto = "IDS Alert"
+        src = "Suricata"
+        dst = "-"
+        method = e.get("detection_method", "-")
+        conf = e.get("ml_confidence", e.get("confidence", 0))
+        detected = e.get("detected", False)
+        info = f"{technique} | {'DETECTED' if detected else 'clean'} | {method} conf={conf:.2f}"
+    elif stage == "normal_traffic":
+        proto = "SCADA Poll"
+        src = "10.0.0.20"
+        dst = target
+        info = f"{action}"
+    elif technique.startswith("T0") or stage != "-":
+        is_modbus_op = action.startswith("fc") or "modbus" in action.lower()
+        proto = "Modbus TCP" if is_modbus_op else "Attack"
+        src = e.get("source_ip", "10.0.0.66")
+        dst = target
+        info = f"{technique} | {action}"
+    else:
+        proto = "Other"
+        src = "-"
+        dst = target
+        info = f"{action} | {technique}"
 
-                all_packets.append({
-                    "Time": ts,
-                    "Source": src,
-                    "Destination": dst,
-                    "Protocol": proto,
-                    "Length": 0,
-                    "Info": info,
-                    "_type": proto.lower().replace(" ", "_"),
-                })
-    except Exception:
-        pass
+    all_packets.append({
+        "Time": ts,
+        "Source": src,
+        "Destination": dst,
+        "Protocol": proto,
+        "Length": 0,
+        "Info": info,
+        "_type": proto.lower().replace(" ", "_"),
+    })
 
 # 3. From flow_log.json (NetFlow/IPFIX)
 FLOW_LOG = DATA_DIR / "flow_log.json"
@@ -849,21 +867,72 @@ if FLOW_LOG.exists():
     try:
         flow_data = json.loads(FLOW_LOG.read_text(encoding="utf-8"))
         if isinstance(flow_data, list):
+            SCADA_IP = MININET_IPS.get("scada", "10.0.0.20")
+            ATTACKER_IP = "10.0.0.66"
             for flow in flow_data:
                 ts = flow.get("timestamp", "")
                 if "T" in ts:
                     ts = ts.split("T")[1][:12]
+                src = flow.get("src_ip", "-")
+                dst = flow.get("dst_ip", "-")
+                if src == SCADA_IP or dst == SCADA_IP:
+                    proto = "SCADA Poll"
+                    pkt_type = "scada_poll"
+                elif src == ATTACKER_IP or dst == ATTACKER_IP:
+                    proto = "Attack"
+                    pkt_type = "attack"
+                else:
+                    proto = "TCP"
+                    pkt_type = "flow"
                 all_packets.append({
                     "Time": ts,
-                    "Source": flow.get("src_ip", "-"),
-                    "Destination": flow.get("dst_ip", "-"),
-                    "Protocol": "TCP",
+                    "Source": src,
+                    "Destination": dst,
+                    "Protocol": proto,
                     "Length": flow.get("total_bytes", 0),
                     "Info": f"Sport={flow.get('src_port','-')} Dport={flow.get('dst_port','-')} "
                             f"Duration={flow.get('duration_sec',0):.3f}s "
                             f"Packets={flow.get('total_packets',0)}",
-                    "_type": "flow",
+                    "_type": pkt_type,
                 })
+    except Exception:
+        pass
+
+# 4. From cycle_report.json (detection results from run_cycle)
+CYCLE_REPORT = DATA_DIR / "cycle_report.json"
+if CYCLE_REPORT.exists():
+    try:
+        cycle_data = json.loads(CYCLE_REPORT.read_text(encoding="utf-8"))
+        steps = cycle_data if isinstance(cycle_data, list) else cycle_data.get("steps", [])
+        for step in steps:
+            ts = step.get("end_time", step.get("start_time", ""))
+            if "T" in ts:
+                ts = ts.split("T")[1][:12]
+            detected = step.get("detected", False)
+            method = step.get("detection_method", "suricata")
+            ml_conf = step.get("ml_confidence", 0)
+            techniques = "+".join(step.get("techniques", []))
+            step_name = step.get("name", "-")
+            alert_count = step.get("alert_count", 0)
+
+            if detected:
+                proto = "IDS Alert"
+                src = "Suricata" if method == "suricata" else "ML"
+                info = f"{techniques} | {step_name} | DETECTED | {method} alerts={alert_count} conf={ml_conf:.2f}"
+            else:
+                proto = "Attack"
+                src = "10.0.0.66"
+                info = f"{techniques} | {step_name} | EVASION | no alerts"
+
+            all_packets.append({
+                "Time": ts,
+                "Source": src,
+                "Destination": step.get("target", "-"),
+                "Protocol": proto,
+                "Length": 0,
+                "Info": info,
+                "_type": proto.lower().replace(" ", "_"),
+            })
     except Exception:
         pass
 
@@ -879,7 +948,8 @@ if proto_filter != "All":
         "IDS Alert": "ids_alert",
     }
     filter_type = filter_map.get(proto_filter, "")
-    all_packets = [p for p in all_packets if p["_type"] == filter_type]
+    if filter_type:
+        all_packets = [p for p in all_packets if p["_type"] == filter_type]
 
 # Limit to max
 display_packets = all_packets[-max_packets:]
@@ -889,11 +959,12 @@ if display_packets:
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
 
     # Packet stats
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total Packets", len(all_packets))
     col2.metric("Modbus TCP", sum(1 for p in all_packets if p["_type"] == "modbus"))
-    col3.metric("Attacks", sum(1 for p in all_packets if p["_type"] == "attack"))
-    col4.metric("IDS Alerts", sum(1 for p in all_packets if p["_type"] in ("ids_alert", "ids")))
+    col3.metric("SCADA Poll", sum(1 for p in all_packets if p["_type"] == "scada_poll"))
+    col4.metric("Attacks", sum(1 for p in all_packets if p["_type"] == "attack"))
+    col5.metric("IDS Alerts", sum(1 for p in all_packets if p["_type"] == "ids_alert"))
 else:
     st.info("No packets yet. Start a campaign to see live packet flow.")
 
@@ -920,20 +991,13 @@ if report_action:
     from reports.pentest_report import generate_report, render_html, render_pdf
 
     # Build campaign events from log store
-    events = []
-    if LOG_STORE.exists():
-        try:
-            raw_log = json.loads(LOG_STORE.read_text(encoding="utf-8"))
-            if isinstance(raw_log, list):
-                events = raw_log
-        except Exception:
-            pass
+    events = _read_log_store()
 
     if not events:
         st.warning("No campaign events found. Run a battle first to generate a report.")
     else:
         campaign_info = {
-            "battle_mode": battle_mode if "battle_mode" in dir() else "simulation",
+            "battle_mode": "real" if use_real else "simulation",
             "total_steps": len(events),
         }
         report = generate_report(events, campaign_info)
