@@ -38,16 +38,11 @@ MODBUS_PORT = 502
 
 
 def log_event(log_path: Path, event: dict):
-    """Append one event to the shared JSON log store."""
+    """Append one event to the shared JSON log store (JSONL format)."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
-    events = []
-    if log_path.exists():
-        try:
-            events = json.loads(log_path.read_text())
-        except json.JSONDecodeError:
-            events = []
-    events.append(event)
-    log_path.write_text(json.dumps(events, indent=2))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
 
 
 def ssh_pivot(scada_ip: str, attacker_ip: str, log_path: Path) -> bool:

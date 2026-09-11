@@ -184,7 +184,18 @@ class TestbedOrchestrator:
         if log_store.exists():
             import json
             try:
-                data = json.loads(log_store.read_text())
+                text = log_store.read_text(encoding="utf-8").strip()
+                data = []
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        if isinstance(obj, dict):
+                            data.append(obj)
+                    except json.JSONDecodeError:
+                        pass
                 print(f"\nTotal Logged Events: {len(data)}")
                 recent = data[-5:] if len(data) >= 5 else data
                 for item in recent:

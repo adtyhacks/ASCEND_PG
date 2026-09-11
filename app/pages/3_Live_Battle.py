@@ -858,20 +858,33 @@ if FLOW_LOG.exists():
     try:
         flow_data = json.loads(FLOW_LOG.read_text(encoding="utf-8"))
         if isinstance(flow_data, list):
+            SCADA_IP = MININET_IPS.get("scada", "10.0.0.20")
+            ATTACKER_IP = "10.0.0.66"
             for flow in flow_data:
                 ts = flow.get("timestamp", "")
                 if "T" in ts:
                     ts = ts.split("T")[1][:12]
+                src = flow.get("src_ip", "-")
+                dst = flow.get("dst_ip", "-")
+                if src == SCADA_IP or dst == SCADA_IP:
+                    proto = "SCADA Poll"
+                    pkt_type = "scada_poll"
+                elif src == ATTACKER_IP or dst == ATTACKER_IP:
+                    proto = "Attack"
+                    pkt_type = "attack"
+                else:
+                    proto = "TCP"
+                    pkt_type = "flow"
                 all_packets.append({
                     "Time": ts,
-                    "Source": flow.get("src_ip", "-"),
-                    "Destination": flow.get("dst_ip", "-"),
-                    "Protocol": "TCP",
+                    "Source": src,
+                    "Destination": dst,
+                    "Protocol": proto,
                     "Length": flow.get("total_bytes", 0),
                     "Info": f"Sport={flow.get('src_port','-')} Dport={flow.get('dst_port','-')} "
                             f"Duration={flow.get('duration_sec',0):.3f}s "
                             f"Packets={flow.get('total_packets',0)}",
-                    "_type": "flow",
+                    "_type": pkt_type,
                 })
     except Exception:
         pass
