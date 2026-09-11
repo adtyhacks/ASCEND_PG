@@ -60,10 +60,19 @@ def _read_log_store():
         text = text.strip()
         if not text:
             return []
-        if text.startswith("["):
-            return json.loads(text)
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
-    except (json.JSONDecodeError, OSError):
+        entries = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line in ("[", "]", ",", "[,"):
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    entries.append(obj)
+            except json.JSONDecodeError:
+                pass
+        return entries
+    except OSError:
         return []
 
 # File-based handoff paths
