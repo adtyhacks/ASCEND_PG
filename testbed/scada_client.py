@@ -112,8 +112,6 @@ def main():
                     })
                 else:
                     polls_fail += 1
-                    if cycle <= 3:
-                        log.warning("Cycle %d: FAIL polling %s", cycle, ip)
             log.info("Cycle %d: %d ok, %d fail", cycle, polls_ok, polls_fail)
             time.sleep(args.interval)
     except KeyboardInterrupt:
