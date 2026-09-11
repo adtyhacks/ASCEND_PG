@@ -57,17 +57,11 @@ log = logging.getLogger("naive_response_injection")
 
 
 def log_event(log_path: Path, event: dict) -> None:
-    """Append one timestamped event to the shared JSON log store (list of dicts)."""
+    """Append one event to the shared JSON log store (JSONL format)."""
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
-    events = []
-    if log_path.exists():
-        try:
-            events = json.loads(log_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            events = []
-    events.append(event)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(events, indent=2), encoding="utf-8")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
 
 
 def clamp_to_uint16(val: int) -> int:
