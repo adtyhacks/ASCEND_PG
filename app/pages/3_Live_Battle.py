@@ -778,14 +778,23 @@ if MODBUS_LOG.exists():
                 else:
                     info = f"{func} Unit={unit} Addr={addr}"
 
+                # Classify: SCADA poll vs generic Modbus TCP
+                SCADA_IP = MININET_IPS.get("scada", "10.0.0.20")
+                if src == SCADA_IP or dst == SCADA_IP:
+                    proto_type = "SCADA Poll"
+                    pkt_type = "scada_poll"
+                else:
+                    proto_type = "Modbus TCP"
+                    pkt_type = "modbus"
+
                 all_packets.append({
                     "Time": ts,
                     "Source": src,
                     "Destination": dst,
-                    "Protocol": "Modbus TCP",
+                    "Protocol": proto_type,
                     "Length": length,
                     "Info": info,
-                    "_type": "modbus",
+                    "_type": pkt_type,
                 })
     except Exception:
         pass
