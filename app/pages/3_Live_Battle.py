@@ -554,25 +554,28 @@ ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
 
 with ctrl1:
     if st.button("Start New PPO Campaign", type="primary"):
+        st.session_state["auto_run_ppo"] = False
+        st.session_state["ppo_batch_count"] = 0
         _new_campaign(use_real_testbed=True)
         st.rerun()
 
 with ctrl2:
     next_disabled = not st.session_state.get("battle_active", False)
-    if st.button("Run Next PPO Tactic", disabled=next_disabled):
-        _step_campaign_real()
+    if st.button("Run Full PPO Campaign", disabled=next_disabled, help="Automatically runs the rest of the current campaign"):
+        st.session_state["auto_run_ppo"] = True
         st.rerun()
 
 with ctrl3:
-    if st.button("Start Automated Attack Campaign (Static)", help="Runs the hardcoded full attack cycle without PPO"):
-        import subprocess
-        with st.spinner("Injecting static attack sequence into CORE..."):
-            cmd = "wsl sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/run_cycle.py'"
-            subprocess.Popen(cmd, shell=True)
-        st.success("Campaign Started! Logs will stream below.")
+    if st.button("Run 5x PPO Campaigns", help="Automatically runs 5 back-to-back campaigns for data collection"):
+        _new_campaign(use_real_testbed=True)
+        st.session_state["ppo_batch_count"] = 5
+        st.session_state["auto_run_ppo"] = True
+        st.rerun()
 
 with ctrl4:
     if st.button("Clear Event Logs"):
+        st.session_state["auto_run_ppo"] = False
+        st.session_state["ppo_batch_count"] = 0
         if PENDING_STEP.exists(): PENDING_STEP.unlink()
         if STEP_RESULT.exists(): STEP_RESULT.unlink()
         if LOG_STORE.exists(): LOG_STORE.unlink()
@@ -960,9 +963,29 @@ else:
     st.info("No packets yet. Start a campaign to see live packet flow.")
 
 # Auto-refresh every 3 seconds
-if auto_refresh_log:
+if auto_refresh_log and not st.session_state.get("auto_run_ppo"):
+    import time
     time.sleep(3)
     st.rerun()
+
+# Automated PPO Loop Logic
+if st.session_state.get("auto_run_ppo", False):
+    if st.session_state.get("battle_active", False):
+        _step_campaign_real()
+        st.rerun()
+    else:
+        # Campaign ended. Check if we have batches left.
+        batches_left = st.session_state.get("ppo_batch_count", 0)
+        if batches_left > 1:
+            st.session_state["ppo_batch_count"] = batches_left - 1
+            _new_campaign(use_real_testbed=True)
+            st.rerun()
+        else:
+            # All done!
+            st.session_state["auto_run_ppo"] = False
+            st.session_state["ppo_batch_count"] = 0
+            st.toast("Automated PPO runs completed!", icon="✅")
+            st.rerun()
 
 
 # =============================================================================
