@@ -551,45 +551,36 @@ with st.expander("Hybrid Defense Configuration", expanded=True):
 # --- Campaign Controls ---
 st.subheader("Campaign Controls")
 ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
+
 with ctrl1:
-    if st.button("Start New Campaign", type="primary"):
+    if st.button("Start New PPO Campaign", type="primary"):
         _new_campaign(use_real_testbed=True)
         st.rerun()
+
 with ctrl2:
     next_disabled = not st.session_state.get("battle_active", False)
-    if st.button("Run Next Tactic", disabled=next_disabled):
+    if st.button("Run Next PPO Tactic", disabled=next_disabled):
         _step_campaign_real()
         st.rerun()
+
 with ctrl3:
-    run_all_disabled = not st.session_state.get("battle_active", False)
-    if st.button("Run to Completion", disabled=run_all_disabled):
-        max_steps = 12
-        step_count = 0
-        while st.session_state.get("battle_active", False) and step_count < max_steps:
-            _step_campaign_real()
-            step_count += 1
-        st.rerun()
+    if st.button("Start Automated Attack Campaign (Static)", help="Runs the hardcoded full attack cycle without PPO"):
+        import subprocess
+        with st.spinner("Injecting static attack sequence into CORE..."):
+            cmd = "wsl sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/run_cycle.py'"
+            subprocess.Popen(cmd, shell=True)
+        st.success("Campaign Started! Logs will stream below.")
+
 with ctrl4:
-    if st.button("Open Executive Report"):
-        st.switch_page("pages/4_Report.py")
+    if st.button("Clear Event Logs"):
+        if PENDING_STEP.exists(): PENDING_STEP.unlink()
+        if STEP_RESULT.exists(): STEP_RESULT.unlink()
+        if LOG_STORE.exists(): LOG_STORE.unlink()
+        if CYCLE_REPORT.exists(): CYCLE_REPORT.unlink()
+        st.session_state["battle_active"] = False
+        st.rerun()
 
-# --- Metrics Row ---
-events = st.session_state.get("battle_events", [])
-campaigns = st.session_state.get("battle_campaigns", [])
-latest = pd.DataFrame(events) if events else pd.DataFrame()
-current_evasion = 1.0 - (latest["Detected"].mean() if not latest.empty else 0.0)
-plateaued = st.session_state.get("battle_results", {}).get("plateau_detected", False)
-
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Current step", len(events))
-m2.metric("Evasion", f"{current_evasion:.0%}" if events else "---")
-m3.metric("Campaigns", len(campaigns))
-m4.metric("Plateau", "Detected" if plateaued else "Monitoring")
-
-if plateaued:
-    st.warning("Defense-evasion plateau detected across completed campaigns. "
-               "The report will include this DVS signal.")
-
+st.divider()
 # --- Main Content: Event Log ---
 st.subheader("Live Battle Event Log")
 if latest.empty:
