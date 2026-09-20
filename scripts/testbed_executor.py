@@ -1,7 +1,7 @@
 """
 scripts/testbed_executor.py
 
-Shared module for executing individual attack steps against the Mininet
+Shared module for executing individual attack steps against the CORE
 testbed and checking Suricata + ML detection results.
 
 Used by:
@@ -17,7 +17,7 @@ Provides:
   - get_hybrid_detector(): get or create the global hybrid detector
   - execute_single_attack(technique_id, detection_mode): run attack + hybrid detection
 
-Run attack scripts ON THE ATTACKER HOST inside the Mininet topology.
+Run attack scripts ON THE ATTACKER HOST inside the CORE topology.
 """
 
 import json
@@ -45,7 +45,7 @@ _INTERFACE_CACHE = None
 def _detect_interface():
     """Auto-detect the capture interface.
     Returns 's1-eth7' if running in root namespace (Suricata side),
-    or 'attacker-eth0' if running inside a Mininet host namespace.
+    or 'attacker-eth0' if running inside a CORE host namespace.
     """
     global _INTERFACE_CACHE
     if _INTERFACE_CACHE is not None:
@@ -386,7 +386,7 @@ def run_step(step: dict) -> dict:
 
     step_timeout = step.get("timeout", 90)
 
-    # When running inside Mininet (as root), skip sudo to preserve namespace
+    # When running inside CORE (as root), skip sudo to preserve namespace
     is_root = os.geteuid() == 0 if hasattr(os, "geteuid") else False
     cmd_prefix = [sys.executable] if is_root else ["sudo", sys.executable]
 
