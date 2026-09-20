@@ -86,11 +86,11 @@ with col_core1:
         st.success("CORE Emulator launched! Check your taskbar.")
 
 with col_core2:
-    if st.button("🔥 Start Automated Attack Campaign", use_container_width=True):
+    if st.button("🔥 Start Testbed Connection (PPO Watcher)", use_container_width=True):
         import subprocess
-        with st.spinner("Injecting attack sequence into the CORE attacker namespace..."):
+        with st.spinner("Starting PPO step watcher in the CORE attacker namespace..."):
             # Using WSL and bash to dynamically find the session and execute run_cycle.py
-            cmd = "wsl sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/run_cycle.py'"
+            cmd = "wsl sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/ppo_step_watcher.py'"
             subprocess.Popen(cmd, shell=True)
         st.success("Campaign Started! Switch to the Live Battle page to view the logs.")
 
