@@ -71,5 +71,31 @@ st.subheader("OT communication topology")
 topology_html = render_topology(st.session_state["topo_nodes"], st.session_state["topo_edges"])
 components.html(topology_html, height=680, scrolling=True)
 
-if st.button("Proceed to Live Battle"):
+st.divider()
+st.subheader("Hardware-in-the-Loop Environment (CORE Emulator)")
+st.caption("Visually inspect the physical topology, manipulate nodes, or launch the automated PPO attack sequences.")
+
+col_core1, col_core2 = st.columns(2)
+with col_core1:
+    if st.button("🗺️ Open Interactive Network in CORE", use_container_width=True):
+        import subprocess
+        from testbed.generate_core_topo import generate_imn
+        with st.spinner("Generating topology..."):
+            generate_imn("core_topology.imn")
+            subprocess.Popen(["wsl", "core-gui", "core_topology.imn"])
+        st.success("CORE Emulator launched! Check your taskbar.")
+
+with col_core2:
+    if st.button("🔥 Start Automated Attack Campaign", use_container_width=True):
+        import subprocess
+        with st.spinner("Injecting attack sequence into the CORE attacker namespace..."):
+            # Using WSL and bash to dynamically find the session and execute run_cycle.py
+            cmd = "wsl sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/run_cycle.py'"
+            subprocess.Popen(cmd, shell=True)
+        st.success("Campaign Started! Switch to the Live Battle page to view the logs.")
+
+if st.button("Proceed to Live Battle", type="primary"):
+
+
+
     st.switch_page("pages/3_Live_Battle.py")
