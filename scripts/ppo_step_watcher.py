@@ -4,7 +4,7 @@ scripts/ppo_step_watcher.py
 
 File-based step executor for PPO-driven testbed attacks.
 
-Runs on the Mininet ATTACKER HOST. Polls data/pending_step.json for
+Runs on the CORE ATTACKER HOST. Polls data/pending_step.json for
 step commands written by the Streamlit Live Battle page (running on
 Windows). Executes the attack, scans Suricata for alerts, writes
 the result to data/step_result.json.
@@ -15,7 +15,7 @@ Protocol:
   3. Watcher writes:    data/step_result.json
   4. Streamlit reads the result, deletes the file, feeds to PPO
 
-Usage (on the attacker host inside Mininet):
+Usage (on the attacker host inside CORE):
     python3 scripts/ppo_step_watcher.py
 
 Or via start_testbed.py menu option [6].

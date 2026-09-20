@@ -508,7 +508,7 @@ st.subheader("Operational Mode")
 mode_col1, mode_col2 = st.columns(2)
 with mode_col1:
     use_real = True  # Always use real testbed
-    st.success("Real Testbed Mode — all attacks execute on Mininet")
+    st.success("Real Testbed Mode - Hardcoded (CORE/Physical Testbed)")
 with mode_col2:
     watcher_status = "Connected" if PENDING_STEP.exists() or STEP_RESULT.exists() else "Checking..."
     st.metric("Watcher Status", watcher_status)
