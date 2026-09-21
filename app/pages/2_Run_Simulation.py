@@ -78,21 +78,25 @@ st.caption("Visually inspect the physical topology, manipulate nodes, or launch 
 col_core1, col_core2 = st.columns(2)
 with col_core1:
     if st.button("🗺️ Open Interactive Network in CORE", use_container_width=True):
-        import subprocess
         from testbed.generate_core_topo import generate_imn
         with st.spinner("Generating topology..."):
             generate_imn("core_topology.imn")
-            subprocess.Popen(["wsl", "core-gui", "core_topology.imn"])
-        st.success("CORE Emulator launched! Check your taskbar.")
+        st.success("CORE topology generated successfully! To view it visually, open your WSL terminal and run: core-gui core_topology.imn")
 
 with col_core2:
     if st.button("🔥 Start Testbed Connection (PPO Watcher)", use_container_width=True):
         import subprocess
         with st.spinner("Starting PPO step watcher in the CORE attacker namespace..."):
-            # Using WSL and bash to dynamically find the session and execute run_cycle.py
-            cmd = "wsl sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/ppo_step_watcher.py'"
-            subprocess.Popen(cmd, shell=True)
-        st.success("Campaign Started! Switch to the Live Battle page to view the logs.")
+            # Use shell=False and pass args as a list so Windows CMD doesn't eat the single quotes
+            cmd = [
+                "wsl",
+                "-e",
+                "bash",
+                "-c",
+                "sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/ppo_step_watcher.py'"
+            ]
+            subprocess.Popen(cmd)
+        st.success("Testbed Connection Started! Switch to the Live Battle page to view the logs.")
 
 if st.button("Proceed to Live Battle", type="primary"):
 
