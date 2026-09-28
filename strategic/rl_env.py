@@ -157,19 +157,22 @@ class AttackStrategyEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, real_mode: bool = False, dataset_path: str = None,
-                 topology: Topology = None):
+                 topology: Topology = None, case: int = None):
         super().__init__()
         self.real_mode = real_mode
 
         # Multi-discrete action space: [technique, register, value, target]
         self.action_space = spaces.MultiDiscrete([
-            NUM_TECHNIQUES,   # 17 techniques
+            NUM_TECHNIQUES,   # 18 techniques
             NUM_REGISTERS,    # 50 register offsets
             NUM_VALUE_LEVELS, # 10 value magnitudes
             MAX_BUSES,        # target PLC (bus index)
         ])
 
         # Load topology
+        if case is not None:
+            from testbed.topology import load_case
+            topology = load_case(case)
         if topology is not None:
             set_topology(topology)
         topo = get_topology()
@@ -393,6 +396,45 @@ class AttackStrategyEnv(gym.Env):
         self._last_value_mag = 1.0
         return self._get_obs(), {}
 
+    def calculate_step_reward(self, status: str, detected: bool, detection_conf: float,
+                              tech_stage: int, target_bus: int) -> float:
+        """Centralized research-defensible reward calculation.
+        Distinguishes EXECUTED+DETECTED, EXECUTED+UNDETECTED, FAILED, TIMEOUT, and INVALID.
+        """
+        reward = -0.1  # base step cost
+
+        if status == "TIMEOUT":
+            return reward - 3.0
+        if status in ("FAILED", "EXECUTION_ERROR", "INVALID", "UNSUPPORTED"):
+            return reward - 2.5
+
+        if detected:
+            reward -= 2.5 * max(detection_conf, 0.5)
+        else:
+            # Verified Evasion
+            reward += 1.5 * (1.0 - detection_conf)
+
+            if tech_stage == self._current_stage:
+                self._completed_stages.add(tech_stage)
+                reward += 3.0
+                if self._current_stage < NUM_STAGES - 1:
+                    self._current_stage += 1
+            elif tech_stage in self._completed_stages:
+                reward -= 1.5
+            else:
+                reward -= 1.0
+
+            if target_bus in self._gen_buses:
+                reward += 0.5
+            if len(self._compromised_buses) > len(self._chain) - 1:
+                reward += 0.3
+
+            if len(self._completed_stages) == NUM_STAGES:
+                reward += 8.0
+                reward += len(self._compromised_buses) * 0.2
+
+        return float(reward)
+
     def step(self, action):
         # Unpack multi-parameter action
         action = np.asarray(action, dtype=np.int64).flatten()
@@ -419,51 +461,17 @@ class AttackStrategyEnv(gym.Env):
 
         # Use agent-selected target bus
         self._compromised_buses.add(target_bus)
-        # Move to adjacent bus for next attack (lateral movement)
         neighbors = [j for j in range(self._num_buses) if self._adj[target_bus][j] > 0]
         if neighbors:
             self._current_target_bus = random.choice(neighbors)
         else:
             self._current_target_bus = random.randint(0, self._num_buses - 1)
 
-        # --- Reward Calculation ---
-        reward = -0.1  # small step cost
+        # Centralized reward calculation
+        status = "DETECTED" if detected else "UNDETECTED"
+        reward = self.calculate_step_reward(status, detected, detection_conf, tech_stage, target_bus)
 
-        # 1. Evasion / Detection feedback
-        if not detected:
-            reward += 1.5 * (1.0 - detection_conf)
-        else:
-            reward -= 2.5 * detection_conf
-
-        # 2. Tactical Stage Progression Incentive
-        if tech_stage == self._current_stage:
-            self._completed_stages.add(tech_stage)
-            reward += 3.0
-            if self._current_stage < NUM_STAGES - 1:
-                self._current_stage += 1
-        elif tech_stage in self._completed_stages:
-            reward -= 1.5
-        else:
-            reward -= 1.0
-
-        # 3. Topology-aware rewards
-        # Bonus for targeting generator buses (high-impact)
-        if target_bus in self._gen_buses:
-            reward += 0.5
-        # Bonus for spreading to new buses (lateral movement)
-        if len(self._compromised_buses) > len(self._chain) - 1:
-            reward += 0.3
-        # Penalty for clustering (attacking same bus area repeatedly)
-        if len(self._compromised_buses) < len(self._chain) // 2 and len(self._chain) > 3:
-            reward -= 0.5
-
-        # 4. Campaign Completion Bonus
         campaign_complete = len(self._completed_stages) == NUM_STAGES
-        if campaign_complete:
-            reward += 8.0 if not detected else 4.0
-            # Bonus for compromising many buses
-            reward += len(self._compromised_buses) * 0.2
-
         terminated = campaign_complete
         truncated = self._step_count >= MAX_STEPS_PER_CHAIN
 

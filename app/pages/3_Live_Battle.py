@@ -31,13 +31,15 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from testbed.grid_env import build_baseline
-from testbed.network_topology import build_ot_topology
 from testbed.visualize_topology import render_topology
 from testbed.cytoscape_topology import generate_cytoscape_json, generate_cytoscape_html
 from testbed.visjs_topology import generate_vis_json, generate_vis_html
 from testbed.export_gephi import export_graphml, export_gexf
 from testbed.export_pkt import export_pkt_xml
 from testbed.topology import get_topology
+from testbed.run_store import EventStoreReadError, append_event, metrics as run_metrics, read_events, recover_displayable_active_run, report_events, update_run, visual_data
+from testbed.core_runtime import core_request
+from testbed.ip_config import SCADA_IP, ATTACKER_IP, MONITOR_IP as IDS_IP, get_plc_ip
 from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES, MAX_BUSES
 from xai.attack_decision_explain import explain_step_decision
 from metrics.dvs import PlateauTracker
@@ -49,17 +51,24 @@ DATA_DIR = _REPO / "data"
 LOG_STORE = DATA_DIR / "log_store.json"
 CYCLE_REPORT = DATA_DIR / "cycle_report.json"
 MODEL_PATH = _REPO / "models" / "rl_agent.zip"
+WATCHER_HEARTBEAT = DATA_DIR / "watcher_heartbeat.json"
 
 
-def _read_log_store():
+def _read_log_store(path=LOG_STORE):
     """Read log_store.json supporting both JSON array and JSONL formats."""
-    if not LOG_STORE.exists():
+    if not path.exists():
         return []
     try:
-        text = LOG_STORE.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
         text = text.strip()
         if not text:
             return []
+        try:
+            document = json.loads(text)
+            if isinstance(document, list):
+                return [entry for entry in document if isinstance(entry, dict)]
+        except json.JSONDecodeError:
+            pass
         entries = []
         for line in text.splitlines():
             line = line.strip()
@@ -89,7 +98,9 @@ REAL_TESTBED_TECHNIQUES = {
 # Mininet host IP mapping (loaded from topology)
 _topo = get_topology()
 MININET_IPS = {f"plc{i+1}": _topo.get_ip(i) for i in range(_topo.num_buses)}
-MININET_IPS["scada"] = "10.0.0.20"
+MININET_IPS["scada"] = SCADA_IP
+MININET_IPS["attacker"] = ATTACKER_IP
+MININET_IPS["ids"] = IDS_IP
 
 # Bus-to-IP and IP-to-host mappings
 _ip_to_host = {v: k for k, v in MININET_IPS.items()}
@@ -99,20 +110,108 @@ def _bus_to_ip(bus: int) -> str:
     topo = get_topology()
     if topo and 0 <= bus < topo.num_buses:
         return topo.get_ip(bus)
-    return f"10.0.0.{bus + 1}"
+    return get_plc_ip(bus)
+
+def _get_watcher_status() -> tuple[str, str]:
+    """Check active heartbeat from ppo_step_watcher.py."""
+    if not WATCHER_HEARTBEAT.exists():
+        return "OFFLINE", "Heartbeat file missing"
+    try:
+        hb = json.loads(WATCHER_HEARTBEAT.read_text(encoding="utf-8"))
+        if hb.get("session_id"):
+            managed = json.loads((DATA_DIR / "core-runtime/session.json").read_text())
+            if str(managed.get("id")) != str(hb["session_id"]):
+                return "OFFLINE", "Heartbeat belongs to another CORE session"
+        age = time.time() - hb.get("timestamp", 0)
+        if age > 15.0:
+            return "OFFLINE", f"Stale heartbeat ({int(age)}s ago)"
+        status = hb.get("status", "IDLE")
+        pid = hb.get("pid", "-")
+        return status, f"PID {pid} active"
+    except Exception as e:
+        return "OFFLINE", str(e)
 
 st.set_page_config(page_title="Live Battle | ASCEND-PG", layout="wide")
 st.title("Live Battle & Defense Evaluation")
 st.caption("Evaluate the trained adaptive attacker against active ICS defenses.")
 
+
+def _read_run_events_for_ui(active_run: dict, category: str | None = None) -> list[dict]:
+    """Keep the live page available while making stored JSONL damage explicit."""
+    try:
+        return read_events(active_run["scenario_id"], active_run["run_id"], category)
+    except EventStoreReadError as exc:
+        st.error(f"Event-store integrity warning: {exc}")
+        st.code(
+            f"run={active_run['run_id']} line={exc.line_number} "
+            f"kind={exc.kind} raw={exc.raw_line!r}",
+            language=None,
+        )
+        st.warning("Earlier valid events remain visible. The malformed raw evidence was preserved for investigation.")
+        return exc.valid_events
+
 # Ensure baseline topology exists in session state
 if "topo_nodes" not in st.session_state or "topo_edges" not in st.session_state:
     net_obj, grid_df, traffic_df = build_baseline()
-    topo_nodes, topo_edges = build_ot_topology(net_obj)
+    canonical_topology = get_topology().canonical_snapshot()
+    topo_nodes, topo_edges, _, _, _ = visual_data(canonical_topology, [])
     st.session_state.update({
         "net_obj": net_obj, "grid_df": grid_df, "traffic_df": traffic_df,
-        "topo_nodes": topo_nodes, "topo_edges": topo_edges,
+        "topo_nodes": topo_nodes, "topo_edges": topo_edges, "canonical_topology": canonical_topology,
     })
+
+
+def _recover_owned_run() -> None:
+    """Restore only the run bound to the currently owned CORE generation."""
+    existing = st.session_state.get("active_run")
+    if existing:
+        try:
+            read_events(existing["scenario_id"], existing["run_id"])
+        except EventStoreReadError as exc:
+            # A session-scoped value can survive page reruns.  Do not let a
+            # previously selected diagnostic run continue to authorize or
+            # present itself as the current campaign.
+            st.session_state.pop("active_run", None)
+            st.session_state.pop("recovered_campaign_request", None)
+            st.session_state["active_run_recovery_integrity_error"] = exc
+            st.session_state["active_run_recovery_message"] = (
+                "No active displayable campaign. A stale diagnostic run has malformed event evidence."
+            )
+        return
+    if st.session_state.get("active_run_recovery_checked"):
+        return
+    st.session_state["active_run_recovery_checked"] = True
+    try:
+        runtime = json.loads((DATA_DIR / "core-runtime" / "session.json").read_text(encoding="utf-8"))
+        recovered, integrity_error = recover_displayable_active_run(runtime)
+        if integrity_error:
+            st.session_state["active_run_recovery_integrity_error"] = integrity_error
+            st.session_state["active_run_recovery_message"] = (
+                "No active displayable campaign. A stale diagnostic run has malformed event evidence."
+            )
+            return
+        status = core_request("status")
+        if (recovered and status.get("state") == "RUNTIME"
+                and str(status.get("session_id")) == str(recovered["core_session_id"])):
+            st.session_state["active_run"] = recovered
+            st.session_state["recovered_campaign_request"] = recovered.get("campaign_request")
+            st.session_state["active_run_recovery_message"] = f"Recovered active run {recovered['run_id']}"
+            return
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+        pass
+    st.session_state["active_run_recovery_message"] = "No active ASCEND-owned run. Start one from Run Simulation."
+
+
+_recover_owned_run()
+
+integrity_error = st.session_state.get("active_run_recovery_integrity_error")
+if integrity_error:
+    st.warning("A stale diagnostic run was not recovered as the active campaign.")
+    st.code(
+        f"run={integrity_error.path.parent.name} line={integrity_error.line_number} "
+        f"kind={integrity_error.kind} raw={integrity_error.raw_line!r}",
+        language=None,
+    )
 
 
 # =============================================================================
@@ -205,33 +304,107 @@ def _format_log_detail(event: dict) -> str:
 
 def _write_pending_step(technique_id: str, step_name: str, target_ip: str = "10.0.0.1",
                         register_address: int = 40000, value_magnitude: float = 1.0,
-                        target_bus: int = 0):
+                        target_bus: int = 0, target_node: str = "plc1",
+                        attack_stage: int = 0, correlation_id: str = ""):
     """Write a step command for the PPO watcher to execute."""
+    active_run = st.session_state.get("active_run")
+    try:
+        runtime = json.loads((DATA_DIR / "core-runtime" / "session.json").read_text(encoding="utf-8"))
+        generation_id = runtime["generation_id"]
+    except (OSError, ValueError, KeyError) as exc:
+        raise RuntimeError("A managed CORE generation is required before dispatching a campaign step") from exc
+    if not active_run:
+        raise RuntimeError("An active run is required before dispatching a campaign step")
+    if not correlation_id:
+        raise RuntimeError("A correlation ID is required before dispatching a campaign step")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    PENDING_STEP.write_text(json.dumps({
+    pending_temp = PENDING_STEP.with_suffix(f".{os.getpid()}.tmp")
+    request = {
         "technique_id": technique_id,
         "step_name": step_name,
         "target_ip": target_ip,
         "register_address": register_address,
         "value_magnitude": value_magnitude,
+        "generation_id": generation_id,
+        "campaign_id": active_run["run_id"],
+        "run_id": active_run["run_id"],
+        "scenario_id": active_run["scenario_id"],
+        "correlation_id": correlation_id,
+        "target_node": target_node,
+        "attack_stage": attack_stage,
         "target_bus": target_bus,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    }), encoding="utf-8")
+    }
+    pending_temp.write_text(json.dumps(request), encoding="utf-8")
+    pending_temp.replace(PENDING_STEP)
+    return request
 
 
-def _poll_step_result(timeout: float = 300.0, poll_interval: float = 0.5) -> dict | None:
-    """Poll for the watcher's result file. Returns None on timeout."""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        if STEP_RESULT.exists():
-            try:
-                data = json.loads(STEP_RESULT.read_text(encoding="utf-8"))
-                STEP_RESULT.unlink(missing_ok=True)
+def _consume_step_result() -> dict | None:
+    """Read at most one watcher result; never wait inside a Streamlit run."""
+    active_run = st.session_state.get("active_run")
+    try:
+        runtime = json.loads((DATA_DIR / "core-runtime" / "session.json").read_text(encoding="utf-8"))
+        expected_generation = runtime["generation_id"]
+        expected_campaign = active_run["run_id"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("A managed CORE generation and active run are required to consume a campaign result") from exc
+    if STEP_RESULT.exists():
+        try:
+            data = json.loads(STEP_RESULT.read_text(encoding="utf-8"))
+            STEP_RESULT.unlink(missing_ok=True)
+            if (data.get("generation_id") == expected_generation
+                    and data.get("campaign_id") == expected_campaign):
                 return data
-            except (json.JSONDecodeError, OSError):
-                pass
-        time.sleep(poll_interval)
+        except (json.JSONDecodeError, OSError):
+            pass
     return None
+
+
+def _request_timed_out(request: dict, timeout_seconds: float = 180.0) -> bool:
+    """Evaluate the existing bounded timeout from the persisted request time."""
+    try:
+        created = datetime.fromisoformat(request["timestamp"])
+        return (datetime.now(timezone.utc) - created).total_seconds() >= timeout_seconds
+    except (KeyError, TypeError, ValueError):
+        return True
+
+
+def _finalize_recovered_campaign() -> None:
+    """Persist a real watcher result after a Streamlit-session recovery."""
+    request = st.session_state.get("recovered_campaign_request")
+    active_run = st.session_state.get("active_run")
+    if not request or not active_run or request.get("state") != "REQUESTED":
+        return
+    result = _consume_step_result()
+    if result is None:
+        st.session_state["campaign_handoff_status"] = "CAMPAIGN TIMEOUT" if _request_timed_out(request) else "REQUESTED"
+        return
+    correlation_id = request["correlation_id"]
+    events = _read_run_events_for_ui(active_run, "security")
+    if not any(e.get("event_type") == "attack_finished" and e.get("correlation_id") == correlation_id for e in events):
+        detected = bool(result.get("detected", False))
+        evidence = {"step_name": request["step_name"], "return_status": result.get("status", "FAILED"),
+                    "detection_method": result.get("detection_method", "none"),
+                    "ml_confidence": float(result.get("ml_confidence", 0.0))}
+        common = {"mitre_technique": request["technique_id"], "attack_stage": request.get("attack_stage", 0),
+                  "campaign_id": request["campaign_id"], "generation_id": request["generation_id"],
+                  "correlation_id": correlation_id, "evidence": evidence}
+        append_event(active_run["scenario_id"], active_run["run_id"], category="security", event_type="attack_finished",
+                     source_node="attacker", target_node=request["target_node"], severity="INFO",
+                     result="compromised" if result.get("evaded") else "detected" if detected else "failed",
+                     timestamp=result.get("end_time"), **common)
+        if detected:
+            append_event(active_run["scenario_id"], active_run["run_id"], category="security", event_type="detection",
+                         source_node="ids_monitor", target_node=request["target_node"], severity="HIGH",
+                         result="detected", timestamp=result.get("end_time"), **common)
+    update_run(active_run["scenario_id"], active_run["run_id"],
+               campaign_request={**request, "state": "COMPLETED", "completed_at": datetime.now(timezone.utc).isoformat()})
+    st.session_state.pop("recovered_campaign_request", None)
+    st.session_state["campaign_handoff_status"] = "COMPLETED"
+
+
+_finalize_recovered_campaign()
 
 
 def _resolve_target_host(event_index: int) -> str:
@@ -242,9 +415,39 @@ def _resolve_target_host(event_index: int) -> str:
     return targets[event_index % len(targets)] if targets else "plc1"
 
 
-def _new_campaign(use_real_testbed: bool):
+def _new_campaign(use_real_testbed: bool = True):
     """Initialize a new PPO attack campaign."""
-    env = AttackStrategyEnv(real_mode=False)  # We handle detection ourselves
+    if not st.session_state.get("active_run"):
+        try:
+            runtime = json.loads((DATA_DIR / "core-runtime" / "session.json").read_text(encoding="utf-8"))
+            recovered, integrity_error = recover_displayable_active_run(runtime)
+            status = core_request("status")
+            if integrity_error:
+                st.session_state["active_run_recovery_integrity_error"] = integrity_error
+                st.error(
+                    "No valid active owned run exists: the matching diagnostic run has malformed event evidence. "
+                    "Launch or recover CORE from Run Simulation before starting a campaign."
+                )
+                st.session_state["campaign_handoff_status"] = "NO VALID ACTIVE RUN"
+                return False
+            if not (recovered and status.get("state") == "RUNTIME"
+                    and str(status.get("session_id")) == str(recovered["core_session_id"])):
+                st.error(
+                    "No valid active owned run exists. Launch or recover CORE from Run Simulation before starting a campaign."
+                )
+                st.session_state["campaign_handoff_status"] = "NO VALID ACTIVE RUN"
+                return False
+            st.session_state["active_run"] = recovered
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+            st.error(
+                "No valid active owned run exists. Launch or recover CORE from Run Simulation before starting a campaign. "
+                f"Details: {exc}"
+            )
+            st.session_state["campaign_handoff_status"] = "NO VALID ACTIVE RUN"
+            return False
+    topo = get_topology()
+    case_num = 30 if topo and "30" in str(topo.case_name) else st.session_state.get("grid_case", 14)
+    env = AttackStrategyEnv(case=case_num, real_mode=False)  # We handle testbed detection
     model = _load_ppo_model()
     obs, _ = env.reset()
     st.session_state["battle_env"] = env
@@ -260,6 +463,7 @@ def _new_campaign(use_real_testbed: bool):
     # Clear any stale handoff files
     PENDING_STEP.unlink(missing_ok=True)
     STEP_RESULT.unlink(missing_ok=True)
+    return True
 
 
 def _record_completed_campaign():
@@ -267,10 +471,11 @@ def _record_completed_campaign():
     events = st.session_state.get("battle_events", [])
     if not events:
         return
-    evasion_rate = 1.0 - pd.DataFrame(events)["Detected"].mean()
-    campaign_complete = any(e["Stage"] == 3 for e in events)
+    executed = [e for e in events if e.get("Status") in ("Detected", "Compromised")]
+    evasion_rate = (sum(1 for e in executed if not e.get("Detected", True)) / len(executed)) if executed else 0.0
+    campaign_complete = any(e["Stage"] == 3 and not e["Detected"] for e in executed)
 
-    stages_hit = [e["Stage"] for e in events if not e["Detected"]]
+    stages_hit = [e["Stage"] for e in executed if not e["Detected"]]
     max_stage = max(stages_hit) if stages_hit else 0
 
     chain = [{
@@ -309,164 +514,120 @@ def _record_completed_campaign():
 
 
 def _step_campaign_real():
-    """Execute one PPO step using real testbed attacks via file handoff."""
+    """Advance one campaign step without blocking the Streamlit execution."""
     if not st.session_state.get("battle_active"):
         return
     model = st.session_state["battle_model"]
     obs = st.session_state["battle_obs"]
     env = st.session_state["battle_env"]
-
-    action, _ = model.predict(obs, deterministic=False)
-    # Multi-parameter action: [technique, register, value, target]
-    action = np.asarray(action, dtype=np.int64).flatten()
-    technique_idx = int(action[0])
-    register_offset = int(action[1])
-    value_level = int(action[2])
-    target_bus = int(action[3]) % env._num_buses
-
-    explanation = explain_step_decision(model, obs, technique_idx)
-    tech = MITRE_TECHNIQUES[technique_idx]
-    technique_id = tech["id"]
-
-    # Resolve target IP from agent-selected bus
-    target_ip = _bus_to_ip(target_bus)
-    target_host = _ip_to_host.get(target_ip, f"PLC-{target_bus}")
-
-    # Calculate actual register address and value magnitude
-    from strategic.rl_env import REGISTER_BASES, VALUE_MAGNITUDES
-    register_address = REGISTER_BASES.get(technique_id, 40000) + register_offset
-    value_magnitude = float(VALUE_MAGNITUDES[value_level])
-
-    # Check if this technique has a real testbed script
-    step_name = TECHNIQUE_TO_STEP_NAME.get(technique_id)
-    has_testbed = step_name is not None
-
-    status_box = st.empty()
-
-    if has_testbed and not PENDING_STEP.exists() and not STEP_RESULT.exists():
-        _write_pending_step(technique_id, step_name, target_ip,
-                           register_address=register_address,
-                           value_magnitude=value_magnitude,
-                           target_bus=target_bus)
-
-        status_box.info(f"Executing {technique_id} ({tech['name']}) on testbed...")
-        result = _poll_step_result(timeout=300.0)
-        status_box.empty()
-
-        if result and result.get("success", False):
-            detected = result.get("detected", False)
-            ml_confidence = result.get("ml_confidence", 0.0)
-            ml_lstm = result.get("ml_lstm_confidence", 0.0)
-            ml_ae = result.get("ml_ae_score", 0.0)
-            detection_method = result.get("detection_method", "suricata")
-            alert_count = result.get("alert_count", 0)
-            if ml_confidence > 0:
-                detector_conf = ml_confidence
-            elif detection_method == "suricata" and alert_count > 0:
-                detector_conf = min(1.0, 0.3 + alert_count * 0.05)
-            elif detected:
-                detector_conf = 0.5
+    pending = st.session_state.get("pending_campaign_step")
+    completed_request = None
+    if pending:
+        result = _consume_step_result()
+        if result is None:
+            if _request_timed_out(pending["request"]):
+                st.session_state["campaign_handoff_status"] = "CAMPAIGN TIMEOUT"
             else:
-                detector_conf = 0.0
-            mode_label = f"Real ({detection_method})"
-        else:
-            error_msg = result.get("error", "timeout") if result else "timeout"
-            status_box.error(f"Testbed failed: {error_msg}")
-            time.sleep(3)
-            status_box.empty()
-            # Step failed — record failure, do NOT fall back to mock
-            detected = False
-            detector_conf = 0.0
-            ml_confidence = 0.0
-            ml_lstm = 0.0
-            ml_ae = 0.0
-            detection_method = "failed"
-            mode_label = "Failed"
+                st.session_state["campaign_handoff_status"] = "REQUESTED"
+            return
+        action = np.asarray(pending["action"], dtype=np.int64)
+        technique_idx = pending["technique_idx"]
+        register_offset = pending["register_offset"]
+        target_bus = pending["target_bus"]
+        explanation = pending["explanation"]
+        tech = MITRE_TECHNIQUES[technique_idx]
+        technique_id = tech["id"]
+        target_host = pending["target_host"]
+        register_address = pending["register_address"]
+        value_magnitude = pending["value_magnitude"]
+        correlation_id = pending["request"]["correlation_id"]
+        completed_request = pending["request"]
+        st.session_state.pop("pending_campaign_step", None)
+        st.session_state["campaign_handoff_status"] = "COMPLETED"
+        status_str = result.get("status", "SUCCESS" if result.get("success") else "FAILED")
+        detected = bool(result.get("detected", False))
+        evaded = bool(result.get("evaded", False))
+        success = bool(result.get("success", False))
+        ml_confidence = float(result.get("ml_confidence", 0.0))
+        ml_lstm = float(result.get("ml_lstm_confidence", 0.0))
+        ml_ae = float(result.get("ml_ae_score", 0.0))
+        detection_method = result.get("detection_method", "suricata")
+        alert_count = int(result.get("alert_count", 0))
+        detector_conf = (ml_confidence if ml_confidence > 0 else min(1.0, 0.3 + alert_count * 0.05)
+                         if detection_method == "suricata" and alert_count > 0 else 0.5 if detected else 0.0)
+        mode_label = f"Real ({detection_method})" if success else f"Failed ({status_str})"
     else:
-        # Technique has no testbed script — skip, do NOT fall back to mock
-        status_box.warning(f"No testbed script for {technique_id}, skipping")
-        time.sleep(2)
-        status_box.empty()
-        detected = False
-        detector_conf = 0.0
-        ml_confidence = 0.0
-        ml_lstm = 0.0
-        ml_ae = 0.0
-        detection_method = "skipped"
-        mode_label = "Skipped"
+        action, _ = model.predict(obs, deterministic=False)
+        action = np.asarray(action, dtype=np.int64).flatten()
+        technique_idx = int(action[0])
+        register_offset = int(action[1])
+        value_level = int(action[2])
+        target_bus = int(action[3]) % env._num_buses
+        explanation = explain_step_decision(model, obs, technique_idx)
+        tech = MITRE_TECHNIQUES[technique_idx]
+        technique_id = tech["id"]
+        target_ip = _bus_to_ip(target_bus)
+        target_host = _ip_to_host.get(target_ip, f"PLC-{target_bus}")
+        from strategic.rl_env import REGISTER_BASES, VALUE_MAGNITUDES
+        register_address = REGISTER_BASES.get(technique_id, 40000) + register_offset
+        value_magnitude = float(VALUE_MAGNITUDES[value_level])
+        step_name = TECHNIQUE_TO_STEP_NAME.get(technique_id)
+        correlation_id = f"step-{len(st.session_state['battle_events']) + 1}"
+        if step_name:
+            request = _write_pending_step(technique_id, step_name, target_ip,
+                                          register_address=register_address, value_magnitude=value_magnitude,
+                                          target_bus=target_bus, target_node=target_host,
+                                          attack_stage=tech["stage"], correlation_id=correlation_id)
+            request["state"] = "REQUESTED"
+            update_run(st.session_state["active_run"]["scenario_id"], st.session_state["active_run"]["run_id"],
+                       campaign_request=request)
+            st.session_state["pending_campaign_step"] = {
+                "request": request, "action": action.tolist(), "technique_idx": technique_idx,
+                "register_offset": register_offset, "target_bus": target_bus,
+                "target_host": target_host, "register_address": register_address,
+                "value_magnitude": value_magnitude, "explanation": explanation,
+            }
+            st.session_state["campaign_handoff_status"] = "REQUESTED"
+            return
+        result = None
+        status_str, detected, evaded, success = "UNSUPPORTED", False, False, False
+        detector_conf = ml_confidence = ml_lstm = ml_ae = 0.0
+        detection_method, mode_label = "skipped", "Skipped"
 
-    # Compute reward (same logic as rl_env.py)
-    reward = -0.1
-    if not detected:
-        reward += 1.5 * (1.0 - detector_conf)
+    # Status classification for scientific rigor
+    if detected:
+        status_label = "Detected"
+    elif evaded:
+        status_label = "Compromised"
+    elif status_str == "TIMEOUT":
+        status_label = "Timeout"
     else:
-        reward -= 2.5 * detector_conf
+        status_label = "Failed"
 
-    tech_stage = tech["stage"]
-    if tech_stage == env._current_stage:
-        env._completed_stages.add(tech_stage)
-        reward += 3.0
-        if env._current_stage < 3:
-            env._current_stage += 1
-    elif tech_stage in env._completed_stages:
-        reward -= 1.5
-    else:
-        reward -= 1.0
-
-    campaign_complete = len(env._completed_stages) == 4
-    if campaign_complete:
-        reward += 8.0 if not detected else 4.0
-
-    st.session_state["battle_reward"] += float(reward)
+    # Update env state
     env._history.append(1 if detected else 0)
     env._last_action = action
     env._last_confidence = detector_conf
     env._last_register = register_offset
     env._last_value_mag = value_magnitude
+    env._current_target_bus = target_bus
+    if evaded:
+        env._compromised_buses.add(target_bus)
     env._step_count += 1
     env._chain.append(technique_id)
 
-    # Build next observation manually (mirrors rl_env._get_obs)
-    recent = env._history[-5:]
-    recent_evasion_rate = (sum(1 - x for x in recent) / len(recent)) if recent else 1.0
-    one_hot_action = np.zeros(NUM_TECHNIQUES, dtype=np.float32)
-    one_hot_action[technique_idx] = 1.0
-    stages_vec = np.zeros(4, dtype=np.float32)
-    for s in env._completed_stages:
-        if 0 <= s < 4:
-            stages_vec[s] = 1.0
-    # Last action parameters (normalized)
-    last_register_norm = register_offset / 50.0  # NUM_REGISTERS
-    last_value_norm = (value_magnitude - 0.9) / 0.2  # VALUE_MAGNITUDES range
-    last_target_norm = target_bus / env._num_buses
+    # Calculate step reward using centralized defensible method
+    reward = env.calculate_step_reward(
+        status=status_str,
+        detected=detected,
+        detection_conf=detector_conf,
+        tech_stage=tech["stage"],
+        target_bus=target_bus
+    )
+    st.session_state["battle_reward"] += float(reward)
 
-    # Topology features (from env state)
-    voltages = env._voltages / 1.1
-    degrees = env._degrees / env._max_degree
-    bus_type_map = {3: 1.0, 1: 0.5, 2: 0.0}
-    bus_types = np.array([bus_type_map.get(int(t), 0.0) for t in env._bus_types_arr], dtype=np.float32)
-    compromised = np.zeros(MAX_BUSES, dtype=np.float32)
-    for b in env._compromised_buses:
-        if 0 <= b < MAX_BUSES:
-            compromised[b] = 1.0
-    frac_compromised = len(env._compromised_buses) / env._num_buses
-
-    next_obs = np.concatenate([
-        [float(env._current_stage) / 3.0],
-        [float(recent_evasion_rate)],
-        [float(detector_conf)],
-        one_hot_action,
-        stages_vec,
-        [last_register_norm],
-        [last_value_norm],
-        [last_target_norm],
-        voltages,
-        degrees,
-        bus_types,
-        compromised,
-        [frac_compromised],
-        [0.0],  # attack_depth (simplified)
-    ]).astype(np.float32)
+    # Next observation directly from env
+    next_obs = env._get_obs()
 
     event = {
         "Timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
@@ -480,7 +641,7 @@ def _step_campaign_real():
         "LSTM Score": f"{ml_lstm:.3f}",
         "AE Score": f"{ml_ae:.3f}",
         "Detection Method": detection_method,
-        "Status": "Detected" if detected else "Compromised",
+        "Status": status_label,
         "Detected": detected,
         "Mode": mode_label,
         "Register": register_address,
@@ -488,10 +649,33 @@ def _step_campaign_real():
         "Target Bus": target_bus,
     }
     st.session_state["battle_events"].append(event)
+    active_run = st.session_state.get("active_run")
+    if active_run:
+        common = {"mitre_technique": technique_id, "attack_stage": tech["stage"],
+                  "campaign_id": active_run["run_id"],
+                  "generation_id": result.get("generation_id") if result else None,
+                  "correlation_id": result.get("correlation_id", correlation_id) if result else correlation_id, "evidence": {"step_name": TECHNIQUE_TO_STEP_NAME.get(technique_id, technique_id), "return_status": status_str,
+                  "detection_method": detection_method, "ml_confidence": ml_confidence,
+                  "detector_confidence": detector_conf}}
+        append_event(active_run["scenario_id"], active_run["run_id"], category="security",
+                     event_type="attack_finished", source_node="attacker", target_node=target_host,
+                     severity="CRITICAL" if evaded else "INFO", result="compromised" if evaded else status_label.lower(), timestamp=result.get("end_time") if result else None, **common)
+        if detected:
+            append_event(active_run["scenario_id"], active_run["run_id"], category="security",
+                         event_type="detection", source_node="ids_monitor", target_node=target_host,
+                         severity="HIGH", result="detected", timestamp=result.get("end_time") if result else None, **common)
+        st.session_state["last_campaign_identity"] = {
+            "mitre_technique": technique_id, "attack_stage": tech["stage"],
+            "correlation_id": common["correlation_id"], "campaign_id": active_run["run_id"],
+            "generation_id": result.get("generation_id") if result else None,
+        }
+        if completed_request:
+            update_run(active_run["scenario_id"], active_run["run_id"],
+                       campaign_request={**completed_request, "state": "COMPLETED", "completed_at": datetime.now(timezone.utc).isoformat()})
     st.session_state["battle_explanations"].append(explanation)
     st.session_state["battle_obs"] = next_obs
 
-    terminated = campaign_complete
+    terminated = len(env._completed_stages) == 4
     truncated = env._step_count >= 12
 
     if terminated or truncated:
@@ -510,13 +694,16 @@ with mode_col1:
     use_real = True  # Always use real testbed
     st.success("Real Testbed Mode - Hardcoded (CORE/Physical Testbed)")
 with mode_col2:
-    watcher_status = "Connected" if PENDING_STEP.exists() or STEP_RESULT.exists() else "Checking..."
-    st.metric("Watcher Status", watcher_status)
-    watcher_ready = not PENDING_STEP.exists()
-    if watcher_ready:
-        st.success("Ready for steps")
+    w_status, w_detail = _get_watcher_status()
+    st.metric("Watcher Status", w_status)
+    if w_status == "IDLE":
+        st.success(f"Ready ({w_detail})")
+    elif w_status == "BUSY":
+        st.warning(f"Executing step ({w_detail})")
+    elif w_status == "ERROR":
+        st.error(f"Error ({w_detail})")
     else:
-        st.warning("Watcher busy")
+        st.error(f"Offline ({w_detail}) — start ppo_step_watcher.py in WSL")
 
 # --- Hybrid Defense Status ---
 st.divider()
@@ -583,20 +770,66 @@ with ctrl4:
         st.session_state["battle_active"] = False
         st.rerun()
 
+st.subheader("Active Defense")
+active_run = st.session_state.get("active_run")
+defense_target = st.selectbox("CORE asset", [f"plc{i + 1}" for i in range(get_topology().num_buses)], key="defense_target")
+d1, d2 = st.columns(2)
+for label, action, column in (("Isolate selected PLC", "isolate", d1), ("Restore selected PLC", "restore", d2)):
+    with column:
+        if st.button(label, use_container_width=True):
+            if not active_run:
+                st.error("No active ASCEND-owned run. Start one from Run Simulation before applying a defense.")
+                continue
+            try:
+                result = core_request("defend", target_node=defense_target, defense_action=action)
+                append_event(active_run["scenario_id"], active_run["run_id"], category="security",
+                             event_type="defense_action", source_node="ids_monitor", target_node=defense_target,
+                             severity="ACTION", defense_action=action, result="applied",
+                             evidence={"core_session_id": result["session_id"], "core_output": result.get("output", "")},
+                             **st.session_state.get("last_campaign_identity", {}))
+                if action == "isolate":
+                    append_event(active_run["scenario_id"], active_run["run_id"], category="security",
+                                 event_type="containment", source_node="ids_monitor", target_node=defense_target,
+                                 severity="SUCCESS", defense_action=action, result="contained",
+                                 evidence={"core_session_id": result["session_id"]})
+                st.success(f"CORE applied {action} to {defense_target}")
+            except Exception as exc:
+                st.error(str(exc))
+
 st.divider()
 
 # --- Metrics Row ---
 events = st.session_state.get("battle_events", [])
 campaigns = st.session_state.get("battle_campaigns", [])
 latest = pd.DataFrame(events) if events else pd.DataFrame()
-current_evasion = 1.0 - (latest["Detected"].mean() if not latest.empty else 0.0)
+executed = [e for e in events if e.get("Status") in ("Detected", "Compromised")]
+current_evasion = (sum(1 for e in executed if not e.get("Detected", True)) / len(executed)) if executed else 0.0
 plateaued = st.session_state.get("battle_results", {}).get("plateau_detected", False)
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Current step", len(events))
-m2.metric("Evasion", f"{current_evasion:.0%}" if events else "---")
+m2.metric("Evasion", f"{current_evasion:.0%}" if executed else "---")
 m3.metric("Campaigns", len(campaigns))
 m4.metric("Plateau", "Detected" if plateaued else "Monitoring")
+
+active_run = st.session_state.get("active_run")
+if active_run:
+    measured = run_metrics(active_run["scenario_id"], active_run["run_id"])
+    st.caption("Measured run metrics")
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Time to detection", f"{measured['time_to_detection_seconds']} s" if measured["time_to_detection_seconds"] is not None else "Not observed")
+    mc2.metric("Time to response", f"{measured['time_to_response_seconds']} s" if measured["time_to_response_seconds"] is not None else "Not observed")
+    mc3.metric("Time to containment", f"{measured['time_to_containment_seconds']} s" if measured["time_to_containment_seconds"] is not None else "Not observed")
+    mc4.metric("Compromised assets", measured["compromised_assets"])
+
+    structured = _read_run_events_for_ui(active_run)
+    network_events = [e for e in structured if e["category"] == "network"]
+    security_events = [e for e in structured if e["category"] == "security"]
+    st.subheader("Network events (observed telemetry)")
+    if network_events: st.dataframe(pd.DataFrame(network_events), use_container_width=True, hide_index=True)
+    else: st.info("No packet telemetry has been recorded for this run yet. ASCEND does not fabricate network events.")
+    st.subheader("Security events (backend evidence)")
+    if security_events: st.dataframe(pd.DataFrame(security_events), use_container_width=True, hide_index=True)
 
 if plateaued:
     st.warning("Defense-evasion plateau detected across completed campaigns. "
@@ -631,9 +864,9 @@ if events:
         if target_host.startswith("plc"):
             num = target_host[3:]
             if num.isdigit():
-                return f"rtu_{int(num) - 1}"
+                return f"plc{int(num)}"
         elif target_host == "scada":
-            return "scada_server"
+            return "scada"
         elif target_host == "hmi":
             return "hmi"
         elif target_host == "historian":
@@ -660,9 +893,12 @@ if events:
         if len(path) >= 2:
             attack_paths = [path]
 
+    if active_run:
+        run_events = _read_run_events_for_ui(active_run, "security")
+        nodes, graph_edges, compromised, detected_nodes, attack_paths = visual_data(st.session_state["canonical_topology"], run_events)
     if viz_mode == "Pyvis (Interactive)":
         topology_html = render_topology(
-            st.session_state["topo_nodes"], st.session_state["topo_edges"],
+            nodes if active_run else st.session_state["topo_nodes"], graph_edges if active_run else st.session_state["topo_edges"],
             compromised_ids=compromised, detected_ids=detected_nodes,
             live_events=events, attack_paths=attack_paths,
             show_tooltips=show_tooltips,
@@ -821,7 +1057,7 @@ if MODBUS_LOG.exists():
         pass
 
 # 2. From log_store.json (attack events, SCADA polls, IDS alerts)
-raw_logs = _read_log_store()
+raw_logs = _read_log_store() + _read_log_store(DATA_DIR / "core-runtime/scada.jsonl")
 for e in raw_logs:
     ts = e.get("timestamp", "")
     if "T" in ts:
@@ -835,7 +1071,7 @@ for e in raw_logs:
     # Determine protocol type
     if "poll_" in action or "scada" in action.lower():
         proto = "SCADA Poll"
-        src = "10.0.0.20"
+        src = SCADA_IP
         dst = target
         info = f"{action} | {technique}"
     elif e.get("detected") is not None or "hybrid_detection" in action or "suricata" in action.lower():
@@ -848,13 +1084,13 @@ for e in raw_logs:
         info = f"{technique} | {'DETECTED' if detected else 'clean'} | {method} conf={conf:.2f}"
     elif stage == "normal_traffic":
         proto = "SCADA Poll"
-        src = "10.0.0.20"
+        src = SCADA_IP
         dst = target
         info = f"{action}"
     elif technique.startswith("T0") or stage != "-":
         is_modbus_op = action.startswith("fc") or "modbus" in action.lower()
         proto = "Modbus TCP" if is_modbus_op else "Attack"
-        src = e.get("source_ip", "10.0.0.66")
+        src = e.get("source_ip", ATTACKER_IP)
         dst = target
         info = f"{technique} | {action}"
     else:
@@ -879,8 +1115,6 @@ if FLOW_LOG.exists():
     try:
         flow_data = json.loads(FLOW_LOG.read_text(encoding="utf-8"))
         if isinstance(flow_data, list):
-            SCADA_IP = MININET_IPS.get("scada", "10.0.0.20")
-            ATTACKER_IP = "10.0.0.66"
             for flow in flow_data:
                 ts = flow.get("timestamp", "")
                 if "T" in ts:
@@ -933,7 +1167,7 @@ if CYCLE_REPORT.exists():
                 info = f"{techniques} | {step_name} | DETECTED | {method} alerts={alert_count} conf={ml_conf:.2f}"
             else:
                 proto = "Attack"
-                src = "10.0.0.66"
+                src = ATTACKER_IP
                 info = f"{techniques} | {step_name} | EVASION | no alerts"
 
             all_packets.append({
@@ -950,6 +1184,20 @@ if CYCLE_REPORT.exists():
 
 # Sort by time (most recent last for sniffer view)
 all_packets.sort(key=lambda x: x.get("Time", ""))
+
+# Persist only backend-observed packet/flow telemetry; deduplicate across Streamlit reruns.
+if active_run:
+    seen = st.session_state.setdefault("run_packet_fingerprints", set())
+    for packet in all_packets:
+        fingerprint = "|".join(str(packet.get(key, "")) for key in ("Time", "Source", "Destination", "Protocol", "Info"))
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        append_event(active_run["scenario_id"], active_run["run_id"], category="network",
+                     event_type=packet.get("_type", "flow"), source_node=packet.get("Source"),
+                     target_node=packet.get("Destination"), severity="INFO",
+                     evidence={"observed_timestamp": packet.get("Time"), "protocol": packet.get("Protocol"),
+                               "length": packet.get("Length"), "summary": packet.get("Info")})
 
 # Apply protocol filter
 if proto_filter != "All":
@@ -980,17 +1228,25 @@ if display_packets:
 else:
     st.info("No packets yet. Start a campaign to see live packet flow.")
 
-# Auto-refresh every 3 seconds
-if auto_refresh_log and not st.session_state.get("auto_run_ppo"):
-    import time
-    time.sleep(3)
-    st.rerun()
+# Schedule refresh after the page finishes rendering, so report controls below
+# remain reachable and a default page load does not enter an endless rerun loop.
+log_rendered_at = time.monotonic()
+
+@st.fragment(run_every=3 if auto_refresh_log else None)
+def _refresh_live_log():
+    if time.monotonic() - log_rendered_at >= 2.5:
+        st.rerun()
+
+_refresh_live_log()
 
 # Automated PPO Loop Logic
 if st.session_state.get("auto_run_ppo", False):
     if st.session_state.get("battle_active", False):
         _step_campaign_real()
-        st.rerun()
+        # A pending watcher request is advanced by the short periodic fragment;
+        # do not spin or wait inside this execution.
+        if not st.session_state.get("pending_campaign_step"):
+            st.rerun()
     else:
         # Campaign ended. Check if we have batches left.
         batches_left = st.session_state.get("ppo_batch_count", 0)
@@ -1022,8 +1278,13 @@ with col_rpt2:
 if report_action:
     from reports.pentest_report import generate_report, render_html, render_pdf
 
-    # Build campaign events from log store
-    events = _read_log_store()
+    # Reports are built from the run event store, not presentation/session text.
+    active_run = st.session_state.get("active_run")
+    structured_events = _read_run_events_for_ui(active_run, "security") if active_run else []
+    # The renderer accepts completed-attack records. Normalize this run's
+    # canonical lifecycle events so one attack_finished record is correlated
+    # with its matching detection instead of reporting raw events as findings.
+    events = report_events(structured_events)
 
     if not events:
         st.warning("No campaign events found. Run a battle first to generate a report.")
@@ -1031,6 +1292,8 @@ if report_action:
         campaign_info = {
             "battle_mode": "real" if use_real else "simulation",
             "total_steps": len(events),
+            "scenario_id": active_run["scenario_id"], "run_id": active_run["run_id"],
+            "metrics": run_metrics(active_run["scenario_id"], active_run["run_id"]),
         }
         report = generate_report(events, campaign_info)
 

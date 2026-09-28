@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Test the topology loader with CSV and defaults."""
 import sys
+from pathlib import Path
 import numpy as np
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
 
-from testbed.topology import Topology, load_topology, load_topology_from_csv, set_topology, get_topology
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from testbed.topology import Topology, load_topology, load_topology_from_csv, save_topology_csv, set_topology, get_topology
 
 # Test 1: Default IEEE-14
 print("=== Test 1: Default IEEE-14 topology ===")
@@ -17,11 +20,14 @@ print(f"Depth from gens: {topo._depth_from_gens}")
 print(f"IP map: {topo.ip_map}")
 print()
 
+# Ensure CSV files exist by exporting default topology
+save_topology_csv(topo, str(REPO_ROOT / "data" / "topology"))
+
 # Test 2: Load from CSV
 print("=== Test 2: Load from CSV files ===")
 topo_csv = load_topology_from_csv(
-    "/home/adty17/ascend-pg-webapp/data/topology/nodes.csv",
-    "/home/adty17/ascend-pg-webapp/data/topology/edges.csv"
+    str(REPO_ROOT / "data" / "topology" / "nodes.csv"),
+    str(REPO_ROOT / "data" / "topology" / "edges.csv")
 )
 print(f"Buses: {topo_csv.num_buses}, Edges: {len(topo_csv.edges)}")
 print(f"Bus types: {topo_csv.bus_types}")
@@ -30,7 +36,7 @@ print()
 
 # Test 3: Load from directory
 print("=== Test 3: Load from directory ===")
-topo_dir = load_topology("/home/adty17/ascend-pg-webapp/data/topology")
+topo_dir = load_topology(str(REPO_ROOT / "data" / "topology"))
 print(f"Buses: {topo_dir.num_buses}, Edges: {len(topo_dir.edges)}")
 print()
 

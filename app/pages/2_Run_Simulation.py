@@ -1,5 +1,6 @@
 """Baseline grid simulation screen — auto-loads on page open."""
 
+import json
 import os
 import sys
 
@@ -12,8 +13,9 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from testbed.grid_env import build_baseline
-from testbed.network_topology import build_ot_topology
 from testbed.visualize_topology import render_topology
+from testbed.topology import get_topology
+from testbed.run_store import create_run, update_run, visual_data
 
 
 st.set_page_config(page_title="Run Simulation | ASCEND-PG", layout="wide")
@@ -25,13 +27,15 @@ if not st.session_state.get("simulation_ready"):
     with st.spinner("Running IEEE-14 AC power flow and generating normal telemetry..."):
         case_name = st.session_state.get("config", {}).get("topology", {}).get("pandapower_case", "case14")
         net_obj, grid_df, traffic_df = build_baseline(case_name=case_name)
-        topo_nodes, topo_edges = build_ot_topology(net_obj)
+        topology_snapshot = get_topology().canonical_snapshot()
+        topo_nodes, topo_edges, _, _, _ = visual_data(topology_snapshot, [])
     st.session_state.update({
         "net_obj": net_obj,
         "grid_df": grid_df,
         "traffic_df": traffic_df,
         "topo_nodes": topo_nodes,
         "topo_edges": topo_edges,
+        "canonical_topology": topology_snapshot,
         "simulation_ready": True,
     })
 
@@ -75,28 +79,73 @@ st.divider()
 st.subheader("Hardware-in-the-Loop Environment (CORE Emulator)")
 st.caption("Visually inspect the physical topology, manipulate nodes, or launch the automated PPO attack sequences.")
 
+from pathlib import Path
+from testbed.core_runtime import core_request
+
 col_core1, col_core2 = st.columns(2)
 with col_core1:
-    if st.button("🗺️ Open Interactive Network in CORE", use_container_width=True):
-        from testbed.generate_core_topo import generate_imn
-        with st.spinner("Generating topology..."):
-            generate_imn("core_topology.imn")
-        st.success("CORE topology generated successfully! To view it visually, open your WSL terminal and run: core-gui core_topology.imn")
-
+    if st.button("Generate CORE topology", use_container_width=True):
+        from testbed.generate_core_topo import generate_core_xml
+        try:
+            if st.session_state.get("config", {}).get("custom"):
+                raise ValueError("CORE export currently supports IEEE-14/30 presets. Apply a preset before exporting; your custom topology is retained for software simulation.")
+            case_num = st.session_state.get("grid_case", 14)
+            xml_file = generate_core_xml(case=case_num, output_path=str(Path(PROJECT_ROOT) / "core_topology.xml"))
+            st.success(f"Generated {xml_file}. Start the session below, then attach using core-gui.")
+        except Exception as exc:
+            st.error(str(exc))
+    if st.button("Launch CORE", use_container_width=True):
+        try:
+            with st.spinner("Starting and validating CORE services..."):
+                from testbed.generate_core_topo import generate_core_xml
+                status = core_request("status")
+                if status["state"] == "RUNTIME":
+                    raise RuntimeError("An ASCEND-owned CORE session is already active; recover it from Live Battle or stop it before starting a new run")
+                case_num = st.session_state.get("grid_case", 14)
+                generate_core_xml(case=case_num, output_path=str(Path(PROJECT_ROOT) / "core_topology.xml"))
+                active_run = create_run(st.session_state["canonical_topology"])
+                result = core_request("start", xml=str(Path(PROJECT_ROOT) / "core_topology.xml"))
+                runtime = json.loads((Path(PROJECT_ROOT) / "data" / "core-runtime" / "session.json").read_text(encoding="utf-8"))
+                if str(runtime.get("id")) != str(result["session_id"]) or not runtime.get("generation_id"):
+                    raise RuntimeError("CORE runtime identity was not persisted; refusing to create an unrecoverable run")
+                active_run = update_run(
+                    active_run["scenario_id"], active_run["run_id"],
+                    core_session_id=result["session_id"], generation_id=runtime["generation_id"],
+                    lifecycle_status="RUNNING",
+                )
+                active_run["path"] = str(Path(PROJECT_ROOT) / "data" / "runs" / active_run["scenario_id"] / active_run["run_id"])
+                st.session_state["active_run"] = active_run
+            st.success(f"Session {result['session_id']}: {result['state']} ({result['nodes']} nodes)")
+        except Exception as exc:
+            st.error(str(exc))
 with col_core2:
-    if st.button("🔥 Start Testbed Connection (PPO Watcher)", use_container_width=True):
-        import subprocess
-        with st.spinner("Starting PPO step watcher in the CORE attacker namespace..."):
-            # Use shell=False and pass args as a list so Windows CMD doesn't eat the single quotes
-            cmd = [
-                "wsl",
-                "-e",
-                "bash",
-                "-c",
-                "sudo vcmd -c /tmp/pycore.*/n3 -- bash -c 'cd /mnt/d/1.STUDY_MATERIALS/Cyber_Major_project/Project/V2/ascend-pg-webapp && python3 scripts/ppo_step_watcher.py'"
-            ]
-            subprocess.Popen(cmd)
-        st.success("Testbed Connection Started! Switch to the Live Battle page to view the logs.")
+    if st.button("Open CORE GUI", use_container_width=True):
+        try:
+            result = core_request("gui")
+            st.success(f"CORE GUI started for session {result['session_id']} (PID {result['gui_pid']})")
+        except Exception as exc:
+            st.error(str(exc))
+    if st.button("Start PPO watcher", use_container_width=True):
+        try:
+            with st.spinner("Waiting for the attacker watcher heartbeat..."):
+                result = core_request("watcher")
+            if result["watcher"] in ("IDLE", "BUSY"):
+                st.success(f"Watcher ready in session {result['session_id']}")
+            else:
+                st.info(f"Watcher {result['watcher']} in session {result['session_id']}. Use Check CORE status to verify readiness.")
+        except Exception as exc:
+            st.error(str(exc))
+    if st.button("Check CORE status", use_container_width=True):
+        try:
+            st.json(core_request("status"))
+        except Exception as exc:
+            st.error(str(exc))
+    if st.button("Stop CORE session", use_container_width=True):
+        try:
+            core_request("stop")
+            st.success("Managed CORE session stopped and cleaned up")
+        except Exception as exc:
+            st.error(str(exc))
 
 if st.button("Proceed to Live Battle", type="primary"):
 

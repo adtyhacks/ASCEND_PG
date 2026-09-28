@@ -9,7 +9,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from testbed.topology import Topology, load_topology, set_topology, get_topology, save_topology_csv
+from testbed.topology import Topology, load_topology, set_topology, get_topology, save_topology_csv, load_case
 from testbed.import_pkt import import_topology
 
 st.set_page_config(page_title="Configure Network", layout="wide")
@@ -23,7 +23,7 @@ col_preset, col_custom = st.columns(2)
 
 with col_preset:
     st.subheader("Preset Topology")
-    topology_files = glob.glob("data/sample_topologies/*.json")
+    topology_files = glob.glob(os.path.join(PROJECT_ROOT, "data", "sample_topologies", "*.json"))
     topology_options = {}
     for f in topology_files:
         with open(f) as fh:
@@ -32,7 +32,18 @@ with col_preset:
 
     if topology_options:
         choice = st.selectbox("Choose a preset grid topology", list(topology_options.keys()))
-        st.caption(topology_options[choice].get("description", ""))
+        selected_info = topology_options[choice]
+        st.caption(selected_info.get("description", ""))
+        pandapower_case = selected_info.get("pandapower_case", "case14")
+        case_int = 30 if "30" in str(pandapower_case) else 14
+        if st.button("Apply Preset Topology"):
+            topo = load_case(case_int)
+            st.session_state.pop("custom_topology", None)
+            st.session_state["grid_case"] = case_int
+            st.session_state["config"] = {"topology": selected_info}
+            st.session_state["simulation_ready"] = False
+            st.success(f"Applied {choice}: {topo.num_buses} buses, {len(topo.edges)} edges!")
+            st.rerun()
     else:
         st.info("No preset topologies found in data/sample_topologies/")
         choice = None
@@ -131,7 +142,17 @@ with exp_col2:
 # --- Step 4: save config to session state ---
 st.header("4. Save Configuration")
 if st.button("Save Configuration and Continue →"):
+    pandapower_case = topology_options.get(choice, {}).get("pandapower_case", "case14") if choice else "case14"
+    case_int = 30 if "30" in str(pandapower_case) else 14
+    topo = st.session_state.get("custom_topology")
+    if topo is None:
+        topo = load_case(case_int)
+    else:
+        set_topology(topo)
+    st.session_state["grid_case"] = case_int
+    st.session_state["simulation_ready"] = False
     st.session_state["config"] = {
         "topology": topology_options.get(choice, {}) if choice else {},
+        "custom": "custom_topology" in st.session_state,
     }
-    st.success("Configuration saved. Go to 'Live Battle' in the sidebar.")
+    st.success(f"Configuration saved ({topo.num_buses} buses). Go to 'Live Battle' or 'Run Simulation' in the sidebar.")

@@ -48,6 +48,7 @@ import sys
 import time
 from pathlib import Path
 from testbed.topology import load_topology, get_topology
+from testbed.ip_config import SCADA_IP, ATTACKER_IP
 
 # --- path anchors (repo-relative, cwd-independent) --------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent   # scripts/ -> ascend-pg-webapp/
@@ -62,6 +63,7 @@ from scripts.testbed_executor import (
     run_step as _run_step,
     find_alerts_for_window as _find_alerts,
     get_hybrid_detector,
+    _detect_interface,
     DETECTION_SEARCH_BUFFER_SEC,
 )
 
@@ -192,7 +194,7 @@ STEPS = [
         "name": "replay_attack",
         "techniques": ["T0832"],
         "script": str(ATTACKS_DIR / "replay_attack.py"),
-        "args": ["--target", "10.0.0.1", "--iface", "s1-eth7",
+        "args": ["--target", "10.0.0.1", "--iface", _detect_interface(),
                   "--capture-time", "3", "--replay-count", "1",
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [],  # Replay is signature-invisible — trained detectors only
@@ -237,7 +239,7 @@ STEPS = [
         "name": "denial_of_view",
         "techniques": ["T0815"],
         "script": str(ATTACKS_DIR / "denial_of_view.py"),
-        "args": ["--scada-ip", "10.0.0.20", "--plc-ip", "10.0.0.1",
+        "args": ["--scada-ip", SCADA_IP, "--plc-ip", "10.0.0.1",
                   "--count", "100", "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000001, 9000024],  # Holding write + raw byte fallback
         "timeout": 30,
@@ -270,7 +272,7 @@ STEPS = [
         "name": "remote_services",
         "techniques": ["T0886"],
         "script": str(ATTACKS_DIR / "remote_services.py"),
-        "args": ["--target", "10.0.0.1", "--scada-ip", "10.0.0.20",
+        "args": ["--target", "10.0.0.1", "--scada-ip", SCADA_IP,
                   "--log", str(LOG_STORE_PATH)],
         "detect_sids": [9000026],  # SSH to OT host
         "timeout": 60,

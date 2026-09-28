@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Generate PDF version of evaluation parameters documentation."""
 import sys
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from fpdf import FPDF
 
@@ -567,6 +570,6 @@ for i, r in enumerate(rows):
     pdf.table_row(r, w16, fill=(i % 2 == 0))
 
 # Save
-output_path = "/home/adty17/ascend-pg-webapp/docs/EVALUATION_PARAMETERS.pdf"
+output_path = str(REPO_ROOT / "docs" / "EVALUATION_PARAMETERS.pdf")
 pdf.output(output_path)
 print(f"PDF saved to {output_path}")

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Diagnostic script to check Suricata detection pipeline."""
 import json, sys
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 from datetime import datetime, timezone
 
 print("=== Step 1: Can we import hybrid detector? ===")

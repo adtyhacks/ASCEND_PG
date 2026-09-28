@@ -11,6 +11,7 @@ Detection modes:
 """
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from .ml_detector import MLDetector
 
 import re
 
-SURICATA_EVE_LOG = Path("/var/log/suricata/eve.json")
+SURICATA_EVE_LOG = Path(os.environ.get("ASCEND_SURICATA_EVE", str(Path(__file__).resolve().parents[1] / "data/core-runtime/suricata/eve.json")))
 DETECTION_BUFFER_SEC = 3
 
 

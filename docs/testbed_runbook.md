@@ -1,3 +1,6 @@
+> **Historical Mininet runbook — do not use these startup commands for CORE.**
+> The current supported workflow is documented in [CORE / WSL2 operation](core_wsl2.md).
+> The old Mininet and capture helper scripts referenced below are absent from this checkout.
 # ASCEND-PG testbed — attack/detection cycle runbook
 
 End-to-end steps to reproduce the full recon → injection → command injection →

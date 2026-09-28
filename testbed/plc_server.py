@@ -16,6 +16,7 @@ Run on Mininet host:
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -74,15 +75,18 @@ IEEE14_LINES = [
 ]
 
 
-def build_context(bus_id: int, num_registers: int = 100):
+def build_context(bus_id: int, num_registers: int = 100, node_data=None):
     """Build Modbus data blocks with realistic register maps from topology."""
     from testbed.topology import get_topology
     from testbed.plc_templates import (
         build_register_map, build_device_id, get_plc_template, PLC_TEMPLATES
     )
 
-    topo = get_topology()
-    node = topo.nodes[bus_id] if topo and bus_id < len(topo.nodes) else {}
+    if node_data is None:
+        topo = get_topology()
+        node = topo.nodes[bus_id] if topo and bus_id < len(topo.nodes) else {}
+    else:
+        node = node_data
 
     # Get PLC template and bus role
     plc_type = node.get("plc_type", "generic_modbus")
@@ -149,9 +153,19 @@ def main():
                          help="Modbus TCP port (default 502)")
     parser.add_argument("--bus-id", type=int, required=True,
                          help="IEEE-14 bus ID (0-13)")
+    parser.add_argument("--case", type=int, choices=[14, 30], default=14)
+    parser.add_argument("--node-json", help="Bus metadata snapshot embedded by the topology generator")
     parser.add_argument("-n", "--num-registers", type=int, default=100,
                          help="number of holding registers")
     args = parser.parse_args()
+    if not 0 <= args.bus_id < args.case:
+        parser.error("bus-id must belong to the selected case")
+    node_data = json.loads(args.node_json) if args.node_json else None
+    if node_data is not None and not isinstance(node_data, dict):
+        parser.error("node-json must be an object")
+    if node_data is None:
+        from testbed.topology import load_case
+        load_case(args.case)
 
     bus_name = IEEE14_BUS_DATA.get(args.bus_id, {}).get("name", f"Bus {args.bus_id}")
 
@@ -162,7 +176,7 @@ def main():
     identity.ModelName = "ASCEND-PG PLC v2"
     identity.MajorMinorRevision = "2.0"
 
-    context = build_context(args.bus_id, args.num_registers)
+    context = build_context(args.bus_id, args.num_registers, node_data)
 
     log.info("Starting PLC for %s on %s:%d", bus_name, args.ip, args.port)
     StartTcpServer(context=context, identity=identity, address=(args.ip, args.port))

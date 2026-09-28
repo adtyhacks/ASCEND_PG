@@ -39,7 +39,15 @@ def render_topology(nodes, edges, compromised_ids=None, detected_ids=None,
         style = DEVICE_STYLE.get(n["type"], {"image": DEVICE_STYLE["scada_server"]["image"]})
         border = "rgba(0,0,0,0)"
         bw = 0
-        if nid in compromised_ids:
+        if n.get("state") == "isolated":
+            border, bw = "#ff9500", 5
+        elif n.get("state") == "restored":
+            border, bw = "#0a84ff", 5
+        elif n.get("state") == "detected":
+            border, bw = "#34c759", 5
+        elif n.get("state") == "attacking":
+            border, bw = "#bf5af2", 5
+        elif nid in compromised_ids:
             border, bw = "#ff3b30", 5
         elif nid in detected_ids:
             border, bw = "#34c759", 5
@@ -91,6 +99,9 @@ def render_topology(nodes, edges, compromised_ids=None, detected_ids=None,
       <div style="display:flex;align-items:center;margin-bottom:12px;"><div style="width:25px;border-bottom:2px dashed #4a90d9;margin-right:10px;"></div>Comm Link (IT/OT)</div>
       <div style="display:flex;align-items:center;margin-bottom:8px;"><div style="width:14px;height:14px;border:3px solid #ff3b30;border-radius:50%;margin-right:10px;margin-left:5px;box-sizing:border-box;"></div>Node Compromised</div>
       <div style="display:flex;align-items:center;margin-bottom:12px;"><div style="width:14px;height:14px;border:3px solid #34c759;border-radius:50%;margin-right:10px;margin-left:5px;box-sizing:border-box;"></div>Attack Detected (IDS)</div>
+      <div style="display:flex;align-items:center;margin-bottom:12px;"><div style="width:14px;height:14px;border:3px solid #ff9500;border-radius:50%;margin-right:10px;margin-left:5px;box-sizing:border-box;"></div>Node Isolated (Defense)</div>
+      <div style="display:flex;align-items:center;margin-bottom:12px;"><div style="width:14px;height:14px;border:3px solid #bf5af2;border-radius:50%;margin-right:10px;margin-left:5px;box-sizing:border-box;"></div>Attack In Progress</div>
+      <div style="display:flex;align-items:center;margin-bottom:12px;"><div style="width:14px;height:14px;border:3px solid #0a84ff;border-radius:50%;margin-right:10px;margin-left:5px;box-sizing:border-box;"></div>Node Restored</div>
       <div style="display:flex;align-items:center;margin-bottom:8px;"><div style="width:25px;border-top:3px solid #ff0000;border-style:dashed;margin-right:10px;"></div>Attack Path</div>
       <hr style="border-color:#555;margin:8px 0;">
       <div style="font-size:12px;color:#aaa;">
