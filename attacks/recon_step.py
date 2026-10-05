@@ -63,7 +63,7 @@ def log_event(log_path: Path, event: dict):
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(event) + "\n")
+        f.write(json.dumps(event, default=_json_safe) + "\n")
 
 
 def nmap_sweep(subnet: str, log_path: Path) -> list:

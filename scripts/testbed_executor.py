@@ -524,11 +524,13 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
             "start_time": datetime.now(timezone.utc).isoformat(),
             "end_time": datetime.now(timezone.utc).isoformat(),
             "mode": detection_mode,
+            "network_flows": [],
         }
 
     use_ml = detection_mode in ("hybrid", "ml_only")
     use_suricata = detection_mode in ("hybrid", "suricata_only")
     detector = get_hybrid_detector(use_ml=use_ml, use_suricata=use_suricata)
+    captured_flows = []
 
     if detector and use_ml:
         detector.clear_flows()
@@ -574,7 +576,13 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
             detection_method = "suricata" if detected else "none"
     finally:
         if detector and use_ml:
-            detector.stop_capture()
+            try:
+                if detector.extractor:
+                    captured_flows = detector.extractor.raw_flow_snapshot()
+            except Exception as exc:
+                print(f"[executor] Warning: captured-flow snapshot failed: {exc}")
+            finally:
+                detector.stop_capture()
 
     # Determine final state & verified evasion
     execution_success = timing["success"]
@@ -616,5 +624,6 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
         "mode": detection_mode,
         "start_time": timing["start"].isoformat(),
         "end_time": timing["end"].isoformat(),
+        "network_flows": captured_flows,
         "error": timing.get("error"),
     }

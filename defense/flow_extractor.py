@@ -66,6 +66,7 @@ class _FlowState:
         "last_time", "fwd_times", "bwd_times", "fwd_lengths",
         "bwd_lengths", "all_lengths", "fwd_flags", "bwd_flags",
         "fwd_init_win", "bwd_init_win", "fwd_header_len", "bwd_header_len",
+        "first_src_ip", "first_src_port", "first_dst_ip", "first_dst_port",
     )
 
     def __init__(self):
@@ -85,6 +86,10 @@ class _FlowState:
         self.bwd_init_win = None
         self.fwd_header_len = 0
         self.bwd_header_len = 0
+        self.first_src_ip = None
+        self.first_src_port = None
+        self.first_dst_ip = None
+        self.first_dst_port = None
 
 
 def _flag_count(flags_list, flag_name):
@@ -273,6 +278,10 @@ class FlowExtractor:
 
             if state.start_time is None:
                 state.start_time = ts
+                state.first_src_ip = src_ip
+                state.first_src_port = src_port
+                state.first_dst_ip = dst_ip
+                state.first_dst_port = dst_port
             state.last_time = ts
             state.packets += 1
             state.all_lengths.append(pkt_len)
@@ -321,6 +330,30 @@ class FlowExtractor:
         """Clear accumulated flow state between detection steps."""
         with self._lock:
             self._flows.clear()
+
+    def raw_flow_snapshot(self):
+        """Return observed TCP flow summaries without ML-window padding."""
+        with self._lock:
+            snapshot = []
+            for flow_id, state in self._flows.items():
+                if state.packets < 1 or state.start_time is None or state.last_time is None:
+                    continue
+                protocol = flow_id[4]
+                snapshot.append({
+                    "timestamp": state.start_time,
+                    "end_timestamp": state.last_time,
+                    "source_ip": state.first_src_ip,
+                    "source_port": state.first_src_port,
+                    "destination_ip": state.first_dst_ip,
+                    "destination_port": state.first_dst_port,
+                    "protocol": protocol,
+                    "packet_count": state.packets,
+                    "forward_packet_count": state.fwd_packets,
+                    "backward_packet_count": state.bwd_packets,
+                    "captured_tcp_payload_bytes": sum(state.all_lengths),
+                    "flow_duration_seconds": max(0.0, state.last_time - state.start_time),
+                })
+            return snapshot
 
     def get_window(self):
         """Get last WINDOW_SIZE flows for LSTM input. Does NOT stop capture."""

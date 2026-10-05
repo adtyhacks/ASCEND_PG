@@ -147,6 +147,72 @@ def record_attack_started(pending: Dict[str, Any], generation_id: str) -> dict:
     )
 
 
+def record_network_events(pending: Dict[str, Any], result: Dict[str, Any]) -> list[dict]:
+    """Persist observed captured flows using the validated pending-step identity."""
+    if result.get("success") is not True:
+        return []
+
+    identity_fields = ("scenario_id", "run_id", "generation_id", "correlation_id")
+    if any(not pending.get(field) for field in identity_fields):
+        return []
+
+    recorded = []
+    for flow in result.get("network_flows") or []:
+        if not isinstance(flow, dict):
+            continue
+        timestamp = flow.get("timestamp")
+        source_ip = flow.get("source_ip")
+        destination_ip = flow.get("destination_ip")
+        protocol = flow.get("protocol")
+        if timestamp is None or not source_ip or not destination_ip or not protocol:
+            continue
+
+        source_node = None
+        target_node = None
+        target_ip = pending.get("target_ip")
+        requested_target = pending.get("target_node")
+        if requested_target and target_ip == destination_ip:
+            target_node = requested_target
+        elif requested_target and target_ip == source_ip:
+            source_node = requested_target
+
+        event_timestamp = datetime.fromtimestamp(float(timestamp), timezone.utc).isoformat()
+        identity = {
+            "campaign_id": pending.get("campaign_id"),
+            "generation_id": pending["generation_id"],
+            "correlation_id": pending["correlation_id"],
+            "ppo_step": pending.get("current_step"),
+            "technique_id": pending.get("technique_id"),
+            "step_name": pending.get("step_name"),
+        }
+        # The watcher process is launched for one owned session generation;
+        # preserve its session identity when the normal launcher supplied it.
+        session_id = os.environ.get("ASCEND_SESSION_ID")
+        if session_id:
+            identity["core_session_id"] = session_id
+
+        event = append_event(
+            pending["scenario_id"], pending["run_id"],
+            category="network", event_type="flow_observed",
+            timestamp=event_timestamp, source_node=source_node, target_node=target_node,
+            severity="INFO", protocol=protocol,
+            source_ip=source_ip, destination_ip=destination_ip,
+            source_port=flow.get("source_port"),
+            destination_port=flow.get("destination_port"),
+            evidence={
+                "flow_end_timestamp": flow.get("end_timestamp"),
+                "flow_duration_seconds": flow.get("flow_duration_seconds"),
+                "packet_count": flow.get("packet_count"),
+                "forward_packet_count": flow.get("forward_packet_count"),
+                "backward_packet_count": flow.get("backward_packet_count"),
+                "captured_tcp_payload_bytes": flow.get("captured_tcp_payload_bytes"),
+            },
+            **identity,
+        )
+        recorded.append(event)
+    return recorded
+
+
 def main():
     global _watcher_lock
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -279,6 +345,12 @@ def main():
                     }
                     print(f"[watcher] EXECUTION ERROR: {exc}")
                     write_heartbeat("ERROR", {"error": str(exc)})
+
+                try:
+                    record_network_events(pending, result)
+                except Exception as exc:
+                    # Evidence persistence must not rewrite the authoritative step result.
+                    print(f"[watcher] Network event persistence failed: {exc}", file=sys.stderr)
 
                 write_step_result(result)
                 print(f"[watcher] Result written. Total steps executed: {steps_executed}")

@@ -101,20 +101,20 @@ def _build_tcp_header(src_port: int, dst_port: int, seq: int, ack: int,
     urgent = 0
     header = struct.pack(">HHIIBBHHH",
         src_port, dst_port, seq, ack,
-        (data_offset << 4) | flags, window, checksum, urgent)
+        (data_offset << 4), flags, window, checksum, urgent)
     # Pseudo-header for checksum
     src_bytes = socket.inet_aton(src_ip)
     dst_bytes = socket.inet_aton(dst_ip)
     pseudo = struct.pack(">4s4sBBH", src_bytes, dst_bytes,
                           0, 6, len(header) + len(payload))
     s = sum(struct.unpack("!%dH" % ((len(pseudo) + len(header) + len(payload) + 1) // 2),
-             pseudo + header + payload + b'\x00'))
+             pseudo + header + payload + b'\x00' * (len(payload) % 2)))
     s = (s >> 16) + (s & 0xFFFF)
     s += s >> 16
     checksum = ~s & 0xFFFF
     header = struct.pack(">HHIIBBHHH",
         src_port, dst_port, seq, ack,
-        (data_offset << 4) | flags, window, checksum, urgent)
+        (data_offset << 4), flags, window, checksum, urgent)
     return header
 
 
