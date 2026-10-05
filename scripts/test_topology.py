@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 import numpy as np
+import tempfile
+import atexit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -21,13 +23,16 @@ print(f"IP map: {topo.ip_map}")
 print()
 
 # Ensure CSV files exist by exporting default topology
-save_topology_csv(topo, str(REPO_ROOT / "data" / "topology"))
+temporary_topology = tempfile.TemporaryDirectory()
+atexit.register(temporary_topology.cleanup)
+topology_directory = Path(temporary_topology.name)
+save_topology_csv(topo, str(topology_directory))
 
 # Test 2: Load from CSV
 print("=== Test 2: Load from CSV files ===")
 topo_csv = load_topology_from_csv(
-    str(REPO_ROOT / "data" / "topology" / "nodes.csv"),
-    str(REPO_ROOT / "data" / "topology" / "edges.csv")
+    str(topology_directory / "nodes.csv"),
+    str(topology_directory / "edges.csv")
 )
 print(f"Buses: {topo_csv.num_buses}, Edges: {len(topo_csv.edges)}")
 print(f"Bus types: {topo_csv.bus_types}")
@@ -36,7 +41,7 @@ print()
 
 # Test 3: Load from directory
 print("=== Test 3: Load from directory ===")
-topo_dir = load_topology(str(REPO_ROOT / "data" / "topology"))
+topo_dir = load_topology(str(topology_directory))
 print(f"Buses: {topo_dir.num_buses}, Edges: {len(topo_dir.edges)}")
 print()
 

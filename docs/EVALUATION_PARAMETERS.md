@@ -573,8 +573,8 @@ Complete reference of all evaluation metrics, KPIs, and parameters across the AS
 | `xai/shap_explain.py` | SHAP feature importance |
 | `xai/lime_explain.py` | LIME anomaly detection |
 | `xai/attack_decision_explain.py` | RL decision rationale |
-| `app/pages/3_Live_Battle.py` | Dashboard metrics |
-| `app/pages/4_Report.py` | Report display metrics |
+| `gui/adapter.py` | Dedicated GUI dashboard and canonical evidence views |
+| `gui/reporting.py` | Saved-run report generation and access |
 
 ---
 

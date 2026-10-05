@@ -179,12 +179,33 @@ async function loadBattle() {
   if (!selector.options.length) { selector.innerHTML = targets.map(target => `<option value="${escapeHtml(target)}">${escapeHtml(target)}</option>`).join(''); }
   byId('campaign-status-detail').textContent = campaignStatus.error?.message || `Campaign ${campaignStatus.state}; watcher ${campaignStatus.watcher || latestSystem?.watcher?.state || 'OFFLINE'}; step ${campaignStatus.current_step || 0}.`;
 }
+let selectedReportRun = null, reportPending = false;
+function reportQuery() { return selectedReportRun ? `?scenario_id=${encodeURIComponent(selectedReportRun.scenario_id)}&run_id=${encodeURIComponent(selectedReportRun.run_id)}` : ''; }
 async function loadReports() {
-  const data = await api('/api/report-summary');
+  const data = await api('/api/report-summary' + reportQuery());
+  selectedReportRun = data.run_id ? {scenario_id: data.scenario_id, run_id: data.run_id} : null;
+  byId('report-run').innerHTML = (data.runs || []).map(r => `<option value="${escapeHtml(r.run_id)}" ${r.run_id === data.run_id ? 'selected' : ''}>${escapeHtml(r.run_id)} (${escapeHtml(r.campaign_state)})</option>`).join('');
+  byId('report-run').onchange = async () => {
+    selectedReportRun = data.runs.find(r => r.run_id === byId('report-run').value);
+    try { await loadReports(); } catch (error) { byId('report-status').textContent = `Report load failed: ${error.message}`; }
+  };
+  byId('report-generate').disabled = reportPending || !data.normalized_records;
+  for (const id of ['report-open', 'report-download']) { byId(id).hidden = !data.available; byId(id).href = data.url ? data.url + (id === 'report-download' ? '&download=1' : '') : ''; }
   byId('report-status').textContent = data.available ? `Existing report available for ${data.run_id}` : (data.reason || 'No report available');
   const record = data.normalized_events?.[data.normalized_events.length - 1];
   const rows = record ? [['Normalized records', data.normalized_records], ['Technique', record['MITRE ID']], ['Target', record['Target Host']], ['Detected', record.Detected], ['Detection method', record['Detection Method']], ['Confidence', record['Detector Confidence']]] : [['Normalized records', 0], ['Details', 'No normalized report records available.']];
   setDetails(byId('report-normalization'), rows);
+}
+async function generateReport() {
+  if (reportPending || !selectedReportRun) return;
+  reportPending = true; byId('report-generate').disabled = true; byId('report-run').disabled = true;
+  byId('report-status').textContent = 'Generating report from saved run evidence…';
+  try {
+    const data = await postApi('/api/report/generate', selectedReportRun);
+    await loadReports();
+    byId('report-status').textContent = `Report generated for ${data.run_id}: ${data.normalized_records} completed attack records.`;
+  } catch (error) { byId('report-status').textContent = `Report generation failed: ${error.message}`; }
+  finally { reportPending = false; byId('report-generate').disabled = !selectedReportRun; byId('report-run').disabled = false; }
 }
 function loadRoute(route) { if (route === 'overview') return loadOverview(); if (route === 'network') return loadNetwork(); if (route === 'runtime') return loadRuntime(); if (route === 'battle') return loadBattle(); if (route === 'reports') return loadReports(); return Promise.resolve(); }
 function showPageRefreshError(error) {
@@ -255,6 +276,7 @@ async function selectTopology() {
   } finally { topologyControlPending = false; updateControlStates(); }
 }
 function bindControls() {
+  byId('report-generate').addEventListener('click', generateReport);
   byId('core-start').addEventListener('click', () => runControl('/api/runtime/start', {}, 'runtime-action-status'));
   byId('core-stop').addEventListener('click', () => runControl('/api/runtime/stop', {}, 'runtime-action-status'));
   byId('watcher-start').addEventListener('click', () => runControl('/api/runtime/watcher/start', {}, 'runtime-action-status'));

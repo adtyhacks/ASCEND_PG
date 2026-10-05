@@ -1,8 +1,8 @@
 # CORE 9.2.1 / WSL2 operation
 
-Run this checkout from WSL, not Windows Python. The UI/backend is one Streamlit
-application; there is no separate Flask/FastAPI server or database. CORE runs
-as a privileged daemon; Streamlit itself does not need sudo.
+Run this checkout from WSL, not Windows Python. The dedicated GUI is served by
+`gui.server` using Python's HTTP server; there is no Flask/FastAPI server or
+database. CORE runs as a privileged daemon; the GUI itself does not need sudo.
 
 ## Environment
 
@@ -51,8 +51,9 @@ If using the existing service, `systemctl status core-daemon` diagnoses it.
 /opt/core/venv/bin/python scripts/core_session.py stop
 ```
 
-Launch the UI with `.venv-wsl/bin/python -m streamlit run app/Home.py`.
-The Run Simulation page exposes these operations and displays actual errors.
+Launch the UI with `.venv-wsl/bin/python -m gui.server`, then open
+`http://127.0.0.1:8765`. The Run / CORE page exposes these operations and
+displays actual errors.
 Launch `core-gui` without an XML positional argument to attach to a running
 session or use its File > Open menu.
 

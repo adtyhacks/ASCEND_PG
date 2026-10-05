@@ -221,11 +221,16 @@ def visual_data(topology: dict, events: list[dict]) -> tuple[list[dict], list[di
 
 def report_events(events: list[dict]) -> list[dict]:
     """Normalize one run's canonical events for the legacy report renderer."""
-    detections = {e.get("correlation_id"): e for e in events if e.get("event_type") == "detection"}
+    def key(e):
+        return (e.get("scenario_id"), e.get("run_id"), e.get("generation_id"), e.get("correlation_id"))
+    detections = {key(e): e for e in events if e.get("event_type") == "detection" and e.get("correlation_id")}
     normalized = []
     for event in events:
         if event.get("event_type") != "attack_finished":
             continue
-        evidence = event.get("evidence") or {}; detection = detections.get(event.get("correlation_id"))
-        normalized.append({"Timestamp": event["timestamp"], "MITRE ID": event.get("mitre_technique", ""), "Technique Name": evidence.get("step_name", event.get("mitre_technique", "")), "Stage": event.get("attack_stage", 0), "Target Host": event.get("target_node", ""), "Detected": bool(detection), "Detector Confidence": evidence.get("ml_confidence", 0.0), "Detection Method": evidence.get("detection_method", "none"), "Status": "Detected" if detection else event.get("result", "Failed"), "Evidence": evidence})
+        evidence = event.get("evidence") or {}
+        detection = detections.get(key(event)) if event.get("correlation_id") else None
+        detection_evidence = (detection or {}).get("evidence") or {}
+        detected = bool(detection) or str(event.get("result", "")).lower() == "detected"
+        normalized.append({"Timestamp": event["timestamp"], "MITRE ID": event.get("mitre_technique", ""), "Technique Name": evidence.get("step_name", event.get("mitre_technique", "")), "Stage": event.get("attack_stage", 0), "Target Host": event.get("target_node", ""), "Detected": detected, "Detector Confidence": detection_evidence.get("ml_confidence", evidence.get("ml_confidence")), "Detection Method": (detection or {}).get("detection_method") or detection_evidence.get("detection_method") or evidence.get("detection_method", "unknown"), "Status": "Detected" if detected else event.get("result", "Unknown"), "Severity": (detection or event).get("severity", "INFO"), "Correlation ID": event.get("correlation_id"), "Canonical": True, "Evidence": {"attack": event, "detection": detection}, "Source IP": evidence.get("source_ip", "N/A")})
     return normalized

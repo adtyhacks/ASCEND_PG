@@ -34,4 +34,4 @@ Instead of building the network from scratch, the environment script will now lo
 3. **File -> Open -> `core_topology.xml`**. You will see the entire IEEE-30 grid.
 4. **Drag and Drop:** Use the left toolbar to drag in extra routers, switches, or attacker Kali Linux hosts. Draw lines to connect them.
 5. Hit the **Play** button in the GUI to instantiate the Linux containers.
-6. Run your Streamlit app and AI agent as normal, which will now interface with your visually modified network!
+6. Launch the dedicated GUI with `.venv-wsl/bin/python -m gui.server` and open `http://127.0.0.1:8765` to use the existing runtime and campaign controls.

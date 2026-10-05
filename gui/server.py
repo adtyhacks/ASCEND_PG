@@ -7,7 +7,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from gui import adapter
+from gui import adapter, reporting
 from gui.campaign import CampaignController, CampaignError
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -33,7 +33,20 @@ class GuiHandler(SimpleHTTPRequestHandler):
             elif parsed.path == "/api/runtime-diagnostics":
                 payload = adapter.get_runtime_diagnostics()
             elif parsed.path == "/api/report-summary":
-                payload = adapter.get_report_summary()
+                payload = reporting.summary(query.get("scenario_id", [None])[0], query.get("run_id", [None])[0])
+            elif parsed.path == "/api/report-file":
+                path = reporting.report_path(query.get("scenario_id", [None])[0], query.get("run_id", [None])[0])
+                body = path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
+                disposition = "attachment" if query.get("download") == ["1"] else "inline"
+                self.send_header("Content-Disposition", f'{disposition}; filename="{path.parent.name}-report.html"')
+                self.end_headers()
+                self.wfile.write(body)
+                return
             elif parsed.path == "/api/live-battle":
                 payload = adapter.get_live_battle_snapshot(
                     int(query.get("limit", ["100"])[0]), query.get("visual_signature", [None])[0]
@@ -76,7 +89,9 @@ class GuiHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         try:
             data = self._json_body()
-            if self.path == "/api/runtime/start":
+            if self.path == "/api/report/generate":
+                payload, status = reporting.create_report(data.get("scenario_id"), data.get("run_id")), HTTPStatus.OK
+            elif self.path == "/api/runtime/start":
                 payload, status = CAMPAIGNS.start_core(), HTTPStatus.ACCEPTED
             elif self.path == "/api/runtime/gui":
                 payload, status = adapter.core_request("gui"), HTTPStatus.OK
