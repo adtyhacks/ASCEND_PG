@@ -2,13 +2,34 @@
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from attacks.recon_step import log_event
+from attacks.recon_step import log_event, nmap_sweep
+from testbed.ip_config import get_plc_ip
 
 
 class ReconSerializationTests(unittest.TestCase):
+    def test_sweep_preserves_requested_range_and_discovers_core_plcs(self):
+        for case in (14, 30):
+            targets = [get_plc_ip(bus) for bus in range(case)]
+            output = "\n".join(
+                f"Host: {ip} () Ports: 502/open/tcp//mbap///" for ip in targets
+            )
+            for subnet in ("10.0.0.0/24", "10.0.0.1-30", "10.0.0.8/29"):
+                with self.subTest(case=case, subnet=subnet), tempfile.TemporaryDirectory() as directory:
+                    with patch("attacks.recon_step.subprocess.run",
+                               return_value=SimpleNamespace(stdout=output)) as run:
+                        found = nmap_sweep(subnet, Path(directory) / "recon.jsonl")
+                    self.assertEqual(found, targets)
+                    run.assert_called_once_with(
+                        ["nmap", "-p", "502", "--open", "-T4", "--host-timeout", "10s",
+                         "--max-retries", "1", "-oG", "-", subnet],
+                        capture_output=True, text=True, timeout=120,
+                    )
+
     def test_device_identification_bytes_and_nested_values(self):
         cases = [
             ({0: b"ASCEND-PG", 1: b"PLC-B0", 2: b"2.0"},
