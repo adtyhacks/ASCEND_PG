@@ -7,7 +7,7 @@ from typing import Any
 
 from testbed import run_store
 from testbed.core_runtime import core_request
-from testbed.topology import get_topology as canonical_topology
+from testbed.topology import get_topology as canonical_topology, load_case
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,10 +82,55 @@ def get_displayable_active_run() -> dict[str, Any] | None:
 
 
 def get_topology() -> dict[str, Any]:
-    """Load the canonical topology and normal visual state without event replay."""
-    topology = canonical_topology().canonical_snapshot()
-    nodes, edges, *_ = run_store.visual_data(topology, [])
-    return {"topology": topology, "visual": {"nodes": nodes, "edges": edges}}
+    """Load canonical topology and render its current state with the old PyVis view."""
+    return _topology_view(canonical_topology(), [])
+
+
+def _topology_view(topology_model, security_events: list[dict[str, Any]]) -> dict[str, Any]:
+    topology = topology_model.canonical_snapshot()
+    nodes, edges, compromised, detected, attack_paths = run_store.visual_data(topology, security_events)
+    from testbed.visualize_topology import render_topology
+
+    return {
+        "topology": topology,
+        "visual": {"nodes": nodes, "edges": edges},
+        "pyvis_html": render_topology(
+            nodes, edges, compromised_ids=compromised, detected_ids=detected,
+            attack_paths=attack_paths, show_tooltips=True,
+        ),
+    }
+
+
+def get_available_topologies() -> list[dict[str, str]]:
+    """Expose only the existing preset topology references supported by CORE."""
+    options = []
+    for path in sorted((DATA / "sample_topologies").glob("*.json")):
+        try:
+            source = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        case = str(source.get("pandapower_case", "")).lower()
+        if case not in {"case14", "case30"}:
+            continue
+        options.append({
+            "case_name": case,
+            "name": str(source.get("name", case)),
+            "description": str(source.get("description", "")),
+        })
+    return options
+
+
+def select_topology(case_name: str) -> dict[str, Any]:
+    """Select an existing preset through the shared canonical topology model."""
+    options = {item["case_name"]: item for item in get_available_topologies()}
+    case = str(case_name).strip().lower()
+    if case not in options:
+        raise ValueError("Choose an available canonical topology preset.")
+    status = core_request("status")
+    if status.get("state") == "RUNTIME":
+        raise ValueError("Topology selection is available only before an owned CORE session is running.")
+    selected = load_case(case)
+    return {"configuration": get_network_configuration(), **_topology_view(selected, [])}
 
 
 def get_network_configuration() -> dict[str, Any]:
@@ -95,6 +140,7 @@ def get_network_configuration() -> dict[str, Any]:
         node_type = node.get("node_type", "unknown")
         types[node_type] = types.get(node_type, 0) + 1
     return {"topology_version": topology.get("topology_version"), "case_name": topology.get("case_name"),
+            "selected_case": topology.get("case_name"), "available_topologies": get_available_topologies(),
             "node_count": len(topology["nodes"]), "edge_count": len(topology["links"]), "node_types": types}
 
 
@@ -272,13 +318,11 @@ def get_live_battle_snapshot(limit: int = 100) -> dict[str, Any]:
         topology = get_topology()
         return {"active_run": active, "network_events": [], "security_events": [], "background_network": background_network,
                 "network_event_count": 0, "security_event_count": 0, "campaign": None,
-                "topology": topology["topology"], "visual": topology["visual"], "limit": limit}
+                **topology, "limit": limit}
     run = active["run"]
     network_events = get_recent_network_events(run["scenario_id"], run["run_id"], limit)
     security_events = get_recent_security_events(run["scenario_id"], run["run_id"], limit)
-    topology = canonical_topology().canonical_snapshot()
-    nodes, edges, *_ = run_store.visual_data(topology, security_events)
+    topology_view = _topology_view(canonical_topology(), security_events)
     return {"active_run": active, "limit": limit, "network_events": network_events, "background_network": background_network,
             "security_events": security_events, "network_event_count": len(network_events),
-            "security_event_count": len(security_events), "campaign": run.get("campaign_request"),
-            "topology": topology, "visual": {"nodes": nodes, "edges": edges}}
+            "security_event_count": len(security_events), "campaign": run.get("campaign_request"), **topology_view}

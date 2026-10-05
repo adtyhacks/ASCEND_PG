@@ -10,16 +10,26 @@ from testbed import run_store
 
 
 class FakeTopology:
+    def __init__(self, case_name: str = "case14", node_count: int = 2):
+        self.case_name = case_name
+        self.node_count = node_count
+
     def canonical_snapshot(self) -> dict:
-        return {"topology_version": "test-topology", "case_name": "case14", "nodes": [{"id": "hub", "hostname": "s1", "node_type": "hub"}, {"id": "plc1", "hostname": "plc1", "node_type": "plc"}], "links": [{"from": "hub", "to": "plc1", "type": "comm", "protocol": "TCP/IP"}]}
+        nodes = [{"id": "hub", "hostname": "s1", "node_type": "hub"}]
+        nodes += [{"id": f"plc{index + 1}", "hostname": f"plc{index + 1}", "node_type": "plc"} for index in range(self.node_count - 1)]
+        links = [{"from": "hub", "to": node["id"], "type": "comm", "protocol": "TCP/IP"} for node in nodes[1:]]
+        return {"topology_version": f"{self.case_name}:{self.node_count}", "case_name": self.case_name, "nodes": nodes, "links": links}
 
 
 def main() -> None:
     original_data, original_runs = adapter.DATA, run_store.RUNS
-    original_request, original_topology = adapter.core_request, adapter.canonical_topology
+    original_request, original_topology, original_load_case = adapter.core_request, adapter.canonical_topology, adapter.load_case
     try:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); adapter.DATA = root / "data"; run_store.RUNS = adapter.DATA / "runs"; adapter.canonical_topology = lambda: FakeTopology(); adapter._active_cache.clear()
+            root = Path(temporary); adapter.DATA = root / "data"; run_store.RUNS = adapter.DATA / "runs"; selected_model = {"topology": FakeTopology()}; adapter.canonical_topology = lambda: selected_model["topology"]; adapter._active_cache.clear()
+            references = adapter.DATA / "sample_topologies"; references.mkdir(parents=True)
+            for case, name in (("case14", "IEEE 14"), ("case30", "IEEE 30")):
+                (references / f"{case}.json").write_text(json.dumps({"name": name, "pandapower_case": case}), encoding="utf-8")
             def offline(_: str) -> dict: raise RuntimeError("CORE daemon unavailable")
             adapter.core_request = offline
             status = adapter.get_system_status()
@@ -44,7 +54,19 @@ def main() -> None:
             assert adapter.get_recent_network_events(run["scenario_id"], run["run_id"], 100) == []
             assert adapter.get_recent_security_events(run["scenario_id"], run["run_id"], 100) == []
             configuration = adapter.get_network_configuration(); assert configuration["node_count"] == 2 and configuration["edge_count"] == 1
+            assert {item["case_name"] for item in configuration["available_topologies"]} == {"case14", "case30"}
+            adapter.core_request = lambda action: {"state": "STOPPED"}
+            adapter.load_case = lambda case: selected_model.update(topology=FakeTopology(case, 3 if case == "case30" else 2)) or selected_model["topology"]
+            selected = adapter.select_topology("case30")
+            assert selected["topology"]["case_name"] == "case30" and len(selected["visual"]["nodes"]) == 3
+            assert "plc2" in selected["pyvis_html"] and selected["configuration"]["selected_case"] == "case30"
+            adapter.core_request = lambda action: {"state": "RUNTIME"}
+            try: adapter.select_topology("case14")
+            except ValueError as exc: assert "before an owned CORE session" in str(exc)
+            else: raise AssertionError("topology must not change during an owned CORE runtime")
+            adapter.core_request = lambda _: {"state": "RUNTIME", "session_id": 3, "watcher": "IDLE"}
             assert {node["state"] for node in adapter.get_topology()["visual"]["nodes"]} == {"normal"}
+            assert "plc2" in adapter.get_topology()["pyvis_html"]
             for number in range(140): run_store.append_event(run["scenario_id"], run["run_id"], category="network", event_type="packet", source_node="attacker", target_node="plc1", sequence=number)
             for number in range(120): run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="attack_started", target_node="plc1", correlation_id=f"corr-{number}", sequence=number)
             run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="attack_finished", target_node="plc1", correlation_id="corr-report", mitre_technique="T0836", result="detected", evidence={"step_name": "write register", "ml_confidence": 0.91, "detection_method": "hybrid"})
@@ -102,7 +124,7 @@ def main() -> None:
             else: raise AssertionError("partial canonical event data must be rejected")
     finally:
         adapter.DATA, run_store.RUNS = original_data, original_runs
-        adapter.core_request, adapter.canonical_topology = original_request, original_topology; adapter._active_cache.clear()
+        adapter.core_request, adapter.canonical_topology, adapter.load_case = original_request, original_topology, original_load_case; adapter._active_cache.clear()
     print("GUI Phase 3A adapter regression: PASS")
 
 

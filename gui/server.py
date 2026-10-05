@@ -30,6 +30,9 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload = adapter.get_topology()
             elif parsed.path == "/api/network-configuration":
                 payload = adapter.get_network_configuration()
+            elif parsed.path == "/api/topologies":
+                payload = {"available_topologies": adapter.get_available_topologies(),
+                           "selected_case": adapter.get_network_configuration()["selected_case"]}
             elif parsed.path == "/api/runtime-diagnostics":
                 payload = adapter.get_runtime_diagnostics()
             elif parsed.path == "/api/report-summary":
@@ -76,6 +79,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
             data = self._json_body()
             if self.path == "/api/runtime/start":
                 payload, status = CAMPAIGNS.start_core(), HTTPStatus.ACCEPTED
+            elif self.path == "/api/runtime/gui":
+                payload, status = adapter.core_request("gui"), HTTPStatus.OK
             elif self.path == "/api/runtime/stop":
                 payload, status = CAMPAIGNS.stop_core(), HTTPStatus.OK
             elif self.path == "/api/runtime/watcher/start":
@@ -90,6 +95,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload, status = CAMPAIGNS.defend("isolate", str(data.get("target_node", ""))), HTTPStatus.OK
             elif self.path == "/api/campaign/restore":
                 payload, status = CAMPAIGNS.defend("restore", str(data.get("target_node", ""))), HTTPStatus.OK
+            elif self.path == "/api/topology/select":
+                payload, status = adapter.select_topology(str(data.get("case_name", ""))), HTTPStatus.OK
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"code": "not_found", "message": "Unknown API endpoint."}})
                 return

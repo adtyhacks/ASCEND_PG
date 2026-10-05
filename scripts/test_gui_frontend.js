@@ -13,7 +13,7 @@ const appSource = fs.readFileSync(path.join(root, 'gui/web/app.js'), 'utf8');
 const htmlSource = fs.readFileSync(path.join(root, 'gui/web/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(root, 'gui/web/styles.css'), 'utf8');
 const diagnosticsPath = '/api/runtime-diagnostics';
-const runtimeControlIds = ['core-start', 'core-stop', 'watcher-start'];
+const runtimeControlIds = ['core-start', 'core-stop', 'watcher-start', 'core-gui'];
 const campaignControlIds = ['campaign-start', 'campaign-next', 'campaign-run', 'campaign-isolate', 'campaign-restore', 'defense-target'];
 
 function snapshot(state = 'STOPPED', watcher = 'STOPPED', generation = null) {
@@ -46,6 +46,7 @@ class MockElement {
     this.listeners = new Map();
     this._innerHTML = '';
     this.options = [];
+    this.children = [];
     for (const [name, value] of Object.entries(attributes)) {
       if (name.startsWith('data-')) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
     }
@@ -79,6 +80,8 @@ class MockElement {
   getAttribute(name) { return this.attributes[name] ?? null; }
   removeAttribute(name) { delete this.attributes[name]; }
   hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
+  appendChild(child) { this.children.push(child); return child; }
+  replaceChildren(...children) { this.children = children; }
   addEventListener(name, callback) {
     const callbacks = this.listeners.get(name) || [];
     callbacks.push(callback);
@@ -100,6 +103,7 @@ function mockDocument() {
   const ids = new Map(elements.filter(element => element.id).map(element => [element.id, element]));
   return {
     getElementById: id => ids.get(id) || null,
+    createElement: tag => new MockElement(tag, {}),
     querySelectorAll: selector => {
       const attribute = /^\[([^\]]+)\]$/.exec(selector);
       if (attribute) return elements.filter(element => element.hasAttribute(attribute[1]));
@@ -121,7 +125,7 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
   let defaultDiagnostics = initial;
   let battleActive = initial.active_run;
   let campaignState = 'READY';
-  const topology = {topology: {nodes: [{id: 'plc1'}, {id: 'hub'}], links: []}, visual: {nodes: [], edges: []}};
+  const topology = {topology: {case_name: 'case14', nodes: [{id: 'plc1'}, {id: 'hub'}], links: []}, visual: {nodes: [], edges: []}, pyvis_html: '<html>PyVis case14</html>'};
   const response = (body, status = 200) => ({ok: status >= 200 && status < 300, status, json: async () => structuredClone(body)});
   const enqueue = (url, body, {method = 'GET', status = 200, pending = null, error = null} = {}) => {
     const key = `${method} ${url}`;
@@ -144,7 +148,8 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
     // instead of failing inside bootstrap. Tests still require diagnostics GETs.
     if (url === '/api/dashboard') return response({system: defaultDiagnostics, active_run: defaultDiagnostics.active_run});
     if (url === '/api/topology') return response(topology);
-    if (url === '/api/network-configuration') return response({node_count: 2, edge_count: 0, case_name: 'case14',
+    if (url === '/api/network-configuration') return response({node_count: 2, edge_count: 0, case_name: 'case14', selected_case: 'case14',
+      available_topologies: [{case_name: 'case14', name: 'IEEE 14 Bus'}, {case_name: 'case30', name: 'IEEE 30 Bus'}],
       topology_version: 'topology-fixture', node_types: {plc: 1, hub: 1}});
     if (url === '/api/live-battle?limit=100') return response({...topology, active_run: battleActive,
       network_events: [], security_events: [], background_network: [], network_event_count: 0, security_event_count: 0, limit: 100, campaign: null});
@@ -211,6 +216,7 @@ async function testStoppedAndStyles() {
   assert.equal(env.element('core-status').textContent, 'CORE — STOPPED');
   assert.equal(env.element('overview-core').textContent, 'STOPPED');
   assertRuntimeControls(env, true, false, false);
+  assert.equal(env.element('core-gui').disabled, true, 'CORE GUI requires a running owned session');
   assert.ok(countRequests(env, 'GET', diagnosticsPath) >= 1, 'bootstrap must obtain a unified runtime diagnostics snapshot');
   assert.equal(countRequests(env, 'GET', '/api/dashboard'), 0, 'header and Runtime controls must use the same read endpoint');
   assert.equal(countRequests(env, 'POST'), 0, 'rendering STOPPED must never auto-start CORE');
@@ -241,6 +247,7 @@ async function testRuntimeSnapshot() {
   assert.equal(env.element('run-status').textContent, 'ACTIVE RUN — run-generation-B');
   assert.equal(env.element('runtime-watcher').textContent, 'STOPPED');
   assertRuntimeControls(env, false, true, true);
+  assert.equal(env.element('core-gui').disabled, false, 'CORE GUI is available for the running owned session');
   assert.equal(countRequests(env, 'POST'), 0);
   for (const watcher of ['IDLE', 'BUSY']) {
     env.setDiagnostics(snapshot('RUNTIME', watcher, 'generation-B'));
@@ -634,6 +641,41 @@ async function testBackgroundTrafficIsSeparate() {
   assert.equal(countRequests(env, 'GET', '/api/live-battle?limit=100'), 1);
 }
 
+async function testTopologySelectionUsesCanonicalApiAndPyvis() {
+  const env = await harness(snapshot());
+  await env.navigate('#network');
+  assert.equal(env.element('topology-selector').options.length, 2, 'selector uses the available backend presets');
+  assert.equal(env.element('topology-selector').value, 'case14');
+  assert.match(env.element('network-topology').children[0].srcdoc, /PyVis case14/);
+  const selected = {configuration: {node_count: 3, edge_count: 2, case_name: 'case30', selected_case: 'case30',
+    available_topologies: [{case_name: 'case14', name: 'IEEE 14 Bus'}, {case_name: 'case30', name: 'IEEE 30 Bus'}],
+    topology_version: 'case30:3', node_types: {plc: 2, hub: 1}}, topology: {case_name: 'case30'},
+    visual: {nodes: [{id: 'plc1'}, {id: 'plc2'}, {id: 'hub'}], edges: [{from: 'hub', to: 'plc1'}, {from: 'hub', to: 'plc2'}]},
+    pyvis_html: '<html>PyVis case30</html>'};
+  env.element('topology-selector').value = 'case30';
+  env.enqueue('/api/topology/select', selected, {method: 'POST'});
+  env.enqueue('/api/topology', {...selected, ...selected}, {});
+  await env.element('topology-selector').dispatch('change');
+  const request = env.requests.find(item => item.method === 'POST' && item.url === '/api/topology/select');
+  assert.ok(request, 'selection is sent to the canonical topology API');
+  assert.equal(JSON.parse(request.options.body).case_name, 'case30');
+  assert.equal(env.element('network-nodes').textContent, 3);
+  assert.equal(env.element('network-edges').textContent, 2);
+  assert.match(env.element('network-topology').children[0].srcdoc, /PyVis case30/);
+  assert.match(env.element('topology-selection-status').textContent, /Selected case30/);
+}
+
+async function testOpenCoreGuiUsesExistingRuntimeHelperRoute() {
+  const env = await harness(snapshot('RUNTIME', 'IDLE', 'gui-session'));
+  env.location.hash = '#runtime';
+  await env.refresh();
+  env.enqueue('/api/runtime/gui', {session_id: 7, gui_pid: 321}, {method: 'POST'});
+  await env.click('core-gui');
+  assert.equal(countRequests(env, 'POST', '/api/runtime/gui'), 1);
+  assert.match(env.element('runtime-action-status').textContent, /CORE GUI opened for session 7 \(PID 321\)/);
+  assert.equal(countRequests(env, 'GET', diagnosticsPath) >= 2, true, 'successful GUI launch refreshes authoritative runtime diagnostics');
+}
+
 const tests = [
   ['A: STOPPED state and enabled/disabled styles', testStoppedAndStyles],
   ['B: coherent RUNTIME snapshot and watcher rules', testRuntimeSnapshot],
@@ -648,6 +690,8 @@ const tests = [
   ['K: watcher refresh failure and backend errors remain visible', testWatcherRefreshFailureAndPostError],
   ['L: watcher ownership identity and bounded GET-only observation', testWatcherIdentityAndBoundedObservation]
   ,['M: background traffic remains a separate refreshed table', testBackgroundTrafficIsSeparate]
+  ,['N: canonical topology selection refreshes a real PyVis view', testTopologySelectionUsesCanonicalApiAndPyvis]
+  ,['O: Open CORE GUI uses the existing runtime helper route', testOpenCoreGuiUsesExistingRuntimeHelperRoute]
 ];
 
 (async () => {

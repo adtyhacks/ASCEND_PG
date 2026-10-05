@@ -6,6 +6,7 @@ const escapeHtml = value => unavailable(value).replaceAll('&', '&amp;').replaceA
 let latestSystem = null, latestActive = null, refreshTimer = null;
 let runtimeRefreshSequence = 0, runtimeFresh = false, runtimeRefreshPending = false, runtimeControlPending = false;
 let runtimeActionMessage = '', pendingRuntimePath = null;
+let topologyControlPending = false;
 const WATCHER_READINESS_REFRESH_LIMIT = 30;
 let watcherReadiness = null;
 let latestBattle = null, latestCampaignStatus = null, battleRefreshSequence = 0, pageRefreshPending = false;
@@ -32,17 +33,13 @@ async function postApi(path, payload = {}) {
 function activeRunLabel(active) { return active && active.state === 'ACTIVE' ? active.run.run_id : 'NONE'; }
 function setDetails(target, rows) { target.innerHTML = rows.map(([label, value]) => `<div><span>${label}</span><strong>${text(value)}</strong></div>`).join(''); }
 
-function drawTopology(target, visual) {
-  const nodes = visual.nodes || [], edges = visual.edges || [];
-  if (!nodes.length) { target.innerHTML = '<div class="empty-state">No canonical topology is available.</div>'; return; }
-  const width = 840, height = 320, centerX = width / 2, centerY = height / 2;
-  const positions = Object.fromEntries(nodes.map((node, index) => {
-    const angle = (Math.PI * 2 * index / nodes.length) - Math.PI / 2, radius = Math.min(width, height) * .37;
-    return [node.id, {x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius}];
-  }));
-  const lines = edges.map(edge => { const a = positions[edge.from], b = positions[edge.to]; return a && b ? `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>` : ''; }).join('');
-  const dots = nodes.map(node => { const point = positions[node.id]; return `<g class="topology-node state-${node.state}"><circle cx="${point.x}" cy="${point.y}" r="15"/><text x="${point.x}" y="${point.y + 31}">${node.label}</text></g>`; }).join('');
-  target.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Canonical ASCEND topology"><g class="topology-links">${lines}</g>${dots}</svg>`;
+function drawPyvisTopology(target, html) {
+  if (!html) { target.innerHTML = '<div class="empty-state">No canonical topology is available.</div>'; return; }
+  const frame = document.createElement('iframe');
+  frame.title = 'Interactive canonical ASCEND topology';
+  frame.setAttribute('sandbox', 'allow-scripts');
+  frame.srcdoc = html;
+  target.replaceChildren(frame);
 }
 
 function updateControlStates() {
@@ -54,6 +51,7 @@ function updateControlStates() {
   start.textContent = starting ? 'Starting CORE…' : 'Start CORE';
   start.setAttribute('aria-busy', String(starting));
   byId('core-stop').disabled = !running;
+  byId('core-gui').disabled = !(running && !runtimeControlPending);
   const checkingWatcher = watcherReadiness && (watcherReadiness.remaining > 0 || runtimeRefreshPending);
   byId('watcher-start').disabled = !(running && !checkingWatcher && !['IDLE', 'BUSY'].includes(watcher?.state));
   const sameRun = latestBattle?.active_run?.run?.run_id === latestActive?.run?.run_id;
@@ -65,6 +63,7 @@ function updateControlStates() {
   byId('campaign-isolate').disabled = !coreReady;
   byId('campaign-restore').disabled = !coreReady;
   byId('defense-target').disabled = !coreReady;
+  byId('topology-selector').disabled = !runtimeFresh || running || runtimeControlPending || topologyControlPending;
 }
 function renderRuntimeState(system) {
   const active = system.active_run;
@@ -127,11 +126,20 @@ async function refreshRuntimeState() {
   }
 }
 async function loadStatus() { return refreshRuntimeState(); }
-async function loadOverview() { const data = await api('/api/topology'); drawTopology(byId('overview-topology'), data.visual); byId('overview-topology-summary').textContent = `${data.visual.nodes.length} nodes · ${data.visual.edges.length} edges`; }
+async function loadOverview() { const data = await api('/api/topology'); drawPyvisTopology(byId('overview-topology'), data.pyvis_html); byId('overview-topology-summary').textContent = `${data.visual.nodes.length} nodes · ${data.visual.edges.length} edges`; }
 async function loadNetwork() {
   const [config, topology] = await Promise.all([api('/api/network-configuration'), api('/api/topology')]);
+  renderNetworkConfiguration(config, topology);
+}
+function renderNetworkConfiguration(config, topology) {
   byId('network-nodes').textContent = config.node_count; byId('network-edges').textContent = config.edge_count; byId('network-case').textContent = text(config.case_name || config.topology_version); byId('network-types').textContent = Object.keys(config.node_types).length;
-  setDetails(byId('network-metadata'), [['Topology version', config.topology_version], ['Case', config.case_name], ['Node types', Object.entries(config.node_types).map(([k, v]) => `${k}: ${v}`).join(', ')]]); drawTopology(byId('network-topology'), topology.visual);
+  setDetails(byId('network-metadata'), [['Topology version', config.topology_version], ['Case', config.case_name], ['Node types', Object.entries(config.node_types).map(([k, v]) => `${k}: ${v}`).join(', ')]]);
+  const selector = byId('topology-selector'), current = config.selected_case || config.case_name;
+  selector.innerHTML = (config.available_topologies || []).map(item => `<option value="${escapeHtml(item.case_name)}">${escapeHtml(item.name)}</option>`).join('');
+  selector.value = current;
+  selector.disabled = !runtimeFresh || latestSystem?.core?.state === 'RUNTIME' || runtimeControlPending || topologyControlPending;
+  byId('topology-selection-status').textContent = `Selected backend topology: ${current}. Changes are available before CORE startup.`;
+  drawPyvisTopology(byId('network-topology'), topology.pyvis_html);
 }
 async function loadRuntime() { return refreshRuntimeState(); }
 function renderTable(target, rows, columns, emptyMessage) {
@@ -147,7 +155,7 @@ async function loadBattle() {
   latestBattle = data; latestCampaignStatus = campaignStatus;
   byId('battle-run').textContent = activeRunLabel(data.active_run); byId('battle-network-count').textContent = data.network_event_count; byId('battle-security-count').textContent = data.security_event_count; byId('battle-limit').textContent = data.limit;
   const campaign = data.campaign || {}, campaignRows = campaign && Object.keys(campaign).length ? Object.entries(campaign).filter(([key]) => ['state', 'campaign_id', 'generation_id', 'correlation_id', 'requested_at', 'current_step'].includes(key)).map(([key, value]) => [key.replaceAll('_', ' '), value]) : [['Campaign metadata', 'NONE']];
-  setDetails(byId('battle-campaign-meta'), campaignRows); drawTopology(byId('battle-topology'), data.visual);
+  setDetails(byId('battle-campaign-meta'), campaignRows); drawPyvisTopology(byId('battle-topology'), data.pyvis_html);
   renderTable(byId('network-events-body'), data.network_events, [
     event => event.timestamp, event => event.source_node, event => event.target_node,
     event => networkField(event, 'protocol'), event => networkField(event, 'source_port', 'src_port'), event => networkField(event, 'destination_port', 'dest_port', 'dst_port'),
@@ -205,7 +213,7 @@ async function runControl(path, payload, target) {
   let message;
   try {
     const data = await postApi(path, payload);
-    message = data.state || data.watcher || 'REQUESTED';
+    message = path === '/api/runtime/gui' ? `CORE GUI opened for session ${data.session_id} (PID ${data.gui_pid}).` : data.state || data.watcher || 'REQUESTED';
     if (watcherStart) {
       message = 'Watcher startup accepted; checking runtime diagnostics…';
       if (data.session_id != null && String(data.session_id) === watcherIdentity.sessionId && watcherIdentity.generation) {
@@ -228,10 +236,26 @@ async function runControl(path, payload, target) {
     byId(target).textContent = runtimeControl ? (runtimeActionMessage || byId(target).textContent) : message;
   }
 }
+async function selectTopology() {
+  if (topologyControlPending) return;
+  topologyControlPending = true; updateControlStates();
+  const notice = byId('topology-selection-status'); notice.textContent = 'Loading selected topology from the canonical backend…';
+  try {
+    const selected = await postApi('/api/topology/select', {case_name: byId('topology-selector').value});
+    renderNetworkConfiguration(selected.configuration, selected);
+    notice.textContent = `Selected ${selected.topology.case_name}; showing ${selected.visual.nodes.length} canonical nodes and ${selected.visual.edges.length} connections.`;
+    await loadOverview();
+  } catch (error) {
+    notice.textContent = `Topology selection failed: ${error.message}`;
+    try { await loadNetwork(); } catch (_) { /* retain the explicit selection error */ }
+  } finally { topologyControlPending = false; updateControlStates(); }
+}
 function bindControls() {
   byId('core-start').addEventListener('click', () => runControl('/api/runtime/start', {}, 'runtime-action-status'));
   byId('core-stop').addEventListener('click', () => runControl('/api/runtime/stop', {}, 'runtime-action-status'));
   byId('watcher-start').addEventListener('click', () => runControl('/api/runtime/watcher/start', {}, 'runtime-action-status'));
+  byId('core-gui').addEventListener('click', () => runControl('/api/runtime/gui', {}, 'runtime-action-status'));
+  byId('topology-selector').addEventListener('change', selectTopology);
   byId('campaign-start').addEventListener('click', () => runControl('/api/campaign/start', {}, 'campaign-status-detail'));
   byId('campaign-next').addEventListener('click', () => runControl('/api/campaign/next', {}, 'campaign-status-detail'));
   byId('campaign-run').addEventListener('click', () => runControl('/api/campaign/run', {}, 'campaign-status-detail'));
