@@ -1,6 +1,7 @@
 """Thin, read-oriented adapter for ASCEND-PG's dedicated GUI."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -86,18 +87,28 @@ def get_topology() -> dict[str, Any]:
     return _topology_view(canonical_topology(), [])
 
 
-def _topology_view(topology_model, security_events: list[dict[str, Any]]) -> dict[str, Any]:
+def _topology_view(
+    topology_model, security_events: list[dict[str, Any]], known_visual_signature: str | None = None,
+) -> dict[str, Any]:
     topology = topology_model.canonical_snapshot()
     nodes, edges, compromised, detected, attack_paths = run_store.visual_data(topology, security_events)
-    from testbed.visualize_topology import render_topology
-
-    return {
-        "topology": topology,
-        "visual": {"nodes": nodes, "edges": edges},
-        "pyvis_html": render_topology(
+    visual = {"nodes": nodes, "edges": edges}
+    visual_signature = hashlib.sha256(json.dumps(
+        {"visual": visual, "compromised": sorted(compromised), "detected": sorted(detected), "attack_paths": attack_paths},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    pyvis_html = None
+    if visual_signature != known_visual_signature:
+        from testbed.visualize_topology import render_topology
+        pyvis_html = render_topology(
             nodes, edges, compromised_ids=compromised, detected_ids=detected,
             attack_paths=attack_paths, show_tooltips=True,
-        ),
+        )
+    return {
+        "topology": topology,
+        "visual": visual,
+        "visual_signature": visual_signature,
+        "pyvis_html": pyvis_html,
     }
 
 
@@ -126,9 +137,8 @@ def select_topology(case_name: str) -> dict[str, Any]:
     case = str(case_name).strip().lower()
     if case not in options:
         raise ValueError("Choose an available canonical topology preset.")
-    status = core_request("status")
-    if status.get("state") == "RUNTIME":
-        raise ValueError("Topology selection is available only before an owned CORE session is running.")
+    if (DATA / "core-runtime" / "session.json").exists():
+        raise ValueError("Topology selection is available only when no owned CORE session marker exists.")
     selected = load_case(case)
     return {"configuration": get_network_configuration(), **_topology_view(selected, [])}
 
@@ -310,19 +320,19 @@ def get_report_summary() -> dict[str, Any]:
             "normalized_records": len(normalized), "normalized_events": normalized}
 
 
-def get_live_battle_snapshot(limit: int = 100) -> dict[str, Any]:
+def get_live_battle_snapshot(limit: int = 100, visual_signature: str | None = None) -> dict[str, Any]:
     """Read independent bounded canonical evidence streams for Live Battle."""
     background_network = get_background_network_events(min(max(limit, 1), MAX_BACKGROUND_LIMIT))
     active = get_active_run()
     if not active or active.get("state") != "ACTIVE":
-        topology = get_topology()
+        topology = _topology_view(canonical_topology(), [], visual_signature)
         return {"active_run": active, "network_events": [], "security_events": [], "background_network": background_network,
                 "network_event_count": 0, "security_event_count": 0, "campaign": None,
                 **topology, "limit": limit}
     run = active["run"]
     network_events = get_recent_network_events(run["scenario_id"], run["run_id"], limit)
     security_events = get_recent_security_events(run["scenario_id"], run["run_id"], limit)
-    topology_view = _topology_view(canonical_topology(), security_events)
+    topology_view = _topology_view(canonical_topology(), security_events, visual_signature)
     return {"active_run": active, "limit": limit, "network_events": network_events, "background_network": background_network,
             "security_events": security_events, "network_event_count": len(network_events),
             "security_event_count": len(security_events), "campaign": run.get("campaign_request"), **topology_view}

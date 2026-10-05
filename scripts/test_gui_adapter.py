@@ -55,14 +55,16 @@ def main() -> None:
             assert adapter.get_recent_security_events(run["scenario_id"], run["run_id"], 100) == []
             configuration = adapter.get_network_configuration(); assert configuration["node_count"] == 2 and configuration["edge_count"] == 1
             assert {item["case_name"] for item in configuration["available_topologies"]} == {"case14", "case30"}
-            adapter.core_request = lambda action: {"state": "STOPPED"}
             adapter.load_case = lambda case: selected_model.update(topology=FakeTopology(case, 3 if case == "case30" else 2)) or selected_model["topology"]
+            runtime_marker = adapter.DATA / "core-runtime" / "session.json"
+            saved_marker = runtime_marker.read_text(encoding="utf-8"); runtime_marker.unlink()
+            adapter.core_request = lambda action: (_ for _ in ()).throw(AssertionError("topology selection must not query or operate CORE"))
             selected = adapter.select_topology("case30")
             assert selected["topology"]["case_name"] == "case30" and len(selected["visual"]["nodes"]) == 3
             assert "plc2" in selected["pyvis_html"] and selected["configuration"]["selected_case"] == "case30"
-            adapter.core_request = lambda action: {"state": "RUNTIME"}
+            runtime_marker.write_text(saved_marker, encoding="utf-8")
             try: adapter.select_topology("case14")
-            except ValueError as exc: assert "before an owned CORE session" in str(exc)
+            except ValueError as exc: assert "session marker exists" in str(exc)
             else: raise AssertionError("topology must not change during an owned CORE runtime")
             adapter.core_request = lambda _: {"state": "RUNTIME", "session_id": 3, "watcher": "IDLE"}
             assert {node["state"] for node in adapter.get_topology()["visual"]["nodes"]} == {"normal"}
@@ -111,6 +113,9 @@ def main() -> None:
             assert len(snapshot["network_events"]) == 100 and len(snapshot["security_events"]) == 100
             assert snapshot["network_events"][-1]["sequence"] == 139
             assert len(snapshot["background_network"]) == 2
+            assert snapshot["pyvis_html"] and snapshot["visual_signature"]
+            unchanged_visual = adapter.get_live_battle_snapshot(100, snapshot["visual_signature"])
+            assert unchanged_visual["pyvis_html"] is None, "unchanged PyVis state should not be resent on each live refresh"
             assert all(row.get("category") != "network" for row in snapshot["background_network"])
             assert {node["state"] for node in snapshot["visual"]["nodes"]} >= {"detected"}
             summary = adapter.get_report_summary()

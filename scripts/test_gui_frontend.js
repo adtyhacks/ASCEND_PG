@@ -151,7 +151,9 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
     if (url === '/api/network-configuration') return response({node_count: 2, edge_count: 0, case_name: 'case14', selected_case: 'case14',
       available_topologies: [{case_name: 'case14', name: 'IEEE 14 Bus'}, {case_name: 'case30', name: 'IEEE 30 Bus'}],
       topology_version: 'topology-fixture', node_types: {plc: 1, hub: 1}});
-    if (url === '/api/live-battle?limit=100') return response({...topology, active_run: battleActive,
+    if (url.startsWith('/api/live-battle?limit=100')) return response({...topology,
+      pyvis_html: url.includes('visual_signature=fixture-visual') ? null : topology.pyvis_html,
+      visual_signature: 'fixture-visual', active_run: battleActive,
       network_events: [], security_events: [], background_network: [], network_event_count: 0, security_event_count: 0, limit: 100, campaign: null});
     if (url === '/api/campaign/status') return response({state: campaignState, watcher: defaultDiagnostics.watcher.state, current_step: 0});
     throw new Error(`Unexpected mocked GET: ${url}`);
@@ -665,6 +667,17 @@ async function testTopologySelectionUsesCanonicalApiAndPyvis() {
   assert.match(env.element('topology-selection-status').textContent, /Selected case30/);
 }
 
+async function testTopologySelectionFailureIsVisible() {
+  const env = await harness(snapshot());
+  await env.navigate('#network');
+  env.element('topology-selector').value = 'case30';
+  env.enqueue('/api/topology/select', {ok: false, error: {code: 'topology_conflict', message: 'CORE is running'}}, {method: 'POST', status: 409});
+  await env.element('topology-selector').dispatch('change');
+  assert.match(env.element('topology-selection-status').textContent, /Topology selection failed: CORE is running/);
+  assert.equal(env.element('topology-selector').value, 'case14', 'failure restores the authoritative selected preset');
+  assert.equal(countRequests(env, 'POST', '/api/topology/select'), 1);
+}
+
 async function testOpenCoreGuiUsesExistingRuntimeHelperRoute() {
   const env = await harness(snapshot('RUNTIME', 'IDLE', 'gui-session'));
   env.location.hash = '#runtime';
@@ -674,6 +687,24 @@ async function testOpenCoreGuiUsesExistingRuntimeHelperRoute() {
   assert.equal(countRequests(env, 'POST', '/api/runtime/gui'), 1);
   assert.match(env.element('runtime-action-status').textContent, /CORE GUI opened for session 7 \(PID 321\)/);
   assert.equal(countRequests(env, 'GET', diagnosticsPath) >= 2, true, 'successful GUI launch refreshes authoritative runtime diagnostics');
+  const failed = await harness(snapshot('RUNTIME', 'IDLE', 'gui-failure'));
+  failed.location.hash = '#runtime'; await failed.refresh();
+  failed.enqueue('/api/runtime/gui', {error: {code: 'gui_unavailable', message: 'WSLg is unavailable'}}, {method: 'POST', status: 503});
+  await failed.click('core-gui');
+  assert.match(failed.element('runtime-action-status').textContent, /WSLg is unavailable/, 'runtime helper failures remain visible');
+  assert.equal(countRequests(failed, 'POST', '/api/runtime/gui'), 1);
+}
+
+async function testBattleOnlyRefreshesPyvisWhenStateChanges() {
+  const env = await harness(snapshot('RUNTIME', 'IDLE', 'pyvis-live'));
+  await env.navigate('#battle');
+  const initialFrame = env.element('battle-topology').children[0];
+  assert.match(initialFrame.srcdoc, /PyVis case14/);
+  await env.call('loadBattle');
+  assert.equal(env.element('battle-topology').children[0], initialFrame, 'unchanged visual state must retain its interactive PyVis frame');
+  const battleReads = env.requests.filter(request => request.url.startsWith('/api/live-battle?limit=100'));
+  assert.ok(battleReads.some(request => request.url.includes('visual_signature=fixture-visual')),
+    'live refresh asks the backend to omit unchanged PyVis HTML');
 }
 
 const tests = [
@@ -691,7 +722,9 @@ const tests = [
   ['L: watcher ownership identity and bounded GET-only observation', testWatcherIdentityAndBoundedObservation]
   ,['M: background traffic remains a separate refreshed table', testBackgroundTrafficIsSeparate]
   ,['N: canonical topology selection refreshes a real PyVis view', testTopologySelectionUsesCanonicalApiAndPyvis]
+  ,['N2: topology selection errors remain visible and restore selection', testTopologySelectionFailureIsVisible]
   ,['O: Open CORE GUI uses the existing runtime helper route', testOpenCoreGuiUsesExistingRuntimeHelperRoute]
+  ,['P: Live Battle reuses unchanged PyVis state', testBattleOnlyRefreshesPyvisWhenStateChanges]
 ];
 
 (async () => {

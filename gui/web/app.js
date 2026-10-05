@@ -9,7 +9,7 @@ let runtimeActionMessage = '', pendingRuntimePath = null;
 let topologyControlPending = false;
 const WATCHER_READINESS_REFRESH_LIMIT = 30;
 let watcherReadiness = null;
-let latestBattle = null, latestCampaignStatus = null, battleRefreshSequence = 0, pageRefreshPending = false;
+let latestBattle = null, latestCampaignStatus = null, battleVisualSignature = null, battleRefreshSequence = 0, pageRefreshPending = false;
 let routeRefreshSequence = 0;
 
 async function readApiResponse(response) {
@@ -63,7 +63,7 @@ function updateControlStates() {
   byId('campaign-isolate').disabled = !coreReady;
   byId('campaign-restore').disabled = !coreReady;
   byId('defense-target').disabled = !coreReady;
-  byId('topology-selector').disabled = !runtimeFresh || running || runtimeControlPending || topologyControlPending;
+  byId('topology-selector').disabled = !runtimeFresh || running || latestSystem?.runtime_marker || runtimeControlPending || topologyControlPending;
 }
 function renderRuntimeState(system) {
   const active = system.active_run;
@@ -137,7 +137,7 @@ function renderNetworkConfiguration(config, topology) {
   const selector = byId('topology-selector'), current = config.selected_case || config.case_name;
   selector.innerHTML = (config.available_topologies || []).map(item => `<option value="${escapeHtml(item.case_name)}">${escapeHtml(item.name)}</option>`).join('');
   selector.value = current;
-  selector.disabled = !runtimeFresh || latestSystem?.core?.state === 'RUNTIME' || runtimeControlPending || topologyControlPending;
+  selector.disabled = !runtimeFresh || latestSystem?.core?.state === 'RUNTIME' || latestSystem?.runtime_marker || runtimeControlPending || topologyControlPending;
   byId('topology-selection-status').textContent = `Selected backend topology: ${current}. Changes are available before CORE startup.`;
   drawPyvisTopology(byId('network-topology'), topology.pyvis_html);
 }
@@ -149,13 +149,16 @@ function renderTable(target, rows, columns, emptyMessage) {
 function networkField(event, ...names) { return names.find(name => event[name] !== null && event[name] !== undefined && event[name] !== '') ? event[names.find(name => event[name] !== null && event[name] !== undefined && event[name] !== '')] : null; }
 async function loadBattle() {
   const sequence = ++battleRefreshSequence, runtimeSequence = runtimeRefreshSequence;
-  const data = await api('/api/live-battle?limit=100');
+  const visualQuery = battleVisualSignature ? `&visual_signature=${encodeURIComponent(battleVisualSignature)}` : '';
+  const data = await api(`/api/live-battle?limit=100${visualQuery}`);
   const campaignStatus = await api('/api/campaign/status');
   if (sequence !== battleRefreshSequence || runtimeSequence !== runtimeRefreshSequence) return;
   latestBattle = data; latestCampaignStatus = campaignStatus;
   byId('battle-run').textContent = activeRunLabel(data.active_run); byId('battle-network-count').textContent = data.network_event_count; byId('battle-security-count').textContent = data.security_event_count; byId('battle-limit').textContent = data.limit;
   const campaign = data.campaign || {}, campaignRows = campaign && Object.keys(campaign).length ? Object.entries(campaign).filter(([key]) => ['state', 'campaign_id', 'generation_id', 'correlation_id', 'requested_at', 'current_step'].includes(key)).map(([key, value]) => [key.replaceAll('_', ' '), value]) : [['Campaign metadata', 'NONE']];
-  setDetails(byId('battle-campaign-meta'), campaignRows); drawPyvisTopology(byId('battle-topology'), data.pyvis_html);
+  setDetails(byId('battle-campaign-meta'), campaignRows);
+  if (data.pyvis_html) drawPyvisTopology(byId('battle-topology'), data.pyvis_html);
+  battleVisualSignature = data.visual_signature || battleVisualSignature;
   renderTable(byId('network-events-body'), data.network_events, [
     event => event.timestamp, event => event.source_node, event => event.target_node,
     event => networkField(event, 'protocol'), event => networkField(event, 'source_port', 'src_port'), event => networkField(event, 'destination_port', 'dest_port', 'dst_port'),
@@ -246,8 +249,9 @@ async function selectTopology() {
     notice.textContent = `Selected ${selected.topology.case_name}; showing ${selected.visual.nodes.length} canonical nodes and ${selected.visual.edges.length} connections.`;
     await loadOverview();
   } catch (error) {
-    notice.textContent = `Topology selection failed: ${error.message}`;
-    try { await loadNetwork(); } catch (_) { /* retain the explicit selection error */ }
+    const message = `Topology selection failed: ${error.message}`;
+    try { await loadNetwork(); } catch (_) { /* keep the last rendered topology */ }
+    notice.textContent = message;
   } finally { topologyControlPending = false; updateControlStates(); }
 }
 function bindControls() {

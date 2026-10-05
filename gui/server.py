@@ -30,15 +30,14 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload = adapter.get_topology()
             elif parsed.path == "/api/network-configuration":
                 payload = adapter.get_network_configuration()
-            elif parsed.path == "/api/topologies":
-                payload = {"available_topologies": adapter.get_available_topologies(),
-                           "selected_case": adapter.get_network_configuration()["selected_case"]}
             elif parsed.path == "/api/runtime-diagnostics":
                 payload = adapter.get_runtime_diagnostics()
             elif parsed.path == "/api/report-summary":
                 payload = adapter.get_report_summary()
             elif parsed.path == "/api/live-battle":
-                payload = adapter.get_live_battle_snapshot(int(query.get("limit", ["100"])[0]))
+                payload = adapter.get_live_battle_snapshot(
+                    int(query.get("limit", ["100"])[0]), query.get("visual_signature", [None])[0]
+                )
             elif parsed.path == "/api/campaign/status":
                 payload = CAMPAIGNS.status()
             else:
