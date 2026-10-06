@@ -10,6 +10,8 @@ import csv
 import os
 import math
 import re
+import json
+import hashlib
 import threading
 from collections import defaultdict
 from pathlib import Path
@@ -32,6 +34,31 @@ PLC_TEMPLATES = [
 # Serialize canonical selection with GUI CORE generation, not CORE ownership.
 TOPOLOGY_LOCK = threading.RLock()
 SELECTION_PATH = Path(__file__).resolve().parents[1] / "data" / "topology_selection.json"
+
+def run_power_flow(net):
+    """Run pandapower with its current pandas-3 writable-result compatibility gap."""
+    import pandas as pd
+    import pandapower as pp
+    if int(pd.__version__.split(".", 1)[0]) < 3:
+        pp.runpp(net)
+        return
+    series_values = pd.Series.values
+    frame_values = pd.DataFrame.values
+    def writable(descriptor, owner):
+        def getter(value):
+            result = descriptor.__get__(value, owner)
+            if not result.flags.writeable:
+                result.setflags(write=True)
+            return result
+        return property(getter)
+    with TOPOLOGY_LOCK:
+        try:
+            pd.Series.values = writable(series_values, pd.Series)
+            pd.DataFrame.values = writable(frame_values, pd.DataFrame)
+            pp.runpp(net)
+        finally:
+            pd.Series.values = series_values
+            pd.DataFrame.values = frame_values
 
 class Topology:
     """
@@ -57,10 +84,20 @@ class Topology:
             # Build default IEEE-14
             default_topo = Topology.from_pandapower("case14")
             nodes = default_topo.nodes
-            edges = default_topo.edges
+            edges = default_topo.edge_models
 
         self.nodes = nodes
-        self.edges = edges
+        self.edge_models = []
+        self.edges = []
+        for edge in edges:
+            if isinstance(edge, dict):
+                model = dict(edge)
+                left, right = int(model["from"]), int(model["to"])
+            else:
+                left, right = int(edge[0]), int(edge[1])
+                model = {"from": left, "to": right}
+            self.edges.append((left, right))
+            self.edge_models.append(model)
         self.num_buses = len(nodes)
         self.case_name = case_name
 
@@ -146,7 +183,7 @@ class Topology:
             "case_name": self.case_name,
             "num_buses": self.num_buses,
             "nodes": self.nodes,
-            "edges": [{"from": e[0], "to": e[1]} for e in self.edges],
+            "edges": [dict(e) for e in self.edge_models],
             "bus_types": self.bus_types,
             "voltages": self.voltages,
             "bus_degrees": self.bus_degrees,
@@ -185,8 +222,9 @@ class Topology:
             links.append({"from": "hub", "to": device, "type": "comm", "protocol": "TCP/IP", "core_link": True})
         for left, right in self.edges:
             links.append({"from": f"plc{left + 1}", "to": f"plc{right + 1}", "type": "power_line", "protocol": "electrical", "core_link": False})
+        version_payload = json.dumps({"nodes": self.nodes, "edges": self.edge_models}, sort_keys=True, separators=(",", ":"))
         return {"schema": "ascend.topology/v1", "case_name": self.case_name,
-                "topology_version": f"{self.case_name}:{self.num_buses}",
+                "topology_version": f"{self.case_name}:{self.num_buses}:{hashlib.sha256(version_payload.encode()).hexdigest()[:12]}",
                 "nodes": nodes, "links": links}
 
     @classmethod
@@ -194,9 +232,8 @@ class Topology:
         """Load topology from a serialized dict."""
         nodes = data.get("nodes", [])
         edges_raw = data.get("edges", [])
-        edges = [(e["from"], e["to"]) if isinstance(e, dict) else tuple(e) for e in edges_raw]
         case_name = data.get("case_name", "custom")
-        return cls(nodes=nodes, edges=edges, case_name=case_name)
+        return cls(nodes=nodes, edges=edges_raw, case_name=case_name)
 
     @classmethod
     def from_custom_dict(cls, data: dict) -> "Topology":
@@ -211,6 +248,7 @@ class Topology:
         if not isinstance(source, list) or not 1 <= len(source) <= MAX_PLC_COUNT:
             raise ValueError(f"Custom topology needs 1–{MAX_PLC_COUNT} PLC buses.")
         nodes = []
+        slack_count = 0
         for bus_id, item in enumerate(source):
             if not isinstance(item, dict) or type(item.get("bus_id")) is not int or item["bus_id"] != bus_id:
                 raise ValueError("Nodes must have ordered, consecutive bus_id values starting at 0.")
@@ -221,6 +259,7 @@ class Topology:
             kind = node.get("type", "pq")
             if not isinstance(kind, str) or kind not in {"slack", "pv", "pq"}:
                 raise ValueError("Bus type must be slack, pv or pq.")
+            slack_count += kind == "slack"
             ip = get_plc_ip(bus_id)
             if node.get("ip", ip) != ip:
                 raise ValueError(f"Bus {bus_id} must use canonical address {ip}.")
@@ -229,16 +268,20 @@ class Topology:
                 raise ValueError("Unknown PLC template.")
             node.update(name=name, type=kind, ip=ip, plc_type=plc_type,
                         bus_role=node.get("bus_role", "generator" if kind in {"slack", "pv"} else "load"))
-            for key, default in (("voltage", 1.0), ("pg", 0.0), ("qg", 0.0), ("pl", 0.0), ("ql", 0.0)):
+            for key, default in (("voltage", 1.0), ("vn_kv", 110.0), ("pg", 0.0), ("qg", 0.0), ("pl", 0.0), ("ql", 0.0)):
                 value = node.get(key, default)
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (key == "voltage" and value <= 0):
                     raise ValueError(f"{key} must be a finite number; voltage must be positive.")
                 node[key] = float(value)
             nodes.append(node)
+        if slack_count != 1:
+            raise ValueError("Custom electrical topology must contain exactly one slack bus.")
         source_edges = data.get("edges", [])
         if not isinstance(source_edges, list):
             raise ValueError("edges must be an array of bus pairs.")
         edges, seen = [], set()
+        line_defaults = {"length_km": 1.0, "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.1,
+                         "c_nf_per_km": 0.0, "max_i_ka": 0.4}
         for edge in source_edges:
             pair = [edge.get("from"), edge.get("to")] if isinstance(edge, dict) else edge
             if not isinstance(pair, (list, tuple)) or len(pair) != 2 or any(type(i) is not int or not 0 <= i < len(nodes) for i in pair):
@@ -247,8 +290,49 @@ class Topology:
             if pair[0] == pair[1] or key in seen:
                 raise ValueError("Self-links and duplicate electrical links are not allowed.")
             seen.add(key)
-            edges.append(tuple(pair))
+            line = {"from": pair[0], "to": pair[1]}
+            for field, default in line_defaults.items():
+                value = edge.get(field, default) if isinstance(edge, dict) else default
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 and field != "c_nf_per_km" or value < 0:
+                    raise ValueError(f"{field} must be a finite non-negative number (and positive except capacitance).")
+                line[field] = float(value)
+            edges.append(line)
+        if len(nodes) > 1:
+            reached, pending = {0}, [0]
+            adjacency = defaultdict(set)
+            for edge in edges:
+                adjacency[edge["from"]].add(edge["to"]); adjacency[edge["to"]].add(edge["from"])
+            while pending:
+                current = pending.pop()
+                for neighbor in adjacency[current] - reached:
+                    reached.add(neighbor); pending.append(neighbor)
+            if len(reached) != len(nodes):
+                raise ValueError("Every bus must be connected to the electrical network.")
         return cls(nodes=nodes, edges=edges, case_name=case)
+
+    def to_pandapower(self):
+        """Build the electrical simulation from this canonical topology."""
+        import pandapower as pp
+        net = pp.create_empty_network()
+        buses = {}
+        for node in self.nodes:
+            bid = int(node["bus_id"])
+            buses[bid] = pp.create_bus(net, vn_kv=float(node.get("vn_kv", 110.0)), name=node.get("name", f"Bus {bid + 1}"))
+            kind = str(node.get("type", "pq")).lower()
+            if kind == "slack":
+                pp.create_ext_grid(net, buses[bid], vm_pu=float(node.get("voltage", 1.0)), name=f"Slack {bid + 1}")
+            elif kind == "pv":
+                pp.create_gen(net, buses[bid], p_mw=float(node.get("pg", 0.0)), vm_pu=float(node.get("voltage", 1.0)), name=f"Generator {bid + 1}")
+            load_p, load_q = float(node.get("pl", 0.0)), float(node.get("ql", 0.0))
+            if load_p or load_q:
+                pp.create_load(net, buses[bid], p_mw=load_p, q_mvar=load_q, name=f"Load {bid + 1}")
+        for index, line in enumerate(self.edge_models):
+            pp.create_line_from_parameters(net, buses[int(line["from"])], buses[int(line["to"])],
+                length_km=float(line.get("length_km", 1.0)), r_ohm_per_km=float(line.get("r_ohm_per_km", 0.1)),
+                x_ohm_per_km=float(line.get("x_ohm_per_km", 0.1)), c_nf_per_km=float(line.get("c_nf_per_km", 0.0)),
+                max_i_ka=float(line.get("max_i_ka", 0.4)), name=f"Line {index + 1}")
+        run_power_flow(net)
+        return net
 
     @classmethod
     def from_pandapower(cls, case: Union[str, int] = "case14") -> "Topology":
@@ -265,7 +349,7 @@ class Topology:
             canonical_name = "case14"
 
         try:
-            pp.runpp(net)
+            run_power_flow(net)
             solved = True
         except Exception:
             solved = False

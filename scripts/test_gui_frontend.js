@@ -34,6 +34,31 @@ function snapshot(state = 'STOPPED', watcher = 'STOPPED', generation = null) {
   };
 }
 
+const defaultAttackCatalogue = {
+  total_attacks: 18,
+  severity_distribution: {Critical: 0, High: 11, Medium: 4, Low: 3, Informational: 0},
+  attacks: [
+    {index: 0, technique_id: 'T0886', name: 'Remote Services', title: 'Remote Services', tactic: 'Initial Access', stage: 0, default_step: 'remote_services', description: 'Unauthorized TCP connect to open Modbus port 502', script: 'attacks/remote_services.py', detect_sids: [9000026], severity: 'Medium', severity_policy: 'attack-capability-v1'},
+    {index: 1, technique_id: 'T0846', name: 'Remote System Discovery', title: 'Remote System Discovery', tactic: 'Discovery', stage: 0, default_step: 'recon_nmap_devid', description: 'Nmap host sweep and Modbus port probe across ICS subnet', script: 'attacks/recon_step.py', detect_sids: [9000004], severity: 'Low', severity_policy: 'attack-capability-v1'},
+    {index: 2, technique_id: 'T0888', name: 'Remote System Information Discovery', title: 'Remote System Information Discovery', tactic: 'Discovery', stage: 0, default_step: 'recon_nmap_devid', description: 'Modbus Read Device Identification (Function Code 0x2B/0x0E)', script: 'attacks/recon_step.py', detect_sids: [9000004], severity: 'Low', severity_policy: 'attack-capability-v1'},
+    {index: 3, technique_id: 'T0840', name: 'Network Connection Enumeration', title: 'Network Connection Enumeration', tactic: 'Discovery', stage: 0, default_step: 'recon_fc_scan', description: 'Function code scanning (FC 1-127) to fingerprint supported PLC capabilities', script: 'attacks/fc_scan.py', detect_sids: [9000005, 9000006], severity: 'Low', severity_policy: 'attack-capability-v1'},
+    {index: 4, technique_id: 'T0830', name: 'Adversary-in-the-Middle', title: 'Adversary-in-the-Middle', tactic: 'Lateral Movement', stage: 1, default_step: 'mitm_proxy', description: 'Transparent TCP proxy modifying Modbus FC03 responses in transit', script: 'attacks/mitm_proxy.py', detect_sids: [9000022], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 5, technique_id: 'T0801', name: 'Monitor Process State', title: 'Monitor Process State', tactic: 'Collection', stage: 1, default_step: 'monitor_process_state', description: 'Scripted repeated polling of power grid telemetry registers', script: 'attacks/monitor_process_state.py', detect_sids: [9000023], severity: 'Medium', severity_policy: 'attack-capability-v1'},
+    {index: 6, technique_id: 'T0802', name: 'Automated Collection', title: 'Automated Collection', tactic: 'Collection', stage: 1, default_step: 'automated_collection', description: 'Full register-range sweep across all emulated PLCs', script: 'attacks/automated_collection.py', detect_sids: [9000027], severity: 'Medium', severity_policy: 'attack-capability-v1'},
+    {index: 7, technique_id: 'T0869', name: 'Standard Application Layer Protocol', title: 'Standard Application Layer Protocol', tactic: 'Command and Control', stage: 1, default_step: 'standard_protocol_c2', description: 'Attacker traffic disguised as legitimate Modbus TCP polling', script: 'attacks/standard_protocol_c2.py', detect_sids: [9000028], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 8, technique_id: 'T0814', name: 'Denial of Service', title: 'Denial of Service', tactic: 'Inhibit Response Function', stage: 2, default_step: 'dos_loud', description: 'Modbus request flood and TCP connection pool exhaustion on port 502', script: 'attacks/dos_attack.py', detect_sids: [9000002, 9000023, 9000010], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 9, technique_id: 'T0878', name: 'Alarm Suppression', title: 'Alarm Suppression', tactic: 'Inhibit Response Function', stage: 2, default_step: 'alarm_suppression', description: 'Modbus write to alarm-setpoint and trip threshold registers', script: 'attacks/alarm_suppression.py', detect_sids: [9000029], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 10, technique_id: 'T0816', name: 'Device Restart/Shutdown', title: 'Device Restart/Shutdown', tactic: 'Inhibit Response Function', stage: 2, default_step: 'device_restart', description: 'Modbus write to simulated restart/reset coil', script: 'attacks/device_restart.py', detect_sids: [9000007], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 11, technique_id: 'T0881', name: 'Service Stop', title: 'Service Stop', tactic: 'Inhibit Response Function', stage: 2, default_step: 'service_stop', description: 'Malformed Modbus frame to crash or hang PLC server process', script: 'attacks/service_stop.py', detect_sids: [9000030], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 12, technique_id: 'T0836', name: 'Modify Parameter (FDI)', title: 'Modify Parameter (FDI)', tactic: 'Impair Process Control', stage: 2, default_step: 'fdi_attack', description: 'False Data Injection modifying generator voltage and measurement registers', script: 'attacks/fdi_attack.py', detect_sids: [9000001], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 13, technique_id: 'T0835', name: 'Manipulate I/O Image', title: 'Manipulate I/O Image', tactic: 'Impair Process Control', stage: 2, default_step: 'manipulate_io_image', description: 'Direct coil/holding-register writes overriding safety logic', script: 'attacks/manipulate_io_image.py', detect_sids: [9000007], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 14, technique_id: 'T0806', name: 'Brute Force I/O', title: 'Brute Force I/O', tactic: 'Impair Process Control', stage: 2, default_step: 'brute_force_io', description: 'Rapid sequential writes across full I/O address range', script: 'attacks/brute_force_io.py', detect_sids: [9000023], severity: 'Medium', severity_policy: 'attack-capability-v1'},
+    {index: 15, technique_id: 'T0855', name: 'Unauthorized Command Message', title: 'Unauthorized Command Message', tactic: 'Impair Process Control', stage: 2, default_step: 'cmd_inject_coil', description: 'Command injection via actuator/coil writes (FC05/FC15), setpoint writes (FC06/FC16), or diagnostic functions', script: 'attacks/cmd_inject_coil.py', detect_sids: [9000007, 9000001, 9000006, 9000008, 9000009], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 16, technique_id: 'T0832', name: 'Manipulation of View (Replay)', title: 'Manipulation of View (Replay)', tactic: 'Impact', stage: 3, default_step: 'replay_attack', description: 'Replay of recorded normal telemetry to mask ongoing grid faults', script: 'attacks/replay_attack.py', detect_sids: [], severity: 'High', severity_policy: 'attack-capability-v1'},
+    {index: 17, technique_id: 'T0815', name: 'Denial of View', title: 'Denial of View', tactic: 'Impact', stage: 3, default_step: 'denial_of_view', description: 'Block SCADA polling responses so HMI displays stale measurements', script: 'attacks/denial_of_view.py', detect_sids: [9000001, 9000024], severity: 'High', severity_policy: 'attack-capability-v1'},
+  ]
+};
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -148,12 +173,31 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
       if (entry.pending) return entry.pending.promise;
       return response(entry.body, entry.status);
     }
-    if (method !== 'GET') throw new Error(`Unexpected mocked POST: ${url}`);
+    if (method !== 'GET') {
+      if (url === '/api/topology/validate') return response({ok: true, valid: true, case_name: 'custom_grid', num_buses: 2, num_edges: 1});
+      throw new Error(`Unexpected mocked POST: ${url}`);
+    }
     if (url === diagnosticsPath) return response(defaultDiagnostics);
     // The dashboard fixture allows an old implementation to reach an assertion
     // instead of failing inside bootstrap. Tests still require diagnostics GETs.
     if (url === '/api/dashboard') return response({system: defaultDiagnostics, active_run: defaultDiagnostics.active_run});
     if (url === '/api/topology') return response(topology);
+    if (url === '/api/topology/template') return response({case_name: 'custom_template', nodes: [{bus_id: 0, type: 'slack'}], edges: []});
+    if (url === '/api/grid-status') return response({
+      case_name: 'case14',
+      components: [{name: 'Bus 1', type: 'slack', model_voltage_pu: 1.06, model_generation_mw: 40.0, model_load_mw: 0.0, status: 'Monitoring', ip: '10.0.0.1', last_observed: '2026-10-06T12:00:00Z'}],
+      grid: {component_count: 14, healthy: 14, warning: 0, critical: 0, model_average_voltage_pu: 1.04, model_generation_mw: 40.0, model_load_mw: 20.0, measured_voltage_pu: 1.04, measured_power_mw: 40.0, electrical_connections: 15},
+      network: {device_count: 18, connections: 17, responding_components: 14, offline_components: 0, status: 'Monitoring', bandwidth_capacity_bps: 1000000, observed_traffic: {bits_per_second: 1200}, recent_detection_notices: 0},
+      provenance: {electrical: 'Pandapower AC simulation'},
+      baseline_grid: {
+        case_name: 'case14',
+        summary: {electrical_buses: 14, voltage_range: '1.010–1.090 pu', lines: 15, max_line_loading_pct: '1.5%'},
+        bus_voltages: [{bus_id: 0, voltage_pu: 1.06, voltage_angle_deg: 0.0}],
+        line_loadings: [{line_id: 0, loading_percent: 1.51}],
+        telemetry: [{timestamp: '2026-01-01 00:00:02', src_bus: 12, dst_bus: 11, packet_size_bytes: 280, voltage_pu: 0.9963}]
+      }
+    });
+    if (url === '/api/attack-catalogue') return response(defaultAttackCatalogue);
     if (url === '/api/network-configuration') return response({node_count: 2, edge_count: 0, case_name: 'case14', selected_case: 'case14',
       available_topologies: [{case_name: 'case14', name: 'IEEE 14 Bus'}, {case_name: 'case30', name: 'IEEE 30 Bus'}],
       topology_version: 'topology-fixture', node_types: {plc: 1, hub: 1}});
@@ -225,7 +269,11 @@ function styleRules(selectorPattern) {
 async function testStoppedAndStyles() {
   const env = await harness(snapshot());
   assert.equal(env.element('core-status').textContent, 'Assessment Environment — Ready');
-  assert.equal(env.element('overview-core').textContent, 'Ready');
+  assert.equal(env.element('runtime-daemon').textContent, 'Available');
+  assert.equal(env.element('runtime-session').textContent, 'No active session', 'reachable daemon must not imply an active CORE session');
+  assertRuntimeControls(env, false, false, false);
+  assert.match(env.element('runtime-action-status').textContent, /Complete Network Setup/);
+  await env.navigate('#network');
   assertRuntimeControls(env, true, false, false);
   assert.equal(env.element('core-gui').disabled, true, 'CORE GUI requires a running owned session');
   assert.ok(countRequests(env, 'GET', diagnosticsPath) >= 1, 'bootstrap must obtain a unified runtime diagnostics snapshot');
@@ -235,6 +283,11 @@ async function testStoppedAndStyles() {
   env.setDiagnostics(unavailable);
   await env.refresh();
   assertRuntimeControls(env, false, false, false);
+  assert.equal(env.element('runtime-daemon').textContent, 'Not reachable');
+  assert.equal(env.element('runtime-session').textContent, 'No active session');
+  assert.match(env.element('runtime-action-status').textContent, /daemon is not reachable.*manually/i);
+  await env.click('core-start');
+  assert.equal(countRequests(env, 'POST'), 0, 'the GUI must not start a session or daemon when the daemon is unreachable');
   const enabledStyle = styleRules(/button:(?:enabled|not\(\s*:disabled\s*\))/);
   const disabledStyle = styleRules(/button:disabled/);
   assert.ok(enabledStyle, 'enabled buttons need an explicit style');
@@ -251,12 +304,11 @@ async function testRuntimeSnapshot() {
   await env.call('loadRuntime');
   assert.equal(countRequests(env, 'GET', diagnosticsPath), before + 1, 'opening Runtime uses one unified snapshot');
   assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running');
-  assert.equal(env.element('overview-core').textContent, 'Running');
-  assert.equal(env.element('runtime-session').textContent, 'CORE Session 1');
+  assert.equal(env.element('runtime-daemon').textContent, 'Available');
+  assert.equal(env.element('runtime-session').textContent, 'Active managed session');
   assert.equal(env.element('runtime-generation').textContent, 'Runtime Generation 1');
-  assert.equal(env.element('generation-status').textContent, 'Runtime Generation 1');
   assert.equal(env.element('run-status').textContent, 'Assessment 1 — in progress');
-  assert.equal(env.element('runtime-watcher').textContent, 'STOPPED');
+  assert.equal(env.element('runtime-watcher').textContent, 'Not started');
   assertRuntimeControls(env, false, true, true);
   assert.equal(env.element('core-gui').disabled, false, 'CORE GUI is available for the running owned session');
   assert.equal(countRequests(env, 'POST'), 0);
@@ -269,6 +321,7 @@ async function testRuntimeSnapshot() {
 
 async function testStartConflictAndPending() {
   const env = await harness(snapshot());
+  await env.navigate('#network');
   env.location.hash = '#runtime';
   const pending = deferred();
   env.enqueue('/api/runtime/start', null, {method: 'POST', pending});
@@ -301,6 +354,7 @@ async function testStartConflictAndPending() {
   assert.deepEqual(JSON.parse(request.options.body), {}, 'Start delegates XML selection to the existing backend');
 
   const successful = await harness(snapshot());
+  await successful.navigate('#network');
   successful.location.hash = '#runtime';
   const acceptedPost = deferred(), confirmingRefresh = deferred();
   successful.enqueue('/api/runtime/start', null, {method: 'POST', pending: acceptedPost});
@@ -320,6 +374,7 @@ async function testStartConflictAndPending() {
   assert.notEqual(successful.element('core-start').getAttribute('aria-busy'), 'true');
 
   const superseded = await harness(snapshot());
+  await superseded.navigate('#network');
   superseded.location.hash = '#runtime';
   const conflictedPost = deferred(), oldConfirmation = deferred(), newestSnapshot = deferred();
   superseded.enqueue('/api/runtime/start', null, {method: 'POST', pending: conflictedPost});
@@ -348,7 +403,7 @@ async function testStartConflictAndPending() {
 
 async function testStaleRefresh() {
   const env = await harness(snapshot('RUNTIME', 'IDLE', 'generation-last-known'));
-  const retained = Object.fromEntries(['core-status', 'overview-core', 'runtime-session', 'runtime-generation', 'generation-status', 'runtime-watcher']
+  const retained = Object.fromEntries(['core-status', 'runtime-session', 'runtime-generation', 'runtime-watcher']
     .map(id => [id, env.element(id).textContent]));
   env.enqueue(diagnosticsPath, null, {error: new Error('fixture connection unavailable')});
   await env.refresh();
@@ -408,6 +463,8 @@ async function testCanonicalXmlContract() {
     'CORE must generate the selected canonical model at the existing output path');
   assert.match(serverSource, /self\.path == "\/api\/runtime\/start":\s*payload, status = CAMPAIGNS\.start_core\(\)/,
     'runtime Start must keep using the existing ownership-aware backend launch');
+  assert.doesNotMatch(campaignSource, /systemctl|core-daemon|service\s+core/i,
+    'the GUI campaign controller must never start or manage the CORE daemon');
 }
 
 async function testProfessionalOverviewUsesExistingData() {
@@ -433,20 +490,16 @@ async function testProfessionalOverviewUsesExistingData() {
       defense:{detected:11,total:19,detection_rate:11/19,methods:{ml:6,suricata:3,both:2,none:8}},
       dvs:{finding_available:true,finding_assessed:19,finding_total:19,campaign_available:true,campaign_score:64.25,campaign_rating:'MODERATE'}}});
   await env.call('loadOverview');
-  assert.equal(env.element('overview-core').textContent,'Running');
-  assert.equal(env.element('overview-watcher').textContent,'Ready');
-  assert.equal(env.element('overview-run').textContent,'Assessment 1');
-  assert.equal(env.element('overview-session').textContent,'CORE Session 1');
-  assert.equal(env.element('overview-generation').textContent,'Runtime Generation 1');
+  assert.equal(env.element('overview-results-section').hasAttribute('hidden'),false);
   assert.equal(env.element('overview-total-findings').textContent,19);
   assert.equal(env.element('overview-total-detected').textContent,11);
   assert.equal(env.element('overview-total-failed').textContent,7);
   assert.equal(env.element('overview-total-timeout').textContent,1);
   assert.equal(env.element('overview-finding-dvs').textContent,'Available for 19 findings');
   assert.equal(env.element('overview-campaign-dvs').textContent,'64.3 / 100 (MODERATE)');
-  assert.equal(env.element('overview-severity-total').textContent,19);
-  assert.match(env.element('overview-severity-legend').innerHTML,/High.*8.*Medium.*5.*Low.*6/);
-  assert.match(env.element('overview-attack-catalogue').innerHTML,/Manipulate I\/O Image.*Attack Step 1.*T0835.*PLC3.*15\.0 \/ 100/s);
+  assert.equal(env.element('overview-severity-total').textContent,18);
+  assert.match(env.element('overview-severity-legend').innerHTML,/High.*11.*Medium.*4.*Low.*3/);
+  assert.match(env.element('overview-attack-catalogue').innerHTML,/Manipulate I\/O Image.*T0835.*Impair Process Control/s);
   assert.equal(env.element('overview-defense-detected').textContent,'11 of 19');
   assert.equal(env.element('overview-defense-rate').textContent,'57.9%');
   assert.match(env.element('overview-defense-methods').textContent,/ML \(6\).*Network monitoring \(3\).*Combined monitoring \(2\)/);
@@ -456,30 +509,18 @@ async function testProfessionalOverviewUsesExistingData() {
   for (const value of ['Detection','PLC3','T0835','Detected by ML','PLC14','Failed']) assert.ok(activity.includes(value),value);
   assert.doesNotMatch(activity,/hidden-correlation|evidence|return_status|\{"/);
   assert.ok(activity.indexOf('PLC3') < activity.indexOf('PLC14'),'newest activity first');
-  for (const id of ['core-status','watcher-status','run-status','overview-run','overview-core','overview-watcher']) {
+  for (const id of ['core-status','watcher-status','run-status']) {
     assert.doesNotMatch(env.element(id).textContent,/run-|generation-|RUNTIME|WATCHER|DAEMON|OWNERSHIP/);
   }
-  assert.match(env.element('overview-technical-data').innerHTML,/Internal assessment ID.*run-generation-professional/);
-  assert.match(env.element('overview-technical-data').innerHTML,/Internal generation ID.*generation-professional/);
-  assert.equal(env.element('generation-status').textContent,'Runtime Generation 1');
-  const disclosure = htmlSource.match(/<details[^>]*id="overview-technical"[^>]*>(.*?)<\/details>/s);
-  assert.ok(disclosure); assert.doesNotMatch(disclosure[0].split('>')[0],/\bopen\b/);
-  assert.match(disclosure[1],/Technical details|Runtime generation/);
+  assert.doesNotMatch(htmlSource,/id="overview-(?:session|generation|technical-data)"/);
   assert.doesNotMatch(htmlSource,/Bounded read model|No event history is scanned|CORE ownership marker/);
   assert.match(cssSource,/\.technical-details strong\{[^}]*white-space:nowrap/);
   assert.equal(JSON.stringify(system),original);
   assert.equal(JSON.stringify(events),eventOriginal);
   assert.equal(countRequests(env,'POST'),0);
   assert.equal(countRequests(env,'GET','/api/campaign/status'),0,'overview must not invoke the result-consuming campaign status path');
-  const busy = await harness(snapshot('RUNTIME','BUSY','processing'));
-  assert.equal(busy.element('overview-watcher').textContent,'Active');
-  const unavailable = snapshot('UNKNOWN','UNKNOWN'); unavailable.core.daemon = 'UNAVAILABLE';
-  const offline = await harness(unavailable);
-  assert.equal(offline.element('overview-core').textContent,'Unavailable');
-  assert.equal(offline.element('overview-watcher').textContent,'Unavailable');
   const stopped = await harness(snapshot());
-  assert.equal(stopped.element('overview-run').textContent,'No assessment running');
-  assert.match(stopped.element('overview-activity').innerHTML,/No security activity yet/);
+  assert.equal(stopped.element('overview-results-section').hasAttribute('hidden'),true);
   const finished = {...system.active_run,run:{...system.active_run.run,status:'COMPLETED'}};
   assert.equal(await env.call('assessmentLabel',finished),'Assessment completed');
   const liveReads = countRequests(stopped,'GET','/api/live-battle?limit=10');
@@ -496,16 +537,16 @@ async function testOverviewIntroductionAndEmptyState() {
     'ATTACK LIFECYCLE', 'Attacker', 'Target', 'Network Activity', 'Detection', 'Result', 'ATTACKS USED IN THE ASSESSMENT', 'DEFENSE MONITORING', 'Technical concepts'
   ]) assert.match(htmlSource, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const concept of ['Programmable Logic Controller', 'Supervisory Control and Data Acquisition', 'MITRE ATT&amp;CK', 'PPO / AI', 'Suricata', 'Defense Vulnerability Score', 'CORE']) assert.match(htmlSource, new RegExp(concept));
-  assert.match(htmlSource, /href="#runtime">Start Assessment/);
+  assert.match(htmlSource, /href="#network">Start Assessment/);
   assert.match(htmlSource, /href="#grid">Explore the System/);
   assert.match(htmlSource, /class="hero-flow"[\s\S]*?Power Grid[\s\S]*?Monitoring[\s\S]*?Cyber Attacks[\s\S]*?Defense \/ Detection[\s\S]*?Evidence[\s\S]*?Security Assessment/);
   const env = await harness(snapshot());
-  assert.equal(env.element('overview-results-assessment').textContent, 'No assessment results available');
-  assert.equal(env.element('overview-total-findings').textContent, 'Not available');
-  assert.equal(env.element('overview-finding-dvs').textContent, 'Not available');
-  assert.equal(env.element('overview-campaign-dvs').textContent, 'Not available');
-  assert.match(env.element('overview-attack-catalogue').innerHTML, /No completed attacks yet/);
-  assert.equal(env.element('overview-severity-chart').getAttribute('aria-label'), 'No attack severity data available');
+  assert.equal(env.element('overview-results-section').hasAttribute('hidden'), true);
+  assert.equal(env.element('global-status-row').hasAttribute('hidden'), true);
+  assert.equal(env.element('overview-severity-total').textContent, 18);
+  assert.match(env.element('overview-severity-legend').innerHTML, /High.*11.*Medium.*4.*Low.*3/);
+  assert.match(env.element('overview-attack-catalogue').innerHTML, /Remote Services.*T0886/s);
+  assert.match(env.element('overview-attack-catalogue').innerHTML, /Denial of View.*T0815/s);
   assert.equal(countRequests(env, 'POST'), 0);
 }
 
@@ -525,6 +566,7 @@ async function testOverviewCustomTopologyPreview() {
 
 async function testOtherControlGating() {
   const env = await harness(snapshot('RUNTIME', 'IDLE', 'generation-campaign'));
+  await env.navigate('#network');
   await env.call('loadBattle');
   assertCampaignControls(env, {coreReady: true, campaignReady: true});
   env.setBattle(snapshot('RUNTIME', 'IDLE', 'generation-campaign').active_run, 'RUNNING');
@@ -581,7 +623,7 @@ async function testObsoleteRouteFailure() {
 
 function assertWatcherReady(env) {
   assert.equal(env.element('watcher-status').textContent, 'Monitoring — Ready');
-  assert.equal(env.element('runtime-watcher').textContent, 'IDLE');
+  assert.equal(env.element('runtime-watcher').textContent, 'Ready');
   assert.equal(env.element('runtime-action-status').textContent, 'Security monitoring is ready.', 'matching diagnostics must replace the transient acknowledgement with verified readiness');
   for (const id of ['watcher-status', 'runtime-watcher', 'runtime-action-status']) {
     assert.doesNotMatch(env.element(id).textContent, /UNVERIFIED/, `${id} must no longer display the transient acknowledgement`);
@@ -606,7 +648,7 @@ async function testWatcherImmediateReadiness() {
   busy.setDiagnostics(snapshot('RUNTIME', 'BUSY', 'generation-watcher-busy'));
   busy.enqueue('/api/runtime/watcher/start', {ok: true, session_id: 7, watcher: 'UNVERIFIED'}, {method: 'POST', status: 202});
   await busy.click('watcher-start');
-  assert.equal(busy.element('runtime-watcher').textContent, 'BUSY');
+  assert.equal(busy.element('runtime-watcher').textContent, 'Active');
   assert.equal(busy.element('runtime-action-status').textContent, 'Security monitoring is active.');
   assertRuntimeControls(busy, false, true, false);
   assert.equal(countRequests(busy, 'POST'), 1);
@@ -625,7 +667,7 @@ async function testWatcherDeferredReadinessAndDuplicates() {
   assert.equal(countRequests(env, 'POST'), 1, 'pending watcher POST must reject duplicate programmatic clicks');
   post.resolve(env.response({ok: true, session_id: 7, watcher: 'UNVERIFIED'}, 202));
   await firstClick;
-  assert.equal(env.element('runtime-watcher').textContent, 'UNVERIFIED');
+  assert.equal(env.element('runtime-watcher').textContent, 'Not started');
   assert.match(env.element('runtime-action-status').textContent, /waiting|pending|verif|starting/i);
   assertRuntimeControls(env, false, true, false);
   await env.click('watcher-start');
@@ -767,7 +809,7 @@ async function testBackgroundTrafficIsSeparate() {
 async function testTopologySelectionUsesCanonicalApiAndPyvis() {
   const env = await harness(snapshot());
   await env.navigate('#network');
-  assert.equal(env.element('topology-selector').options.length, 2, 'selector uses the available backend presets');
+  assert.equal(env.element('topology-selector').options.length, 3, 'selector uses the available backend presets and custom option');
   assert.equal(env.element('topology-selector').value, 'case14');
   assert.match(env.element('network-topology').children[0].srcdoc, /PyVis case14/);
   const selected = {configuration: {node_count: 3, edge_count: 2, case_name: 'case30', selected_case: 'case30',
@@ -807,10 +849,13 @@ async function testCustomTopologyEditorAndGuards() {
     available_topologies:[{case_name:'case14',name:'IEEE 14'},{case_name:'custom_lab',name:'custom_lab'}],
     node_types:{plc:1,hub:1,scada:1,attacker:1,ids:1},definition},topology:{case_name:'custom_lab'},
     visual:{nodes:[{id:'plc1'}],edges:[]},pyvis_html:'<html>Custom PyVis plc1</html>'};
+  env.element('topology-selector').value = 'custom';
+  await env.element('topology-selector').dispatch('change');
   env.element('custom-topology-json').value = JSON.stringify(definition);
   env.enqueue('/api/topology/custom', selected, {method:'POST'});
   await env.click('custom-topology-save');
   assert.equal(env.element('topology-selector').value, 'custom_lab');
+  assert.equal(env.element('core-start').disabled, false, 'validated and applied custom topology enables Start CORE when daemon is available');
   assert.match(env.element('network-topology').children[0].srcdoc, /Custom PyVis plc1/);
   const posted = env.requests.find(r=>r.method==='POST' && r.url==='/api/topology/custom');
   assert.deepEqual(JSON.parse(posted.options.body), {definition});
@@ -883,7 +928,119 @@ async function testHumanReadableIdentifiersKeepRawValuesTechnical() {
   assert.doesNotMatch(primary, /step-1-d229/);
   assert.match(attackLog, /Technical details/);
   assert.match(attackLog, /step-1-d2294dea07c1/, 'raw correlation remains available in the expanded technical event');
-  assert.match(env.element('overview-technical-data').innerHTML, /Internal assessment ID.*run-opaque-generation-value/);
+  assert.doesNotMatch(htmlSource, /id="overview-technical-data"/);
+}
+
+async function testOverviewHidesUnavailableEmptyStates() {
+  const env = await harness(snapshot('STOPPED', 'STOPPED', null));
+  await env.navigate('#overview');
+  assert.doesNotMatch(htmlSource, /id="overview-card-(?:session|generation)"/, 'overview contains no session or runtime cards');
+  assert.equal(env.element('overview-defense-metrics-box').hasAttribute('hidden'), true, 'defense metrics box is hidden before assessment results exist');
+  assert.equal(env.element('overview-results-section').hasAttribute('hidden'), true, 'assessment results are hidden before assessment results exist');
+}
+
+async function testWorkflowNextNavigation() {
+  const env = await harness(snapshot('STOPPED', 'STOPPED', null));
+  await env.navigate('#network');
+  assert.equal(env.element('network-next-bar').hasAttribute('hidden'), false, 'Network Setup next bar is visible when topology is loaded');
+  assert.equal(env.element('network-next-btn').getAttribute('href'), '#grid', 'Network Setup next links to grid status');
+
+  await env.navigate('#grid');
+  assert.equal(env.element('grid-next-bar').hasAttribute('hidden'), false, 'Grid status next bar is visible');
+  assert.equal(env.element('grid-next-btn').getAttribute('href'), '#runtime', 'Grid status next links to runtime');
+
+  await env.navigate('#runtime');
+  assert.equal(env.element('runtime-next-bar').hasAttribute('hidden'), true, 'Runtime next bar is hidden when CORE is stopped');
+
+  const runningEnv = await harness(snapshot('RUNTIME', 'IDLE', 'gen-1'));
+  await runningEnv.navigate('#runtime');
+  assert.equal(runningEnv.element('runtime-next-bar').hasAttribute('hidden'), false, 'Runtime next bar is visible when CORE is running');
+  assert.equal(runningEnv.element('runtime-next-btn').getAttribute('href'), '#battle', 'Runtime next links to battle');
+
+  await runningEnv.navigate('#battle');
+  assert.equal(runningEnv.element('battle-next-bar').hasAttribute('hidden'), true, 'Battle next bar is hidden during incomplete assessment');
+
+  const completed = snapshot('RUNTIME', 'IDLE', 'gen-1');
+  completed.active_run = {run: {scenario_id: 'scen-1', run_id: 'run-1', status: 'COMPLETED', ended_at: '2026-10-06T12:00:00Z'}};
+  const completedEnv = await harness(completed);
+  await completedEnv.navigate('#battle');
+  assert.equal(completedEnv.element('battle-next-bar').hasAttribute('hidden'), false, 'Battle next bar is visible when assessment completes');
+  assert.equal(completedEnv.element('battle-next-btn').getAttribute('href'), '#reports', 'Battle next links to reports');
+}
+
+async function testCustomTopologyWorkflowAndStateReset() {
+  const env = await harness(snapshot());
+  await env.navigate('#network');
+
+  // IEEE 14 initially selected: custom controls hidden
+  assert.equal(env.element('custom-topology-panel').hasAttribute('hidden'), true);
+  assert.equal(env.element('custom-topology-error').hasAttribute('hidden'), true);
+  assert.equal(env.element('custom-topology-preview').hasAttribute('hidden'), true);
+
+  // Switch to Custom: custom panel shown cleanly
+  env.element('topology-selector').value = 'custom';
+  await env.element('topology-selector').dispatch('change');
+  assert.equal(env.element('custom-topology-panel').hasAttribute('hidden'), false);
+  assert.equal(env.element('custom-topology-preview').hasAttribute('hidden'), true);
+  assert.equal(env.element('custom-topology-error').hasAttribute('hidden'), true);
+
+  // Switch Custom -> IEEE-14: removes all custom controls and resets state
+  const selected14 = {configuration: {node_count: 2, edge_count: 1, case_name: 'case14', selected_case: 'case14',
+    available_topologies: [{case_name: 'case14', name: 'IEEE 14'}, {case_name: 'case30', name: 'IEEE 30'}],
+    node_types: {plc: 1, hub: 1}}, topology: {case_name: 'case14'},
+    visual: {nodes: [{id: 'plc1'}], edges: []}, pyvis_html: '<html>case14</html>'};
+  env.element('topology-selector').value = 'case14';
+  env.enqueue('/api/topology/select', selected14, {method: 'POST'});
+  env.enqueue('/api/topology', {...selected14, ...selected14}, {});
+  await env.element('topology-selector').dispatch('change');
+  assert.equal(env.element('custom-topology-panel').hasAttribute('hidden'), true);
+  assert.equal(env.element('custom-topology-preview').hasAttribute('hidden'), true);
+  assert.equal(env.element('custom-topology-error').hasAttribute('hidden'), true);
+
+  // Switch Custom -> IEEE-30: removes all custom controls
+  const selected30 = {configuration: {node_count: 3, edge_count: 2, case_name: 'case30', selected_case: 'case30',
+    available_topologies: [{case_name: 'case14', name: 'IEEE 14'}, {case_name: 'case30', name: 'IEEE 30'}],
+    node_types: {plc: 2, hub: 1}}, topology: {case_name: 'case30'},
+    visual: {nodes: [{id: 'plc1'}], edges: []}, pyvis_html: '<html>case30</html>'};
+  env.element('topology-selector').value = 'case30';
+  env.enqueue('/api/topology/select', selected30, {method: 'POST'});
+  env.enqueue('/api/topology', {...selected30, ...selected30}, {});
+  await env.element('topology-selector').dispatch('change');
+  assert.equal(env.element('custom-topology-panel').hasAttribute('hidden'), true);
+
+  // Switch preset -> Custom: restores custom workflow cleanly
+  env.element('topology-selector').value = 'custom';
+  await env.element('topology-selector').dispatch('change');
+  assert.equal(env.element('custom-topology-panel').hasAttribute('hidden'), false);
+  assert.equal(env.element('custom-topology-preview').hasAttribute('hidden'), true);
+  assert.equal(env.element('core-start').disabled, true, 'unapplied custom topology blocks Start CORE');
+}
+
+async function testCustomTopologyUploadAndValidation() {
+  const env = await harness(snapshot());
+  await env.navigate('#network');
+  const templateLink = env.element('custom-topology-template-btn');
+  assert.equal(templateLink.getAttribute('href'), '/api/topology/template');
+  assert.equal(templateLink.getAttribute('download'), 'custom_topology_template.json');
+
+  for (const id of ['custom-builder-name','custom-builder-add-node','custom-builder-add-edge','custom-builder-nodes','custom-builder-edges','custom-builder-validate']) assert.ok(env.element(id));
+  for (const parameter of ['Nominal kV','Generation MW','Load MW','Resistance Ω/km','Reactance Ω/km','Max current kA']) assert.match(appSource,new RegExp(parameter));
+  const definition = {case_name: 'custom_uploaded', nodes: [{bus_id: 0, name: 'Gen', type: 'slack'}], edges: []};
+  env.enqueue('/api/topology/validate', {ok: true, valid: true, case_name: 'custom_uploaded', num_buses: 1, num_edges: 0, communication_nodes:5, communication_links:4}, {method: 'POST'});
+  const fileEvent = {
+    target: {
+      files: [{
+        name: 'test.json',
+        text: async () => JSON.stringify(definition)
+      }]
+    }
+  };
+  await env.call('handleCustomTopologyUpload', fileEvent);
+  assert.equal(env.element('custom-preview-case').textContent, 'custom_uploaded');
+  assert.equal(String(env.element('custom-preview-buses').textContent), '1');
+  assert.equal(env.element('custom-preview-badge').textContent, 'Valid');
+  assert.equal(env.element('custom-topology-preview').hasAttribute('hidden'), false);
+  assert.equal(env.element('custom-preview-communication').textContent, '5 hosts/devices · 4 CORE links');
 }
 
 const tests = [
@@ -901,14 +1058,18 @@ const tests = [
   ['I: accepted watcher start uses immediate authoritative readiness', testWatcherImmediateReadiness],
   ['J: deferred watcher readiness and duplicate suppression', testWatcherDeferredReadinessAndDuplicates],
   ['K: watcher refresh failure and backend errors remain visible', testWatcherRefreshFailureAndPostError],
-  ['L: watcher ownership identity and bounded GET-only observation', testWatcherIdentityAndBoundedObservation]
-  ,['M: background traffic remains a separate refreshed table', testBackgroundTrafficIsSeparate]
-  ,['N: canonical topology selection refreshes a real PyVis view', testTopologySelectionUsesCanonicalApiAndPyvis]
-  ,['N2: topology selection errors remain visible and restore selection', testTopologySelectionFailureIsVisible]
-  ,['N3: custom topology editor, API, PyVis and runtime guards', testCustomTopologyEditorAndGuards]
-  ,['O: Open CORE GUI uses the existing runtime helper route', testOpenCoreGuiUsesExistingRuntimeHelperRoute]
-  ,['P: Live Battle reuses unchanged PyVis state', testBattleOnlyRefreshesPyvisWhenStateChanges]
-  ,['Q: identifier aliases are shared while raw IDs remain technical', testHumanReadableIdentifiersKeepRawValuesTechnical]
+  ['L: watcher ownership identity and bounded GET-only observation', testWatcherIdentityAndBoundedObservation],
+  ['M: background traffic remains a separate refreshed table', testBackgroundTrafficIsSeparate],
+  ['N: canonical topology selection refreshes a real PyVis view', testTopologySelectionUsesCanonicalApiAndPyvis],
+  ['N2: topology selection errors remain visible and restore selection', testTopologySelectionFailureIsVisible],
+  ['N3: custom topology editor, API, PyVis and runtime guards', testCustomTopologyEditorAndGuards],
+  ['O: Open CORE GUI uses the existing runtime helper route', testOpenCoreGuiUsesExistingRuntimeHelperRoute],
+  ['P: Live Battle reuses unchanged PyVis state', testBattleOnlyRefreshesPyvisWhenStateChanges],
+  ['Q: identifier aliases are shared while raw IDs remain technical', testHumanReadableIdentifiersKeepRawValuesTechnical],
+  ['R1: overview hides unavailable and empty high-level states', testOverviewHidesUnavailableEmptyStates],
+  ['R2: workflow next navigation provides guided progression', testWorkflowNextNavigation],
+  ['R3: custom topology state cleanly resets between presets and custom', testCustomTopologyWorkflowAndStateReset],
+  ['R4: custom topology template and upload validation', testCustomTopologyUploadAndValidation]
 ];
 
 (async () => {

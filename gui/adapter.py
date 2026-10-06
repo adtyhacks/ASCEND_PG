@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from data.mitre_registry import TECHNIQUES
+from metrics.attack_severity import resolve_attack_severity
 from testbed import run_store
 from testbed.core_runtime import core_request
 from testbed.topology import get_topology as canonical_topology, load_case, set_topology, Topology, TOPOLOGY_LOCK
@@ -47,6 +49,48 @@ def get_system_status() -> dict[str, Any]:
         "watcher": {"state": watcher_state},
         "generation": runtime.get("generation_id") if runtime else None,
         "runtime_marker": bool(runtime),
+    }
+
+
+def get_attack_catalogue() -> dict[str, Any]:
+    """Return the canonical 18-attack catalogue and resolved capability severities."""
+    attacks = []
+    severity_counts: dict[str, int] = {
+        "Critical": 0,
+        "High": 0,
+        "Medium": 0,
+        "Low": 0,
+        "Informational": 0,
+    }
+    for tech in TECHNIQUES:
+        metadata = {"technique_id": tech["id"], "step_name": tech.get("default_step")}
+        resolved = resolve_attack_severity(metadata)
+        severity = resolved.get("severity", "HIGH").title()
+        if severity in severity_counts:
+            severity_counts[severity] += 1
+        else:
+            severity_counts[severity] = 1
+
+        attacks.append({
+            "index": tech.get("index"),
+            "technique_id": tech["id"],
+            "name": tech.get("name"),
+            "title": tech.get("name"),
+            "tactic": tech.get("tactic"),
+            "stage": tech.get("stage"),
+            "default_step": tech.get("default_step"),
+            "description": tech.get("description"),
+            "script": tech.get("script"),
+            "detect_sids": list(tech.get("detect_sids", [])),
+            "severity": severity,
+            "severity_reason": resolved.get("reason"),
+            "severity_policy": resolved.get("policy"),
+        })
+
+    return {
+        "total_attacks": len(attacks),
+        "severity_distribution": severity_counts,
+        "attacks": attacks,
     }
 
 
@@ -178,6 +222,7 @@ def save_custom_topology(definition: dict) -> dict[str, Any]:
     with TOPOLOGY_LOCK:
         _require_topology_editable()
         selected = Topology.from_custom_dict(definition)
+        selected.to_pandapower()
         view = _topology_view(selected, [])
         directory = DATA / "sample_topologies"
         directory.mkdir(parents=True, exist_ok=True)
@@ -191,6 +236,38 @@ def save_custom_topology(definition: dict) -> dict[str, Any]:
         set_topology(selected)
         _persist_topology_selection(selected)
         return {"configuration": get_network_configuration(), **view}
+
+
+def validate_custom_topology(definition: dict) -> dict[str, Any]:
+    """Validate definition against existing topology schema without modifying state."""
+    selected = Topology.from_custom_dict(definition)
+    selected.to_pandapower()
+    snapshot = selected.canonical_snapshot()
+    return {
+        "valid": True,
+        "case_name": selected.case_name,
+        "num_buses": selected.num_buses,
+        "num_edges": len(selected.edges),
+        "communication_nodes": len(snapshot["nodes"]),
+        "communication_links": sum(bool(link.get("core_link")) for link in snapshot["links"]),
+        "definition": definition,
+    }
+
+
+def get_custom_topology_template() -> dict[str, Any]:
+    """Canonical downloadable template definition for custom topologies."""
+    return {
+        "case_name": "custom_template",
+        "nodes": [
+            {"bus_id": 0, "name": "Generator 1", "type": "slack", "vn_kv": 110.0, "voltage": 1.06, "pg": 40.0, "qg": 10.0, "pl": 0.0, "ql": 0.0, "plc_type": "generic_modbus"},
+            {"bus_id": 1, "name": "Load Bus 2", "type": "pq", "vn_kv": 110.0, "voltage": 1.00, "pg": 0.0, "qg": 0.0, "pl": 25.0, "ql": 5.0, "plc_type": "generic_modbus"},
+            {"bus_id": 2, "name": "Load Bus 3", "type": "pq", "vn_kv": 110.0, "voltage": 1.00, "pg": 0.0, "qg": 0.0, "pl": 35.0, "ql": 12.0, "plc_type": "generic_modbus"},
+        ],
+        "edges": [
+            {"from": 0, "to": 1, "length_km": 1.0, "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.1, "c_nf_per_km": 0.0, "max_i_ka": 0.4},
+            {"from": 1, "to": 2, "length_km": 1.0, "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.1, "c_nf_per_km": 0.0, "max_i_ka": 0.4},
+        ],
+    }
 
 
 def get_network_configuration() -> dict[str, Any]:

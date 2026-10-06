@@ -28,6 +28,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload = adapter.get_displayable_active_run()
             elif parsed.path == "/api/topology":
                 payload = adapter.get_topology()
+            elif parsed.path == "/api/attack-catalogue":
+                payload = adapter.get_attack_catalogue()
             elif parsed.path == "/api/network-configuration":
                 payload = adapter.get_network_configuration()
             elif parsed.path == "/api/grid-status":
@@ -53,6 +55,15 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload = adapter.get_live_battle_snapshot(
                     int(query.get("limit", ["100"])[0]), query.get("visual_signature", [None])[0]
                 )
+            elif parsed.path == "/api/topology/template":
+                body = json.dumps(adapter.get_custom_topology_template(), indent=2).encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition", 'attachment; filename="custom_topology_template.json"')
+                self.end_headers()
+                self.wfile.write(body)
+                return
             elif parsed.path == "/api/campaign/status":
                 payload = CAMPAIGNS.status()
             else:
@@ -113,6 +124,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload, status = CAMPAIGNS.defend("restore", str(data.get("target_node", ""))), HTTPStatus.OK
             elif self.path == "/api/topology/select":
                 payload, status = adapter.select_topology(str(data.get("case_name", ""))), HTTPStatus.OK
+            elif self.path == "/api/topology/validate":
+                payload, status = adapter.validate_custom_topology(data.get("definition")), HTTPStatus.OK
             elif self.path == "/api/topology/custom":
                 payload, status = adapter.save_custom_topology(data.get("definition")), HTTPStatus.OK
             else:

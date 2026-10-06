@@ -1,5 +1,7 @@
 """Read-only operational view of the canonical grid and retained telemetry."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import hashlib
+import json
 import math
 
 from gui import adapter
@@ -62,6 +64,88 @@ def _flow_rate(rows, addresses, start, now):
             'window_seconds': window, 'flow_count': len(latest)}
 
 
+_baseline_cache = {}
+
+
+def get_baseline_grid(topology=None) -> dict:
+    topo = topology or adapter.canonical_topology()
+    norm_case = str(topo.case_name or "case14").strip().lower()
+    cache_key = hashlib.sha256(json.dumps(topo.to_dict(), sort_keys=True).encode()).hexdigest()
+    if cache_key in _baseline_cache:
+        return _baseline_cache[cache_key]
+    try:
+        from testbed.grid_env import build_baseline
+        import pandas as pd
+        if norm_case in {"case14", "case30"}:
+            net, grid_df, traffic_df = build_baseline(n_packets=100, seed=42, case_name=norm_case)
+            simulation_source = norm_case
+        else:
+            net = topo.to_pandapower()
+            grid_df = pd.DataFrame({"bus_id": net.res_bus.index, "voltage_pu": net.res_bus["vm_pu"].values,
+                                    "voltage_angle_deg": net.res_bus["va_degree"].values})
+            rows, base = [], datetime(2026, 1, 1)
+            for index, edge in enumerate(topo.edge_models):
+                source, destination = int(edge["from"]), int(edge["to"])
+                rows.append({"timestamp": base + timedelta(seconds=index + 1), "src_bus": source,
+                             "dst_bus": destination, "packet_size_bytes": 256,
+                             "voltage_pu": float(net.res_bus.at[source, "vm_pu"])})
+            traffic_df = pd.DataFrame(rows, columns=["timestamp", "src_bus", "dst_bus", "packet_size_bytes", "voltage_pu"])
+            simulation_source = "canonical_custom"
+        voltage_min = float(grid_df["voltage_pu"].min())
+        voltage_max = float(grid_df["voltage_pu"].max())
+        line_loading = net.res_line["loading_percent"] if hasattr(net, "res_line") and not net.res_line.empty else pd.Series(dtype=float)
+        max_loading = float(line_loading.max()) if not line_loading.empty and not pd.isna(line_loading.max()) else 0.0
+
+        bus_voltages = [
+            {
+                "bus_id": int(row["bus_id"]),
+                "voltage_pu": round(float(row["voltage_pu"]), 4),
+                "voltage_angle_deg": round(float(row["voltage_angle_deg"]), 2),
+            }
+            for _, row in grid_df.iterrows()
+        ]
+        line_loadings = [
+            {
+                "line_id": int(idx),
+                "loading_percent": round(float(val), 2),
+            }
+            for idx, val in line_loading.items()
+        ]
+        telemetry_rows = [
+            {
+                "timestamp": str(row["timestamp"])[:19],
+                "src_bus": int(row["src_bus"]),
+                "dst_bus": int(row["dst_bus"]),
+                "packet_size_bytes": int(row["packet_size_bytes"]),
+                "voltage_pu": round(float(row["voltage_pu"]), 4),
+            }
+            for _, row in traffic_df.head(50).iterrows()
+        ]
+        result = {
+            "case_name": topo.case_name,
+            "simulation_source": simulation_source,
+            "summary": {
+                "electrical_buses": len(grid_df),
+                "voltage_range": f"{voltage_min:.3f}–{voltage_max:.3f} pu",
+                "voltage_min": round(voltage_min, 4),
+                "voltage_max": round(voltage_max, 4),
+                "lines": len(net.line) if hasattr(net, "line") else len(line_loadings),
+                "max_line_loading": round(max_loading, 1),
+                "max_line_loading_pct": f"{max_loading:.1f}%",
+            },
+            "bus_voltages": bus_voltages,
+            "line_loadings": line_loadings,
+            "telemetry": telemetry_rows,
+        }
+        _baseline_cache[cache_key] = result
+        return result
+    except Exception as exc:
+        return {
+            "case_name": topo.case_name, "error": f"Baseline power flow could not be solved: {exc}",
+            "summary": None, "bus_voltages": [], "line_loadings": [], "telemetry": [],
+        }
+
+
 def snapshot():
     """No polling, power-flow recalculation, collectors, or evidence writes."""
     topo = adapter.canonical_topology()
@@ -118,6 +202,8 @@ def snapshot():
     monitoring = sum(row['status'] == 'Monitoring' for row in components)
     offline = sum(row['status'] == 'Offline' for row in components)
     return {'case_name': topo.case_name, 'components': components,
+        'baseline_grid': get_baseline_grid(topo),
+        'runtime_available': scoped,
         'grid': {'component_count': len(components), 'healthy': None, 'warning': None, 'critical': None,
                  'model_average_voltage_pu': sum(voltages)/len(voltages) if voltages and all(value is not None for value in voltages) else None,
                  'model_generation_mw': _total(topo.nodes, 'pg', topo.case_name),

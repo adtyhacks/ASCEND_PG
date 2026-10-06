@@ -131,6 +131,22 @@ def main() -> None:
             try: adapter.get_recent_network_events(run["scenario_id"], run["run_id"], 100)
             except ValueError: pass
             else: raise AssertionError("partial canonical event data must be rejected")
+            catalogue = adapter.get_attack_catalogue()
+            assert catalogue["total_attacks"] == 18
+            assert len(catalogue["attacks"]) == 18
+            assert catalogue["severity_distribution"] == {"Critical": 0, "High": 11, "Medium": 4, "Low": 3, "Informational": 0}
+            assert {attack["severity"] for attack in catalogue["attacks"]} == {"High", "Medium", "Low"}
+            assert all(attack.get("technique_id") and attack.get("name") and attack.get("tactic") for attack in catalogue["attacks"])
+            template = adapter.get_custom_topology_template()
+            assert template["case_name"] == "custom_template" and len(template["nodes"]) >= 2
+            val_res = adapter.validate_custom_topology(template)
+            assert val_res["valid"] is True and val_res["case_name"] == "custom_template"
+            try:
+                adapter.validate_custom_topology({"case_name": "bad", "nodes": []})
+            except (ValueError, TypeError):
+                pass
+            else:
+                raise AssertionError("empty node topology must fail validation")
     finally:
         adapter.DATA, run_store.RUNS = original_data, original_runs
         adapter.core_request, adapter.canonical_topology, adapter.load_case = original_request, original_topology, original_load_case; adapter._active_cache.clear()

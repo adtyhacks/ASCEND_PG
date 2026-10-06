@@ -3,11 +3,21 @@ const statusText = (label, value) => `${label} — ${value || 'NONE'}`;
 const text = value => value === null || value === undefined || value === '' ? 'NONE' : String(value);
 const unavailable = value => value === null || value === undefined || value === '' ? 'N/A' : (typeof value === 'object' ? JSON.stringify(value) : String(value));
 const escapeHtml = value => unavailable(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+function setElementVisibility(el, visible) {
+  if (!el) return;
+  el.hidden = !visible;
+  if (el.setAttribute && el.removeAttribute) {
+    if (!visible) el.setAttribute('hidden', '');
+    else el.removeAttribute('hidden');
+  }
+}
 let latestSystem = null, latestActive = null, refreshTimer = null;
 let runtimeRefreshSequence = 0, runtimeFresh = false, runtimeRefreshPending = false, runtimeControlPending = false;
 let runtimeActionMessage = '', pendingRuntimePath = null;
 let topologyControlPending = false;
 let selectedTopologyDefinition = null;
+let validatedCustomDefinition = null;
+let topologySetupReady = false;
 const WATCHER_READINESS_REFRESH_LIMIT = 30;
 let watcherReadiness = null;
 let latestBattle = null, latestCampaignStatus = null, battleVisualSignature = null, battleRefreshSequence = 0, pageRefreshPending = false;
@@ -51,7 +61,7 @@ function updateControlStates() {
   const core = latestSystem?.core, watcher = latestSystem?.watcher;
   const running = usable && core?.state === 'RUNTIME';
   const start = byId('core-start'), starting = pendingRuntimePath === '/api/runtime/start';
-  start.disabled = !(usable && !runtimeRefreshPending && !topologyControlPending && core?.state === 'STOPPED' && core?.daemon === 'AVAILABLE');
+  start.disabled = !(usable && topologySetupReady && !runtimeRefreshPending && !topologyControlPending && core?.state === 'STOPPED' && core?.daemon === 'AVAILABLE');
   start.textContent = starting ? 'Starting CORE…' : 'Start CORE';
   start.setAttribute('aria-busy', String(starting));
   byId('core-stop').disabled = !running;
@@ -69,6 +79,8 @@ function updateControlStates() {
   byId('defense-target').disabled = !coreReady;
   byId('topology-selector').disabled = !runtimeFresh || running || latestSystem?.runtime_marker || runtimeControlPending || topologyControlPending;
   for (const id of ['custom-topology-json', 'custom-topology-save', 'custom-topology-copy']) byId(id).disabled = byId('topology-selector').disabled;
+  for (const id of ['custom-builder-name','custom-builder-add-node','custom-builder-add-edge','custom-builder-validate']) if (byId(id)) byId(id).disabled = byId('topology-selector').disabled;
+  setElementVisibility(byId('runtime-next-bar'), running && watcher?.state === 'IDLE');
 }
 function renderRuntimeState(system) {
   const active = system.active_run;
@@ -81,28 +93,13 @@ function renderRuntimeState(system) {
   byId('core-status').textContent = statusText('Assessment Environment', environment);
   byId('watcher-status').textContent = statusText('Monitoring', monitoring);
   byId('run-status').textContent = active?.state === 'ACTIVE' ? `${assessment} — ${assessmentState.replace('Assessment ', '')}` : assessmentState;
-  byId('campaign-status').textContent = text(active?.run?.campaign_request?.state || active?.state);
-  byId('generation-status').textContent = displayName(identity, 'runtime_generation');
-  byId('overview-core').textContent = environment;
-  byId('overview-core-detail').textContent = environment === 'Running' ? 'Assessment environment is active.' : environment === 'Ready' ? 'Environment ready for a security assessment.' : 'Assessment environment is not ready.';
-  byId('overview-watcher').textContent = monitoring;
-  byId('overview-monitoring-detail').textContent = monitoring === 'Active' ? 'Security monitoring is processing activity.' : monitoring === 'Ready' ? 'Security monitoring is ready.' : 'Security monitoring is unavailable.';
-  byId('overview-run').textContent = assessment;
-  byId('overview-session').textContent = displayName(identity, 'core_session');
-  byId('overview-generation').textContent = displayName(identity, 'runtime_generation');
-  byId('overview-run-detail').textContent = active?.state === 'ACTIVE' ? 'Review assessment results and recent security activity below.' : active?.state === 'REJECTED' ? 'Assessment evidence could not be verified. Review Technical details.' : 'Ready to begin a security assessment.';
-  setDetails(byId('overview-technical-data'), [
-    ['Assessment', displayName(identity, 'assessment')], ['Internal assessment ID', identity.assessment?.internal_id],
-    ['Internal scenario ID', active?.run?.scenario_id], ['CORE environment', displayName(identity, 'core_session')],
-    ['Internal CORE session ID', identity.core_session?.internal_id], ['Runtime', displayName(identity, 'runtime_generation')],
-    ['Internal generation ID', identity.runtime_generation?.internal_id], ['Environment status', core],
-    ['Monitoring status', watcher], ['CORE service status', system.core.daemon],
-    ['Runtime marker present', system.runtime_marker], ['Evidence diagnostic', active?.integrity_error || 'None']
-  ].map(([label,value]) => [label,escapeHtml(text(value))]));
-  byId('runtime-daemon').textContent = text(system.core.daemon); byId('runtime-session').textContent = displayName(identity, 'core_session'); byId('runtime-generation').textContent = displayName(identity, 'runtime_generation'); byId('runtime-watcher').textContent = text(watcher);
+  byId('runtime-daemon').textContent = system.core.daemon === 'AVAILABLE' ? 'Available' : 'Not reachable';
+  byId('runtime-session').textContent = core === 'RUNTIME' ? 'Active managed session' : 'No active session';
+  byId('runtime-generation').textContent = core === 'RUNTIME' ? displayName(identity, 'runtime_generation', 'Active') : 'Not started';
+  byId('runtime-watcher').textContent = watcher === 'IDLE' ? 'Ready' : watcher === 'BUSY' ? 'Active' : 'Not started';
   const rows = active && active.state === 'ACTIVE' ? [['State', active.state], ['Assessment', displayName(identity, 'assessment')], ['CORE session', displayName(identity, 'core_session')], ['Runtime', displayName(identity, 'runtime_generation')], ['Lifecycle', active.run.lifecycle_status], ['Started', active.run.started_at]] : [['Current assessment', active ? active.state : 'NONE'], ['Details', active?.integrity_error || 'No active assessment']];
   setDetails(byId('runtime-recovery'), rows);
-  byId('runtime-action-status').textContent = runtimeActionMessage || (core === 'RUNTIME' ? (watcher === 'IDLE' ? 'Security monitoring is ready.' : watcher === 'BUSY' ? 'Security monitoring is active.' : 'The current CORE Session is ready for security monitoring.') : core === 'STOPPED' ? 'Start CORE prepares the selected network.' : 'The assessment environment is unavailable.');
+  byId('runtime-action-status').textContent = runtimeActionMessage || (system.core.daemon !== 'AVAILABLE' ? 'The CORE daemon is not reachable. Start it manually, then refresh this page.' : core === 'RUNTIME' ? (watcher === 'IDLE' ? 'Security monitoring is ready.' : watcher === 'BUSY' ? 'Security monitoring is active.' : 'The managed CORE session is ready for security monitoring.') : !topologySetupReady ? 'Complete Network Setup before starting a CORE session.' : 'Start CORE creates the managed session for the selected topology.');
   updateControlStates();
 }
 function reconcileWatcherReadiness(system) {
@@ -132,9 +129,9 @@ async function refreshRuntimeState() {
     latestSystem = data; latestActive = data.active_run; runtimeFresh = true; runtimeRefreshPending = false;
     reconcileWatcherReadiness(data);
     renderRuntimeState(data);
-    byId('overview-status-error').textContent = data.core.error || 'None';
+    if (byId('overview-status-error')) byId('overview-status-error').textContent = data.core.error || '';
     const notice = byId('runtime-refresh-status');
-    notice.textContent = data.core.daemon === 'AVAILABLE' ? '' : 'Assessment environment is unavailable. Review Technical details or the environment controls.';
+    notice.textContent = data.core.daemon === 'AVAILABLE' ? '' : 'CORE daemon is not reachable. Start it manually; ASCEND-PG will not start the daemon.';
     notice.dataset.state = data.core.daemon === 'AVAILABLE' ? 'current' : 'stale';
     return data;
   } catch (error) {
@@ -147,7 +144,7 @@ async function refreshRuntimeState() {
     }
     const notice = byId('runtime-refresh-status');
     notice.textContent = latestSystem ? 'Status update unavailable — showing last known values.' : 'Assessment status unavailable.';
-    byId('overview-status-error').textContent = error.message;
+    if (byId('overview-status-error')) byId('overview-status-error').textContent = error.message;
     notice.dataset.state = 'stale';
     updateControlStates();
     return null;
@@ -185,6 +182,7 @@ function friendlyResult(value) {
   const result = String(value || '').toUpperCase();
   return {SUCCESS:'Completed',FAILED:'Failed',TIMEOUT:'Timed out',DETECTED:'Detected',UNDETECTED:'Not detected',EXECUTION_ERROR:'Execution error',COMPROMISED:'Reported compromise'}[result] || (value || 'Not available');
 }
+let cachedAttackCatalogue = null;
 function renderSeverityDistribution(distribution = {}) {
   const order = ['Critical','High','Medium','Low','Informational'];
   const values = order.map(label => ({label, count: Number.isFinite(Number(distribution[label])) ? Math.max(0, Number(distribution[label])) : 0}));
@@ -192,7 +190,7 @@ function renderSeverityDistribution(distribution = {}) {
   byId('overview-severity-total').textContent = total;
   if (!total) {
     chart.classList.add('empty'); chart.removeAttribute('style'); chart.setAttribute('aria-label', 'No attack severity data available');
-    byId('overview-severity-legend').innerHTML = '<p>No completed attack findings yet.</p>'; return;
+    byId('overview-severity-legend').innerHTML = '<p>No attack techniques available.</p>'; return;
   }
   let cursor = 0;
   const segments = values.filter(item => item.count > 0).map(item => {
@@ -200,38 +198,43 @@ function renderSeverityDistribution(distribution = {}) {
     return `${severityPalette[item.label]} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
   });
   chart.classList.remove('empty'); chart.setAttribute('style', `background:conic-gradient(${segments.join(',')})`);
-  chart.setAttribute('aria-label', `Severity distribution for ${total} findings: ${values.map(item => `${item.label} ${item.count}`).join(', ')}`);
+  chart.setAttribute('aria-label', `Severity distribution for ${total} attacks: ${values.filter(item => item.count > 0).map(item => `${item.label} ${item.count}`).join(', ')}`);
   byId('overview-severity-legend').innerHTML = values.filter(item => item.count > 0).map(item => `<div><i class="severity-swatch" style="background:${severityPalette[item.label]}" aria-hidden="true"></i><span>${item.label}</span><strong>${item.count}</strong></div>`).join('');
 }
 function renderAttackCatalogue(attacks = []) {
   const target = byId('overview-attack-catalogue');
-  if (!attacks.length) { target.innerHTML = '<div class="empty-state">No completed attacks yet.<small>Attack findings will appear after an assessment records completed steps.</small></div>'; return; }
+  if (!attacks.length) { target.innerHTML = '<div class="empty-state">No attack techniques available.<small>Attack catalogue could not be loaded.</small></div>'; return; }
   target.innerHTML = attacks.map(attack => {
-    const severity = ['Critical','High','Medium','Low','Informational'].includes(attack.severity) ? attack.severity : 'Unavailable';
-    const component = /^plc\d+$/i.test(attack.target || '') ? String(attack.target).toUpperCase() : attack.target || 'Not available';
-    const detected = attack.detected === true ? 'Detected' : 'Not detected';
-    const dvs = Number.isFinite(attack.finding_dvs) ? `${attack.finding_dvs.toFixed(1)} / 100` : 'Not available';
-    return `<details class="attack-card"><summary><span class="attack-severity" style="color:${severityPalette[severity] || '#6f6a62'}">${escapeHtml(severity.toUpperCase())}</span><span class="attack-card-title"><strong>${escapeHtml(attack.title || 'Attack technique')}</strong><span>${escapeHtml(attack.attack_step || 'Attack step unavailable')} · ${escapeHtml(attack.technique_id || 'MITRE ID unavailable')}</span></span><span class="attack-result">${escapeHtml(detected)}</span></summary><div class="attack-card-body"><p>${escapeHtml(attack.description || 'No plain-language description is available.')}</p><div class="attack-facts"><div><span>Target</span><strong>${escapeHtml(component)}</strong></div><div><span>Result</span><strong>${escapeHtml(friendlyResult(attack.result))}</strong></div><div><span>Detection</span><strong>${escapeHtml(detected)}</strong></div><div><span>Detection method</span><strong>${escapeHtml(friendlyDetectionMethod(attack.detection_method))}</strong></div><div><span>Severity</span><strong>${escapeHtml(severity)}</strong></div><div><span>Finding DVS</span><strong>${escapeHtml(dvs)}</strong></div><div><span>MITRE ATT&amp;CK</span><strong>${escapeHtml(attack.technique_id || 'Not available')}</strong></div><div><span>Security event</span><strong>${escapeHtml(attack.attack_event || 'Not available')}</strong></div></div></div></details>`;
+    const severity = ['Critical','High','Medium','Low','Informational'].includes(attack.severity) ? attack.severity : 'Informational';
+    const sids = Array.isArray(attack.detect_sids) && attack.detect_sids.length ? attack.detect_sids.join(', ') : 'No signature rule';
+    const defaultStep = attack.default_step || (attack.stage !== undefined ? `Stage ${attack.stage}` : '');
+    return `<details class="attack-card"><summary><span class="attack-severity" style="color:${severityPalette[severity] || '#6f6a62'}">${escapeHtml(severity.toUpperCase())}</span><span class="attack-card-title"><strong>${escapeHtml(attack.title || attack.name || 'Attack technique')}</strong><span>${escapeHtml(attack.technique_id || '')} · ${escapeHtml(attack.tactic || '')}</span></span><span class="attack-result">${escapeHtml(defaultStep)}</span></summary><div class="attack-card-body"><p>${escapeHtml(attack.description || 'Catalogued attack capability.')}</p><div class="attack-facts"><div><span>MITRE ID</span><strong>${escapeHtml(attack.technique_id || 'Catalogued')}</strong></div><div><span>Severity</span><strong>${escapeHtml(severity)}</strong></div><div><span>Tactical Stage</span><strong>${attack.stage !== undefined ? `Stage ${escapeHtml(attack.stage)}` : 'Catalogued'}</strong></div><div><span>MITRE Tactic</span><strong>${escapeHtml(attack.tactic || 'Catalogued')}</strong></div><div><span>Default Step</span><strong>${escapeHtml(attack.default_step || 'Catalogued')}</strong></div><div><span>Script</span><strong>${escapeHtml(attack.script || 'Catalogued')}</strong></div><div><span>Suricata SIDs</span><strong>${escapeHtml(sids)}</strong></div><div><span>Severity Basis</span><strong>${escapeHtml(attack.severity_reason || attack.severity_policy || 'attack-capability-v1')}</strong></div></div></div></details>`;
   }).join('');
 }
 function renderAssessmentOverview(counts, overview, assessmentName) {
   const available = counts && overview;
-  byId('overview-results-assessment').textContent = available ? assessmentName : 'No assessment results available';
-  for (const [id, key] of [['overview-total-findings','total_findings'],['overview-total-detected','detected'],['overview-total-failed','failed'],['overview-total-timeout','timeout']]) byId(id).textContent = available ? counts[key] : 'Not available';
+  setElementVisibility(byId('overview-results-section'), Boolean(available));
+  if (!available) return;
+  byId('overview-results-assessment').textContent = assessmentName;
+  for (const [id, key] of [['overview-total-findings','total_findings'],['overview-total-detected','detected'],['overview-total-failed','failed'],['overview-total-timeout','timeout']]) byId(id).textContent = counts[key];
   const dvs = overview?.dvs || {};
-  byId('overview-finding-dvs').textContent = dvs.finding_available ? `Available for ${dvs.finding_assessed} finding${dvs.finding_assessed === 1 ? '' : 's'}` : 'Not available';
-  byId('overview-campaign-dvs').textContent = dvs.campaign_available && Number.isFinite(dvs.campaign_score) ? `${dvs.campaign_score.toFixed(1)} / 100${dvs.campaign_rating ? ` (${dvs.campaign_rating})` : ''}` : 'Not available';
-  renderSeverityDistribution(overview?.severity_distribution || {});
-  renderAttackCatalogue(overview?.attacks || []);
+  byId('overview-finding-dvs').textContent = dvs.finding_available ? `Available for ${dvs.finding_assessed} finding${dvs.finding_assessed === 1 ? '' : 's'}` : 'Pending evidence';
+  byId('overview-campaign-dvs').textContent = dvs.campaign_available && Number.isFinite(dvs.campaign_score) ? `${dvs.campaign_score.toFixed(1)} / 100${dvs.campaign_rating ? ` (${dvs.campaign_rating})` : ''}` : 'Pending completion';
   const defense = overview?.defense || {};
-  byId('overview-defense-detected').textContent = available ? `${defense.detected} of ${defense.total}` : 'Not available';
-  byId('overview-defense-rate').textContent = available && Number.isFinite(defense.detection_rate) ? `${(defense.detection_rate * 100).toFixed(1)}%` : 'Not available';
+  byId('overview-defense-detected').textContent = `${defense.detected} of ${defense.total}`;
+  byId('overview-defense-rate').textContent = Number.isFinite(defense.detection_rate) ? `${(defense.detection_rate * 100).toFixed(1)}%` : 'Pending evidence';
   const methods = Object.entries(defense.methods || {}).filter(([method, count]) => Number(count) > 0 && !['none','unknown'].includes(String(method).toLowerCase()));
-  byId('overview-defense-methods').textContent = methods.length ? methods.map(([method,count]) => `${friendlyDetectionMethod(method)} (${count})`).join(', ') : 'Not available';
+  byId('overview-defense-methods').textContent = methods.length ? methods.map(([method,count]) => `${friendlyDetectionMethod(method)} (${count})`).join(', ') : 'No detections recorded';
+  setElementVisibility(byId('overview-defense-metrics-box'), true);
 }
 async function loadOverview() {
   const sequence = ++overviewRefreshSequence, runtimeSequence = runtimeRefreshSequence;
-  const [data, activity] = await Promise.all([api('/api/topology'), api('/api/live-battle?limit=10')]);
+  const cataloguePromise = cachedAttackCatalogue ? Promise.resolve(cachedAttackCatalogue) : api('/api/attack-catalogue').catch(() => null);
+  const [data, activity, catalogue] = await Promise.all([api('/api/topology'), api('/api/live-battle?limit=10'), cataloguePromise]);
+  if (!cachedAttackCatalogue && catalogue && Array.isArray(catalogue.attacks)) {
+    cachedAttackCatalogue = catalogue;
+  }
+  const activeCatalogue = cachedAttackCatalogue || catalogue;
   const active = activity.active_run;
   let counts = null, assessmentOverview = null, summaryUnavailable = false;
   if (active?.state === 'ACTIVE') {
@@ -252,19 +255,129 @@ async function loadOverview() {
   byId('overview-topology-summary').textContent = `${data.visual.nodes.length} devices · ${data.visual.edges.length} connections`;
   const assessmentState = assessmentLabel(active);
   const assessment = active?.state === 'ACTIVE' ? displayName(activity.display_identity, 'assessment', 'Current assessment') : assessmentState;
-  byId('overview-run').textContent = assessment;
   byId('run-status').textContent = active?.state === 'ACTIVE' ? `${assessment} — ${assessmentState.replace('Assessment ', '')}` : assessmentState;
-  byId('overview-run-detail').textContent = active?.state === 'ACTIVE' ? 'Review assessment results and recent security activity below.' : active?.state === 'REJECTED' ? 'Assessment evidence could not be verified. Review Technical details.' : 'Ready to begin a security assessment.';
+  if (activeCatalogue) {
+    renderSeverityDistribution(activeCatalogue.severity_distribution || {});
+    renderAttackCatalogue(activeCatalogue.attacks || []);
+  }
   renderAssessmentOverview(counts, assessmentOverview, assessment);
-  if (summaryUnavailable) byId('overview-run-detail').textContent = 'Assessment results are currently unavailable.';
+  if (summaryUnavailable) setElementVisibility(byId('overview-results-section'), false);
   renderRecentSecurityActivity(activity.security_events || []);
 }
 async function loadNetwork() {
   const [config, topology] = await Promise.all([api('/api/network-configuration'), api('/api/topology')]);
   renderNetworkConfiguration(config, topology);
+  topologySetupReady = true;
+  updateControlStates();
 }
 function gridValue(value, unit = '', digits = 2) {
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(digits)}${unit ? ' ' + unit : ''}` : 'Not available';
+}
+function renderBusVoltageProfile(buses = []) {
+  const table = byId('grid-bus-voltage-table'), chart = byId('grid-bus-voltage-chart');
+  if (!table || !chart) return;
+  if (!buses.length) {
+    table.innerHTML = '<tr><td colspan="3" class="table-empty">No bus voltage profile data available.</td></tr>';
+    chart.innerHTML = '<div class="empty-state">No voltage data</div>';
+    return;
+  }
+  table.innerHTML = buses.map(b => `<tr><td>Bus ${escapeHtml(b.bus_id)}</td><td>${Number(b.voltage_pu).toFixed(4)}</td><td>${Number(b.voltage_angle_deg).toFixed(2)}°</td></tr>`).join('');
+  const width = 460, height = 180, padL = 35, padR = 15, padT = 20, padB = 25;
+  const chartW = width - padL - padR, chartH = height - padT - padB;
+  const voltages = buses.map(b => b.voltage_pu);
+  const minV = Math.min(0.9, ...voltages) - 0.02, maxV = Math.max(1.1, ...voltages) + 0.02;
+  const barW = Math.max(4, Math.floor(chartW / buses.length) - 4);
+  const svgBars = buses.map((b, i) => {
+    const x = padL + i * (chartW / buses.length) + 2;
+    const norm = Math.max(0, Math.min(1, (b.voltage_pu - minV) / (maxV - minV)));
+    const barH = Math.max(2, norm * chartH);
+    const y = padT + (chartH - barH);
+    const color = b.voltage_pu < 0.95 || b.voltage_pu > 1.05 ? '#d97706' : '#15803d';
+    return `<rect class="chart-bar" x="${x}" y="${y}" width="${barW}" height="${barH}" fill="${color}" rx="2"><title>Bus ${b.bus_id}: ${b.voltage_pu.toFixed(4)} pu (${b.voltage_angle_deg.toFixed(1)}°)</title></rect><text class="chart-axis-label" x="${x + barW / 2}" y="${height - 8}">${b.bus_id}</text>`;
+  }).join('');
+  const midNorm = (1.0 - minV) / (maxV - minV);
+  const midY = padT + chartH * (1 - midNorm);
+  chart.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${width} ${height}"><line class="chart-grid-line" x1="${padL}" y1="${midY}" x2="${width - padR}" y2="${midY}" /><text class="chart-axis-label" x="${padL - 6}" y="${midY + 3}">1.0</text>${svgBars}</svg>`;
+}
+function renderLineLoadings(lines = []) {
+  const table = byId('grid-line-loading-table'), chart = byId('grid-line-loading-chart');
+  if (!table || !chart) return;
+  if (!lines.length) {
+    table.innerHTML = '<tr><td colspan="2" class="table-empty">The selected grid has no line-loading results.</td></tr>';
+    chart.innerHTML = '<div class="empty-state">No line loading data</div>';
+    return;
+  }
+  table.innerHTML = lines.map(l => `<tr><td>Line ${escapeHtml(l.line_id)}</td><td>${Number(l.loading_percent).toFixed(2)}%</td></tr>`).join('');
+  const width = 460, height = 180, padL = 35, padR = 15, padT = 20, padB = 25;
+  const chartW = width - padL - padR, chartH = height - padT - padB;
+  const loadings = lines.map(l => l.loading_percent);
+  const maxL = Math.max(10, Math.ceil(Math.max(...loadings) / 10) * 10);
+  const barW = Math.max(4, Math.floor(chartW / lines.length) - 4);
+  const svgBars = lines.map((l, i) => {
+    const x = padL + i * (chartW / lines.length) + 2;
+    const norm = Math.max(0, Math.min(1, l.loading_percent / maxL));
+    const barH = Math.max(2, norm * chartH);
+    const y = padT + (chartH - barH);
+    const color = l.loading_percent > 80 ? '#dc2626' : l.loading_percent > 50 ? '#d97706' : '#2563eb';
+    return `<rect class="chart-bar" x="${x}" y="${y}" width="${barW}" height="${barH}" fill="${color}" rx="2"><title>Line ${l.line_id}: ${l.loading_percent.toFixed(2)}%</title></rect><text class="chart-axis-label" x="${x + barW / 2}" y="${height - 8}">${l.line_id}</text>`;
+  }).join('');
+  chart.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${width} ${height}"><line class="chart-grid-line" x1="${padL}" y1="${padT + chartH}" x2="${width - padR}" y2="${padT + chartH}" /><text class="chart-axis-label" x="${padL - 6}" y="${padT + 4}">${maxL}%</text>${svgBars}</svg>`;
+}
+function renderBaselineTelemetry(telemetry = []) {
+  const table = byId('grid-telemetry-table');
+  if (!table) return;
+  if (!telemetry.length) {
+    table.innerHTML = '<tr><td colspan="5" class="table-empty">No baseline telemetry available.</td></tr>';
+    return;
+  }
+  table.innerHTML = telemetry.map(r => `<tr><td>${escapeHtml(r.timestamp)}</td><td>Bus ${escapeHtml(r.src_bus)}</td><td>Bus ${escapeHtml(r.dst_bus)}</td><td>${escapeHtml(r.packet_size_bytes)} B</td><td>${Number(r.voltage_pu).toFixed(4)} pu</td></tr>`).join('');
+}
+function resetCustomWorkflow(definition = null) {
+  validatedCustomDefinition = null;
+  const file = byId('custom-topology-file'); if (file) file.value = '';
+  setElementVisibility(byId('custom-topology-preview'), false);
+  setElementVisibility(byId('custom-topology-error'), false);
+  if (byId('custom-topology-error')) byId('custom-topology-error').textContent = '';
+  const raw = definition || {case_name:'custom_grid',nodes:[],edges:[]};
+  if (byId('custom-topology-json')) byId('custom-topology-json').value = JSON.stringify(raw, null, 2);
+  if (definition) renderTopologyBuilder(raw);
+  else {
+    if (byId('custom-builder-name')) byId('custom-builder-name').value = 'custom_grid';
+    if (byId('custom-builder-nodes')) byId('custom-builder-nodes').innerHTML = '';
+    if (byId('custom-builder-edges')) byId('custom-builder-edges').innerHTML = '';
+  }
+}
+function renderTopologyBuilder(definition = {}) {
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [], edges = Array.isArray(definition.edges) ? definition.edges : [];
+  byId('custom-builder-name').value = definition.case_name || 'custom_grid';
+  byId('custom-builder-nodes').innerHTML = nodes.map((node, index) => `<div class="builder-row builder-node" data-index="${index}"><span class="builder-index">Bus ${index}</span><label>Name<input data-field="name" value="${escapeHtml(node.name || `Bus ${index + 1}`)}"></label><label>Role<select data-field="type"><option value="slack" ${node.type === 'slack' ? 'selected' : ''}>Slack</option><option value="pv" ${node.type === 'pv' ? 'selected' : ''}>Generator (PV)</option><option value="pq" ${node.type === 'pq' ? 'selected' : ''}>Load (PQ)</option></select></label><label>Nominal kV<input type="number" step="0.1" min="0.1" data-field="vn_kv" value="${node.vn_kv ?? 110}"></label><label>Voltage p.u.<input type="number" step="0.001" min="0.1" data-field="voltage" value="${node.voltage ?? 1}"></label><label>Generation MW<input type="number" step="0.1" min="0" data-field="pg" value="${node.pg ?? 0}"></label><label>Load MW<input type="number" step="0.1" min="0" data-field="pl" value="${node.pl ?? 0}"></label><label>Load Mvar<input type="number" step="0.1" min="0" data-field="ql" value="${node.ql ?? 0}"></label><button type="button" class="builder-remove" data-remove-node="${index}" aria-label="Remove bus ${index}">Remove</button></div>`).join('');
+  byId('custom-builder-edges').innerHTML = edges.map((edge, index) => `<div class="builder-row builder-edge" data-index="${index}"><span class="builder-index">Line ${index + 1}</span><label>From bus<input type="number" min="0" step="1" data-field="from" value="${edge.from ?? 0}"></label><label>To bus<input type="number" min="0" step="1" data-field="to" value="${edge.to ?? Math.min(1, Math.max(0,nodes.length-1))}"></label><label>Length km<input type="number" min="0.001" step="0.1" data-field="length_km" value="${edge.length_km ?? 1}"></label><label>Resistance Ω/km<input type="number" min="0.0001" step="0.01" data-field="r_ohm_per_km" value="${edge.r_ohm_per_km ?? 0.1}"></label><label>Reactance Ω/km<input type="number" min="0.0001" step="0.01" data-field="x_ohm_per_km" value="${edge.x_ohm_per_km ?? 0.1}"></label><label>Capacitance nF/km<input type="number" min="0" step="0.1" data-field="c_nf_per_km" value="${edge.c_nf_per_km ?? 0}"></label><label>Max current kA<input type="number" min="0.001" step="0.01" data-field="max_i_ka" value="${edge.max_i_ka ?? 0.4}"></label><button type="button" class="builder-remove" data-remove-edge="${index}" aria-label="Remove line ${index + 1}">Remove</button></div>`).join('');
+}
+function topologyBuilderDefinition() {
+  const number = value => Number(value);
+  const nodes = [...byId('custom-builder-nodes').querySelectorAll('.builder-node')].map((row, bus_id) => {
+    const field = name => row.querySelector(`[data-field="${name}"]`).value;
+    return {bus_id, name:field('name').trim(), type:field('type'), vn_kv:number(field('vn_kv')), voltage:number(field('voltage')), pg:number(field('pg')), qg:0, pl:number(field('pl')), ql:number(field('ql'))};
+  });
+  const edges = [...byId('custom-builder-edges').querySelectorAll('.builder-edge')].map(row => {
+    const field = name => row.querySelector(`[data-field="${name}"]`).value;
+    return {from:number(field('from')),to:number(field('to')),length_km:number(field('length_km')),r_ohm_per_km:number(field('r_ohm_per_km')),x_ohm_per_km:number(field('x_ohm_per_km')),c_nf_per_km:number(field('c_nf_per_km')),max_i_ka:number(field('max_i_ka'))};
+  });
+  return {case_name:byId('custom-builder-name').value.trim(),nodes,edges};
+}
+async function validateAndPreviewCustom(definition) {
+  const validated = await postApi('/api/topology/validate', {definition});
+  validatedCustomDefinition = validated.definition || definition;
+  byId('custom-topology-json').value = JSON.stringify(validatedCustomDefinition, null, 2);
+  byId('custom-preview-case').textContent = validated.case_name;
+  byId('custom-preview-buses').textContent = validated.num_buses;
+  byId('custom-preview-edges').textContent = validated.num_edges;
+  if (byId('custom-preview-communication')) byId('custom-preview-communication').textContent = `${validated.communication_nodes} hosts/devices · ${validated.communication_links} CORE links`;
+  byId('custom-preview-badge').textContent = 'Valid';
+  setElementVisibility(byId('custom-topology-preview'), true);
+  setElementVisibility(byId('custom-topology-error'), false);
+  byId('topology-selection-status').textContent = `Validated ${validated.case_name}: ${validated.num_buses} buses and ${validated.num_edges} electrical lines. Apply it before starting CORE.`;
+  return validated;
 }
 async function loadGridStatus() {
   const sequence = ++gridRefreshSequence;
@@ -276,27 +389,81 @@ async function loadGridStatus() {
     ['grid-voltage',grid.model_average_voltage_pu,'pu',3],['grid-generation',grid.model_generation_mw,'MW',2],['grid-load',grid.model_load_mw,'MW',2],
     ['grid-live-voltage',grid.measured_voltage_pu,'pu',3],['grid-live-power',grid.measured_power_mw,'MW',2]
   ]) byId(id).textContent = gridValue(value,unit,digits);
+  setElementVisibility(byId('grid-card-count'), grid.component_count != null);
+  setElementVisibility(byId('grid-card-healthy'), grid.healthy != null);
+  setElementVisibility(byId('grid-card-warning'), grid.warning != null);
+  setElementVisibility(byId('grid-card-critical'), grid.critical != null);
+  setElementVisibility(byId('grid-card-voltage'), grid.model_average_voltage_pu != null);
+  setElementVisibility(byId('grid-card-generation'), grid.model_generation_mw != null);
+  setElementVisibility(byId('grid-card-load'), grid.model_load_mw != null);
+  setElementVisibility(byId('grid-card-live-voltage'), grid.measured_voltage_pu != null);
+  setElementVisibility(byId('grid-card-live-power'), grid.measured_power_mw != null);
+
+  const baseline = data.baseline_grid;
+  if (baseline?.summary) {
+    setElementVisibility(byId('grid-baseline-panel'), true);
+    const sum = baseline.summary || {};
+    if (byId('grid-baseline-buses')) byId('grid-baseline-buses').textContent = text(sum.electrical_buses);
+    if (byId('grid-baseline-voltage-range')) byId('grid-baseline-voltage-range').textContent = text(sum.voltage_range);
+    if (byId('grid-baseline-lines')) byId('grid-baseline-lines').textContent = text(sum.lines);
+    if (byId('grid-baseline-max-loading')) byId('grid-baseline-max-loading').textContent = text(sum.max_line_loading_pct || (sum.max_line_loading != null ? `${sum.max_line_loading}%` : '—'));
+    renderBusVoltageProfile(baseline.bus_voltages || []);
+    renderLineLoadings(baseline.line_loadings || []);
+    renderBaselineTelemetry(baseline.telemetry || []);
+  } else {
+    setElementVisibility(byId('grid-baseline-panel'), false);
+  }
+  setElementVisibility(byId('grid-next-bar'), Boolean(baseline?.summary && baseline.bus_voltages?.length && (baseline.line_loadings?.length || !grid.electrical_connections)));
+
   byId('grid-case').textContent = data.case_name === 'case14' ? 'IEEE-14' : data.case_name === 'case30' ? 'IEEE-30' : data.case_name.replaceAll('_',' ').replace(/\b\w/g, letter => letter.toUpperCase());
-  byId('grid-components').innerHTML = data.components.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.type)}</td><td>${gridValue(row.model_voltage_pu,'pu',3)}</td><td>${row.model_generation_mw == null && row.model_load_mw == null ? 'Not available' : `${gridValue(row.model_generation_mw,'MW')} / ${gridValue(row.model_load_mw,'MW')}`}</td><td>${escapeHtml(row.status)}</td></tr>`).join('') || '<tr><td colspan="5" class="table-empty">No components available.</td></tr>';
-  setDetails(byId('grid-network'), [['Network devices',gridValue(network.device_count,'',0)],['Communication connections',gridValue(network.connections,'',0)],
+  byId('grid-components').innerHTML = data.components.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.type)}</td><td>${row.model_voltage_pu == null ? '—' : gridValue(row.model_voltage_pu,'pu',3)}</td><td>${row.model_generation_mw == null && row.model_load_mw == null ? '—' : `${row.model_generation_mw == null ? '—' : gridValue(row.model_generation_mw,'MW')} / ${row.model_load_mw == null ? '—' : gridValue(row.model_load_mw,'MW')}`}</td></tr>`).join('') || '<tr><td colspan="4" class="table-empty">No configured components.</td></tr>';
+  setElementVisibility(byId('grid-live-network-panel'), Boolean(data.runtime_available));
+  setElementVisibility(byId('grid-live-observations'), Boolean(data.runtime_available));
+  if (data.runtime_available) setDetails(byId('grid-network'), [['Network devices',gridValue(network.device_count,'',0)],['Communication connections',gridValue(network.connections,'',0)],
     ['Electrical connections',gridValue(grid.electrical_connections,'',0)],['Responding components',gridValue(network.responding_components,'',0)],
     ['Failed component reads',gridValue(network.offline_components,'',0)],['Network monitoring',network.status],
-    ['Bandwidth capacity',gridValue(network.bandwidth_capacity_bps,'bit/s')],['Observed flow traffic rate',gridValue(network.observed_traffic.bits_per_second,'bit/s')],
+    ['Observed flow traffic rate',gridValue(network.observed_traffic.bits_per_second,'bit/s')],
     ['Recent detection notices',gridValue(network.recent_detection_notices,'',0)]]);
+  else byId('grid-network').innerHTML = '';
   byId('grid-sources').innerHTML = Object.values(data.provenance).map(value => `<p>${escapeHtml(value)}</p>`).join('');
-  setDetails(byId('grid-reactive-power'), [['Model reactive generation',gridValue(grid.model_reactive_generation_mvar,'Mvar')],['Model reactive load',gridValue(grid.model_reactive_load_mvar,'Mvar')]]);
-  byId('grid-technical-components').innerHTML = data.components.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.ip)}</td><td>${escapeHtml(row.last_observed || 'Not available')}</td></tr>`).join('');
+  byId('grid-reactive-generation').textContent = gridValue(grid.model_reactive_generation_mvar,'Mvar');
+  byId('grid-reactive-load').textContent = gridValue(grid.model_reactive_load_mvar,'Mvar');
+  setElementVisibility(byId('grid-reactive-generation-card'), grid.model_reactive_generation_mvar != null);
+  setElementVisibility(byId('grid-reactive-load-card'), grid.model_reactive_load_mvar != null);
+  setElementVisibility(byId('grid-reactive-power-panel'), grid.model_reactive_generation_mvar != null || grid.model_reactive_load_mvar != null);
+  byId('grid-technical-components').innerHTML = data.runtime_available ? data.components.map(row => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.ip)}</td><td>${escapeHtml(row.last_observed || 'Awaiting observation')}</td></tr>`).join('') : '';
 }
 function renderNetworkConfiguration(config, topology) {
   selectedTopologyDefinition = config.definition || null;
   byId('network-nodes').textContent = config.node_count; byId('network-edges').textContent = config.edge_count; byId('network-case').textContent = text(config.case_name || config.topology_version); byId('network-types').textContent = Object.keys(config.node_types).length;
   setDetails(byId('network-metadata'), [['Topology version', config.topology_version], ['Case', config.case_name], ['Node types', Object.entries(config.node_types).map(([k, v]) => `${k}: ${v}`).join(', ')]]);
   const selector = byId('topology-selector'), current = config.selected_case || config.case_name;
-  selector.innerHTML = (config.available_topologies || []).map(item => `<option value="${escapeHtml(item.case_name)}">${escapeHtml(item.name)}</option>`).join('');
+  const options = (config.available_topologies || []).map(item => `<option value="${escapeHtml(item.case_name)}">${escapeHtml(item.name)}</option>`);
+  if (!config.available_topologies?.some(item => item.case_name === 'custom')) {
+    options.push('<option value="custom">Custom Topology (Upload JSON)</option>');
+  }
+  selector.innerHTML = options.join('');
   selector.value = current;
   selector.disabled = !runtimeFresh || latestSystem?.core?.state === 'RUNTIME' || latestSystem?.runtime_marker || runtimeControlPending || topologyControlPending;
   byId('topology-selection-status').textContent = `Selected backend topology: ${current}. Changes are available before CORE startup.`;
   drawPyvisTopology(byId('network-topology'), topology.pyvis_html);
+
+  const isCustom = current === 'custom' || String(current).startsWith('custom_');
+  setElementVisibility(byId('custom-topology-panel'), isCustom);
+  if (!isCustom) {
+    resetCustomWorkflow();
+  } else if (config.definition) {
+    const def = config.definition;
+    if (byId('custom-preview-case')) byId('custom-preview-case').textContent = def.case_name;
+    if (byId('custom-preview-buses')) byId('custom-preview-buses').textContent = (def.nodes || []).length;
+    if (byId('custom-preview-edges')) byId('custom-preview-edges').textContent = (def.edges || []).length;
+    if (byId('custom-preview-communication')) byId('custom-preview-communication').textContent = `${(def.nodes || []).length + 4} hosts/devices · ${(def.nodes || []).length + 3} CORE links`;
+    if (byId('custom-preview-badge')) byId('custom-preview-badge').textContent = 'Valid';
+    setElementVisibility(byId('custom-topology-preview'), true);
+    if (byId('custom-topology-json')) byId('custom-topology-json').value = JSON.stringify(def, null, 2);
+    renderTopologyBuilder(def);
+  }
+  setElementVisibility(byId('network-next-bar'), true);
 }
 async function loadRuntime() { return refreshRuntimeState(); }
 function evidenceValue(value) {
@@ -364,6 +531,11 @@ async function loadBattle() {
   const targets = data.topology.nodes.filter(node => node.id.startsWith('plc')).map(node => node.id); const selector = byId('defense-target');
   if (!selector.options.length) { selector.innerHTML = targets.map(target => `<option value="${escapeHtml(target)}">${escapeHtml(target)}</option>`).join(''); }
   byId('campaign-status-detail').textContent = campaignStatus.error?.message || `Campaign ${campaignStatus.state}; monitoring ${campaignStatus.watcher || latestSystem?.watcher?.state || 'OFFLINE'}; step ${campaignStatus.current_step || 0}.`;
+  const runObj = data.active_run?.run || {};
+  const assessmentComplete = Boolean(
+    runObj.ended_at || ['COMPLETED', 'COMPLETE'].includes(runObj.status) || ['COMPLETED', 'COMPLETE'].includes(runObj.lifecycle_status)
+  );
+  setElementVisibility(byId('battle-next-bar'), assessmentComplete);
 }
 let selectedReportRun = null, reportPending = false;
 function reportQuery() { return selectedReportRun ? `?scenario_id=${encodeURIComponent(selectedReportRun.scenario_id)}&run_id=${encodeURIComponent(selectedReportRun.run_id)}` : ''; }
@@ -398,13 +570,15 @@ function loadRoute(route) { if (route === 'overview') return loadOverview(); if 
 function showPageRefreshError(error) {
   const notice = byId('runtime-refresh-status');
   notice.textContent = 'Page refresh unavailable — displayed information may be stale. Review Technical details.';
-  byId('overview-status-error').textContent = error.message;
+  if (byId('overview-status-error')) byId('overview-status-error').textContent = error.message;
   notice.dataset.state = 'stale';
 }
 async function activateRoute() {
   const sequence = ++routeRefreshSequence, route = location.hash.slice(1) || 'overview';
   document.querySelectorAll('[data-page]').forEach(page => page.classList.toggle('active', page.dataset.page === route));
   document.querySelectorAll('[data-route]').forEach(link => link.classList.toggle('active', link.dataset.route === route));
+  setElementVisibility(byId('global-status-row'), route !== 'overview');
+  setElementVisibility(byId('runtime-refresh-status'), route !== 'overview');
   await loadStatus();
   if (sequence !== routeRefreshSequence || route !== (location.hash.slice(1) || 'overview') || route === 'runtime') return;
   try { await loadRoute(route); }
@@ -450,11 +624,24 @@ async function runControl(path, payload, target) {
 }
 async function selectTopology() {
   if (topologyControlPending) return;
+  const selectedCase = byId('topology-selector').value;
+  if (selectedCase === 'custom') {
+    topologySetupReady = false;
+    updateControlStates();
+    setElementVisibility(byId('custom-topology-panel'), true);
+    setElementVisibility(byId('network-next-bar'), false);
+    resetCustomWorkflow();
+    try { resetCustomWorkflow(await api('/api/topology/template')); }
+    catch (_) { /* Upload and Advanced JSON remain available. */ }
+    byId('topology-selection-status').textContent = 'Create a topology in the builder or upload a JSON file, then validate and apply it.';
+    return;
+  }
   topologyControlPending = true; updateControlStates();
   const notice = byId('topology-selection-status'); notice.textContent = 'Loading the selected network…';
   try {
-    const selected = await postApi('/api/topology/select', {case_name: byId('topology-selector').value});
+    const selected = await postApi('/api/topology/select', {case_name: selectedCase});
     renderNetworkConfiguration(selected.configuration, selected);
+    topologySetupReady = true;
     notice.textContent = `Selected ${selected.topology.case_name}; showing ${selected.visual.nodes.length} network components and ${selected.visual.edges.length} connections.`;
     await loadOverview();
   } catch (error) {
@@ -468,29 +655,102 @@ function copySelectedTopology() {
   const definition = {case_name: selectedTopologyDefinition.case_name.startsWith('custom_') ? selectedTopologyDefinition.case_name : 'custom_grid',
     nodes: selectedTopologyDefinition.nodes, edges: selectedTopologyDefinition.edges};
   byId('custom-topology-json').value = JSON.stringify(definition, null, 2);
+  if (byId('custom-preview-case')) byId('custom-preview-case').textContent = definition.case_name;
+  if (byId('custom-preview-buses')) byId('custom-preview-buses').textContent = (definition.nodes || []).length;
+  if (byId('custom-preview-edges')) byId('custom-preview-edges').textContent = (definition.edges || []).length;
+  if (byId('custom-preview-badge')) byId('custom-preview-badge').textContent = 'Valid';
+  setElementVisibility(byId('custom-topology-preview'), true);
+}
+async function handleCustomTopologyUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const errBanner = byId('custom-topology-error');
+  const preview = byId('custom-topology-preview');
+  setElementVisibility(errBanner, false);
+  setElementVisibility(preview, false);
+  try {
+    const textContent = typeof file.text === 'function' ? await file.text() : await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result);
+      reader.onerror = () => rej(reader.error);
+      reader.readAsText(file);
+    });
+    let definition;
+    try {
+      definition = JSON.parse(textContent);
+    } catch (parseErr) {
+      throw new Error(`Invalid JSON syntax: ${parseErr.message}`);
+    }
+    await validateAndPreviewCustom(definition);
+    renderTopologyBuilder(definition);
+  } catch (err) {
+    setElementVisibility(preview, false);
+    if (errBanner) {
+      errBanner.textContent = `Validation Error: ${err.message}`;
+      setElementVisibility(errBanner, true);
+    }
+    byId('topology-selection-status').textContent = `Custom topology validation failed: ${err.message}`;
+  }
 }
 async function saveCustomTopology() {
   if (topologyControlPending || byId('custom-topology-save').disabled) return;
+  if (byId('topology-selector').value !== 'custom' && !String(byId('topology-selector').value).startsWith('custom_')) return;
   topologyControlPending = true; updateControlStates();
   const notice = byId('topology-selection-status');
   try {
     const definition = JSON.parse(byId('custom-topology-json').value);
+    await validateAndPreviewCustom(definition);
     const selected = await postApi('/api/topology/custom', {definition});
     renderNetworkConfiguration(selected.configuration, selected);
+    topologySetupReady = true;
     notice.textContent = `Saved and selected ${selected.topology.case_name}. Start CORE to use this topology.`;
     await loadOverview();
-  } catch (error) { notice.textContent = `Custom topology failed: ${error.message}`; }
+  } catch (error) {
+    notice.textContent = `Custom topology failed: ${error.message}`;
+    const errBanner = byId('custom-topology-error');
+    if (errBanner) {
+      errBanner.textContent = `Custom topology failed: ${error.message}`;
+      setElementVisibility(errBanner, true);
+    }
+  }
   finally { topologyControlPending = false; updateControlStates(); }
 }
 function bindControls() {
   byId('report-generate').addEventListener('click', generateReport);
-  byId('core-start').addEventListener('click', () => runControl('/api/runtime/start', {}, 'runtime-action-status'));
+  byId('core-start').addEventListener('click', () => byId('core-start').disabled ? undefined : runControl('/api/runtime/start', {}, 'runtime-action-status'));
   byId('core-stop').addEventListener('click', () => runControl('/api/runtime/stop', {}, 'runtime-action-status'));
   byId('watcher-start').addEventListener('click', () => runControl('/api/runtime/watcher/start', {}, 'runtime-action-status'));
   byId('core-gui').addEventListener('click', () => runControl('/api/runtime/gui', {}, 'runtime-action-status'));
   byId('topology-selector').addEventListener('change', selectTopology);
   byId('custom-topology-copy').addEventListener('click', copySelectedTopology);
   byId('custom-topology-save').addEventListener('click', saveCustomTopology);
+  const fileInput = byId('custom-topology-file');
+  if (fileInput) fileInput.addEventListener('change', handleCustomTopologyUpload);
+  const applyBtn = byId('custom-topology-apply-btn');
+  if (applyBtn) applyBtn.addEventListener('click', saveCustomTopology);
+  byId('custom-builder-add-node').addEventListener('click', () => {
+    const definition = topologyBuilderDefinition();
+    definition.nodes.push({bus_id:definition.nodes.length,name:`Bus ${definition.nodes.length + 1}`,type:definition.nodes.length ? 'pq':'slack',vn_kv:110,voltage:1,pg:0,qg:0,pl:0,ql:0});
+    renderTopologyBuilder(definition); validatedCustomDefinition = null;
+  });
+  byId('custom-builder-add-edge').addEventListener('click', () => {
+    const definition = topologyBuilderDefinition();
+    definition.edges.push({from:0,to:Math.min(1,Math.max(0,definition.nodes.length-1)),length_km:1,r_ohm_per_km:0.1,x_ohm_per_km:0.1,c_nf_per_km:0,max_i_ka:0.4});
+    renderTopologyBuilder(definition); validatedCustomDefinition = null;
+  });
+  for (const [id, attribute] of [['custom-builder-nodes','removeNode'],['custom-builder-edges','removeEdge']]) byId(id).addEventListener('click', event => {
+    const button = event.target.closest(`[data-${attribute.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase())}]`); if (!button) return;
+    const definition = topologyBuilderDefinition(), index = Number(button.dataset[attribute]);
+    if (attribute === 'removeNode') {
+      definition.nodes.splice(index,1); definition.nodes.forEach((node,i)=>node.bus_id=i);
+      definition.edges = definition.edges.filter(edge=>edge.from!==index&&edge.to!==index).map(edge=>({...edge,from:edge.from>index?edge.from-1:edge.from,to:edge.to>index?edge.to-1:edge.to}));
+    } else definition.edges.splice(index,1);
+    renderTopologyBuilder(definition); validatedCustomDefinition = null; setElementVisibility(byId('custom-topology-preview'),false);
+  });
+  byId('custom-builder-validate').addEventListener('click', async () => {
+    try { await validateAndPreviewCustom(topologyBuilderDefinition()); }
+    catch (error) { byId('custom-topology-error').textContent = error.message; setElementVisibility(byId('custom-topology-error'),true); setElementVisibility(byId('custom-topology-preview'),false); }
+  });
   byId('campaign-start').addEventListener('click', () => runControl('/api/campaign/start', {}, 'campaign-status-detail'));
   byId('campaign-next').addEventListener('click', () => runControl('/api/campaign/next', {}, 'campaign-status-detail'));
   byId('campaign-run').addEventListener('click', () => runControl('/api/campaign/run', {}, 'campaign-status-detail'));

@@ -129,6 +129,45 @@ class GridStatus(unittest.TestCase):
         self.assertEqual(json.loads(handler.wfile.getvalue()),data)
         handler.send_response.assert_called_once_with(200)
 
+    def test_baseline_grid_simulation_data(self):
+        self.topo = Topology(nodes=[{'bus_id': 0, 'name': 'Bus 1', 'type': 'slack', 'voltage': 1.06},
+                                    {'bus_id': 1, 'name': 'Bus 2', 'type': 'pq', 'voltage': 1.0}],
+                             edges=[(0, 1)], case_name='case14')
+        data = grid_status.snapshot()
+        self.assertIn('baseline_grid', data)
+        baseline = data['baseline_grid']
+        self.assertIn('summary', baseline)
+        self.assertIn('bus_voltages', baseline)
+        self.assertIn('line_loadings', baseline)
+        self.assertIn('telemetry', baseline)
+        self.assertGreater(len(baseline['bus_voltages']), 0)
+        self.assertGreater(len(baseline['line_loadings']), 0)
+        self.assertGreater(len(baseline['telemetry']), 0)
+        self.assertEqual(baseline['summary']['electrical_buses'], len(baseline['bus_voltages']))
+
+    def test_custom_baseline_uses_the_selected_canonical_electrical_model(self):
+        self.topo = Topology.from_custom_dict({
+            'case_name': 'custom_power_flow',
+            'nodes': [
+                {'bus_id': 0, 'name': 'Grid connection', 'type': 'slack', 'vn_kv': 110, 'voltage': 1.02},
+                {'bus_id': 1, 'name': 'Plant load', 'type': 'pq', 'vn_kv': 110, 'pl': 8.0, 'ql': 2.0},
+                {'bus_id': 2, 'name': 'Auxiliary load', 'type': 'pq', 'vn_kv': 110, 'pl': 3.0, 'ql': 1.0},
+            ],
+            'edges': [
+                {'from': 0, 'to': 1, 'length_km': 2, 'r_ohm_per_km': .08, 'x_ohm_per_km': .12, 'c_nf_per_km': 8, 'max_i_ka': .4},
+                {'from': 1, 'to': 2, 'length_km': 1, 'r_ohm_per_km': .1, 'x_ohm_per_km': .15, 'c_nf_per_km': 6, 'max_i_ka': .3},
+            ],
+        })
+        baseline = grid_status.snapshot()['baseline_grid']
+        self.assertNotIn('error', baseline)
+        self.assertEqual(baseline['case_name'], 'custom_power_flow')
+        self.assertEqual(baseline['simulation_source'], 'canonical_custom')
+        self.assertEqual(baseline['summary']['electrical_buses'], 3)
+        self.assertEqual(baseline['summary']['lines'], 2)
+        self.assertEqual(len(baseline['bus_voltages']), 3)
+        self.assertEqual(len(baseline['line_loadings']), 2)
+        self.assertEqual(len(baseline['telemetry']), 2)
+
 
 if __name__=='__main__':
     unittest.main()
