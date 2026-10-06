@@ -89,7 +89,7 @@ toc = [
     "3. Network Metrics",
     "4. Report Metrics",
     "5. Training Metrics",
-    "6. DVS (Defense Vulnerability Score)",
+    "6. Campaign DVS / Defence Performance Score",
     "7. XAI Metrics",
 ]
 for item in toc:
@@ -379,19 +379,8 @@ for i, r in enumerate(rows):
     pdf.table_row(r, w9, fill=(i % 2 == 0))
 
 pdf.ln(3)
-pdf.sub_title("4.2 CVSS Scores")
-w10 = [50, 40]
-pdf.table_header(["Severity", "CVSS Score"], w10)
-rows = [
-    ["Critical", "9.5"],
-    ["High", "7.5"],
-    ["Medium", "5.0"],
-    ["Low", "2.5"],
-    ["Informational", "0.0"],
-]
-for i, r in enumerate(rows):
-    pdf.table_row(r, w10, fill=(i % 2 == 0))
-
+pdf.sub_title("4.2 DVS in Reports")
+pdf.body_text("Finding DVS remains severity (up to 20) plus verified effects (up to 80), range 0-100; weights are unchanged. Capability severity is resolved centrally: discovery LOW, information access/collection MEDIUM, state/control interference HIGH, unknown HIGH fallback. Evidence v2 retains passive SCADA values and poll failures, write ACKs and actual returned collection values with complete step identity. Flags or names alone do not establish impact. States distinguish unknown, verified_none and verified_adverse. Corroborated partial effects can survive FAILED/TIMEOUT. Process/physical/safety require explicit independent instrument facts; current runtime supplies none. Overlapping consequence references are not counted twice. Campaign DVS remains the unchanged aggregate metric; neither metric is CVSS.")
 pdf.ln(3)
 pdf.sub_title("4.3 Severity Classification")
 w11 = [80, 50]
@@ -450,7 +439,7 @@ for i, r in enumerate(rows):
 # SECTION 6: DVS
 # =============================================================================
 pdf.add_page()
-pdf.section_title("6. DVS (Defense Vulnerability Score)")
+pdf.section_title("6. Campaign DVS / Defence Performance Score")
 
 pdf.sub_title("6.1 DVS Composite Score")
 w13 = [40, 15, 55, 30]

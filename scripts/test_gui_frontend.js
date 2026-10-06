@@ -17,12 +17,18 @@ const runtimeControlIds = ['core-start', 'core-stop', 'watcher-start', 'core-gui
 const campaignControlIds = ['campaign-start', 'campaign-next', 'campaign-run', 'campaign-isolate', 'campaign-restore', 'defense-target'];
 
 function snapshot(state = 'STOPPED', watcher = 'STOPPED', generation = null) {
+  const runId = `run-${generation || 'fixture'}`;
   return {
     core: {state, daemon: 'AVAILABLE', session_id: state === 'RUNTIME' ? 7 : null},
     watcher: {state: watcher}, generation, runtime_marker: state === 'RUNTIME',
+    display_identity: {
+      assessment: {display_name: state === 'RUNTIME' ? 'Assessment 1' : null, internal_id: state === 'RUNTIME' ? runId : null},
+      core_session: {display_name: state === 'RUNTIME' ? 'CORE Session 1' : null, internal_id: state === 'RUNTIME' ? 7 : null},
+      runtime_generation: {display_name: state === 'RUNTIME' ? 'Runtime Generation 1' : null, internal_id: state === 'RUNTIME' ? generation : null}
+    },
     active_run: state === 'RUNTIME' ? {
       state: 'ACTIVE', integrity_validated: false,
-      run: {scenario_id: 'scenario-fixture', run_id: `run-${generation || 'fixture'}`,
+      run: {scenario_id: 'scenario-fixture', run_id: runId,
         lifecycle_status: 'RUNNING', started_at: '2026-10-04T10:00:00Z'}
     } : null
   };
@@ -151,10 +157,13 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
     if (url === '/api/network-configuration') return response({node_count: 2, edge_count: 0, case_name: 'case14', selected_case: 'case14',
       available_topologies: [{case_name: 'case14', name: 'IEEE 14 Bus'}, {case_name: 'case30', name: 'IEEE 30 Bus'}],
       topology_version: 'topology-fixture', node_types: {plc: 1, hub: 1}});
-    if (url.startsWith('/api/live-battle?limit=100')) return response({...topology,
+    if (url.startsWith('/api/live-battle?limit=')) return response({...topology,
       pyvis_html: url.includes('visual_signature=fixture-visual') ? null : topology.pyvis_html,
       visual_signature: 'fixture-visual', active_run: battleActive,
+      display_identity: defaultDiagnostics.display_identity, campaign_display: {},
       network_events: [], security_events: [], background_network: [], network_event_count: 0, security_event_count: 0, limit: 100, campaign: null});
+    if (url.startsWith('/api/report-summary')) return response({run_id:battleActive?.run?.run_id,scenario_id:battleActive?.run?.scenario_id,
+      finding_summary:{total_findings:0,detected:0,failed:0,timeout:0,techniques:0,targets:0}});
     if (url === '/api/campaign/status') return response({state: campaignState, watcher: defaultDiagnostics.watcher.state, current_step: 0});
     throw new Error(`Unexpected mocked GET: ${url}`);
   };
@@ -215,8 +224,8 @@ function styleRules(selectorPattern) {
 
 async function testStoppedAndStyles() {
   const env = await harness(snapshot());
-  assert.equal(env.element('core-status').textContent, 'CORE — STOPPED');
-  assert.equal(env.element('overview-core').textContent, 'STOPPED');
+  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Ready');
+  assert.equal(env.element('overview-core').textContent, 'Ready');
   assertRuntimeControls(env, true, false, false);
   assert.equal(env.element('core-gui').disabled, true, 'CORE GUI requires a running owned session');
   assert.ok(countRequests(env, 'GET', diagnosticsPath) >= 1, 'bootstrap must obtain a unified runtime diagnostics snapshot');
@@ -241,12 +250,12 @@ async function testRuntimeSnapshot() {
   const before = countRequests(env, 'GET', diagnosticsPath);
   await env.call('loadRuntime');
   assert.equal(countRequests(env, 'GET', diagnosticsPath), before + 1, 'opening Runtime uses one unified snapshot');
-  assert.equal(env.element('core-status').textContent, 'CORE — RUNTIME');
-  assert.equal(env.element('overview-core').textContent, 'RUNTIME');
-  assert.equal(env.element('runtime-session').textContent, '7');
-  assert.equal(env.element('runtime-generation').textContent, 'generation-B');
-  assert.equal(env.element('generation-status').textContent, 'GENERATION — generation-B');
-  assert.equal(env.element('run-status').textContent, 'ACTIVE RUN — run-generation-B');
+  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running');
+  assert.equal(env.element('overview-core').textContent, 'Running');
+  assert.equal(env.element('runtime-session').textContent, 'CORE Session 1');
+  assert.equal(env.element('runtime-generation').textContent, 'Runtime Generation 1');
+  assert.equal(env.element('generation-status').textContent, 'Runtime Generation 1');
+  assert.equal(env.element('run-status').textContent, 'Assessment 1 — in progress');
   assert.equal(env.element('runtime-watcher').textContent, 'STOPPED');
   assertRuntimeControls(env, false, true, true);
   assert.equal(env.element('core-gui').disabled, false, 'CORE GUI is available for the running owned session');
@@ -284,7 +293,7 @@ async function testStartConflictAndPending() {
   await flush();
   assert.ok(countRequests(env, 'GET', diagnosticsPath) > beforeRefresh, 'a rejected POST must refresh runtime diagnostics');
   assert.equal(env.element('runtime-action-status').textContent, backendMessage, 'refresh must preserve the backend conflict message');
-  assert.equal(env.element('core-status').textContent, 'CORE — RUNTIME');
+  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running');
   assertRuntimeControls(env, false, true, false);
   assert.notEqual(env.element('core-start').getAttribute('aria-busy'), 'true', 'settled Start clears aria-busy');
   assert.equal(countRequests(env, 'POST'), 1, 'a backend conflict must not trigger retries or automatic controls');
@@ -331,7 +340,7 @@ async function testStartConflictAndPending() {
   assert.equal(countRequests(superseded, 'POST'), 1, 'a superseded confirmation must never retry Start');
   newestSnapshot.resolve(superseded.response(snapshot('RUNTIME', 'IDLE', 'generation-confirmation-winner')));
   await newestRefresh;
-  assert.equal(superseded.element('core-status').textContent, 'CORE — RUNTIME');
+  assert.equal(superseded.element('core-status').textContent, 'Assessment Environment — Running');
   assert.equal(superseded.element('runtime-action-status').textContent, backendMessage, 'the newest snapshot must preserve the original 409 message');
   assertRuntimeControls(superseded, false, true, false);
   assert.equal(countRequests(superseded, 'POST'), 1);
@@ -352,7 +361,7 @@ async function testStaleRefresh() {
   assert.doesNotMatch(env.element('runtime-refresh-status').textContent, /stale|failed/i, 'a successful snapshot clears stale feedback');
 
   const initiallyUnavailable = await harness(snapshot(), {bootstrapError: new Error('initial connection unavailable')});
-  assert.equal(initiallyUnavailable.element('core-status').textContent, 'CORE — UNKNOWN', 'initial failure must never fabricate STOPPED');
+  assert.equal(initiallyUnavailable.element('core-status').textContent, 'Assessment Environment — Unavailable', 'initial failure must never fabricate STOPPED');
   assert.match(initiallyUnavailable.element('runtime-refresh-status').textContent, /stale|failed|unavailable|error/i);
   assertRuntimeControls(initiallyUnavailable, false, false, false);
   assert.equal(countRequests(initiallyUnavailable, 'POST'), 0);
@@ -369,8 +378,8 @@ async function testOutOfOrderRefreshes() {
   await newRefresh;
   older.resolve(env.response(snapshot()));
   await oldRefresh;
-  assert.equal(env.element('core-status').textContent, 'CORE — RUNTIME', 'older response must not overwrite the header');
-  assert.equal(env.element('runtime-generation').textContent, 'generation-new', 'older response must not overwrite Runtime diagnostics');
+  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running', 'older response must not overwrite the header');
+  assert.equal(env.element('runtime-generation').textContent, 'Runtime Generation 1', 'older response must not overwrite Runtime diagnostics');
   assertRuntimeControls(env, false, true, false);
 
   const oldFailure = deferred(), latest = deferred();
@@ -382,7 +391,7 @@ async function testOutOfOrderRefreshes() {
   await latestRefresh;
   oldFailure.reject(new Error('obsolete connection failure'));
   await failureRefresh;
-  assert.equal(env.element('runtime-generation').textContent, 'generation-newest');
+  assert.equal(env.element('runtime-generation').textContent, 'Runtime Generation 1');
   assertRuntimeControls(env, false, true, true);
   assert.doesNotMatch(env.element('runtime-refresh-status').textContent, /stale|failed/i, 'obsolete failure must not invalidate the latest snapshot');
   assert.equal(countRequests(env, 'POST'), 0);
@@ -391,14 +400,127 @@ async function testOutOfOrderRefreshes() {
 async function testCanonicalXmlContract() {
   assert.doesNotMatch(htmlSource, /\bid\s*=\s*["']core-xml["']/i, 'the unused editable XML path must be removed');
   assert.doesNotMatch(appSource, /byId\(["']core-xml["']\)/, 'frontend must not read a removed XML field');
-  assert.match(htmlSource, /core_topology\.xml/, 'Runtime must identify the existing canonical backend XML path');
+  assert.doesNotMatch(htmlSource, /core_topology\.xml/, 'backend filenames should not be prominent in the professional UI');
   assert.doesNotMatch(htmlSource, /data\/core-runtime\/campaign\.xml/, 'the misleading unused XML default must be removed');
   const campaignSource = fs.readFileSync(path.join(root, 'gui/campaign.py'), 'utf8');
   const serverSource = fs.readFileSync(path.join(root, 'gui/server.py'), 'utf8');
-  assert.match(campaignSource, /generate_core_xml\(case=case, output_path=str\(ROOT \/ "core_topology\.xml"\)\)/,
-    'the backend canonical topology output contract must remain unchanged');
+  assert.match(campaignSource, /generate_core_xml\(output_path=str\(ROOT \/ "core_topology\.xml"\), topology=topology\)/,
+    'CORE must generate the selected canonical model at the existing output path');
   assert.match(serverSource, /self\.path == "\/api\/runtime\/start":\s*payload, status = CAMPAIGNS\.start_core\(\)/,
     'runtime Start must keep using the existing ownership-aware backend launch');
+}
+
+async function testProfessionalOverviewUsesExistingData() {
+  const system = snapshot('RUNTIME','IDLE','generation-professional');
+  system.active_run.run.campaign_request = {state:'COMPLETED'}; // only a step completion
+  const original = JSON.stringify(system);
+  const env = await harness(system);
+  const events = [
+    {event_type:'attack_finished',target_node:'plc14',mitre_technique:'T0881',timestamp:'2026-10-06T15:11:00Z',
+      correlation_id:'hidden-correlation',evidence:{step_name:'service_stop',return_status:'FAILED'}},
+    {event_type:'detection',target_node:'plc3',mitre_technique:'T0835',timestamp:'2026-10-06T15:12:00Z',
+      evidence:{step_name:'manipulate_io_image',detection_method:'ml'}}
+  ];
+  const eventOriginal = JSON.stringify(events);
+  const reportUrl = '/api/report-summary?scenario_id=scenario-fixture&run_id=run-generation-professional';
+  env.enqueue('/api/live-battle?limit=10', {active_run:system.active_run,display_identity:system.display_identity,security_events:events});
+  env.enqueue(reportUrl, {run_id:system.active_run.run.run_id,scenario_id:'scenario-fixture',
+    finding_summary:{total_findings:19,detected:11,failed:7,timeout:1,techniques:8,targets:14},
+    assessment_overview:{severity_distribution:{Critical:0,High:8,Medium:5,Low:6,Informational:0},
+      attacks:[{finding_id:'ASCEND-PG-001',attack_step:'Attack Step 1',attack_event:'Attack Event 1',title:'Manipulate I/O Image',
+        description:'Attempts to alter information exchanged with an industrial controller.',technique_id:'T0835',target:'plc3',
+        result:'SUCCESS',detected:true,detection_method:'ml',severity:'High',finding_dvs:15}],
+      defense:{detected:11,total:19,detection_rate:11/19,methods:{ml:6,suricata:3,both:2,none:8}},
+      dvs:{finding_available:true,finding_assessed:19,finding_total:19,campaign_available:true,campaign_score:64.25,campaign_rating:'MODERATE'}}});
+  await env.call('loadOverview');
+  assert.equal(env.element('overview-core').textContent,'Running');
+  assert.equal(env.element('overview-watcher').textContent,'Ready');
+  assert.equal(env.element('overview-run').textContent,'Assessment 1');
+  assert.equal(env.element('overview-session').textContent,'CORE Session 1');
+  assert.equal(env.element('overview-generation').textContent,'Runtime Generation 1');
+  assert.equal(env.element('overview-total-findings').textContent,19);
+  assert.equal(env.element('overview-total-detected').textContent,11);
+  assert.equal(env.element('overview-total-failed').textContent,7);
+  assert.equal(env.element('overview-total-timeout').textContent,1);
+  assert.equal(env.element('overview-finding-dvs').textContent,'Available for 19 findings');
+  assert.equal(env.element('overview-campaign-dvs').textContent,'64.3 / 100 (MODERATE)');
+  assert.equal(env.element('overview-severity-total').textContent,19);
+  assert.match(env.element('overview-severity-legend').innerHTML,/High.*8.*Medium.*5.*Low.*6/);
+  assert.match(env.element('overview-attack-catalogue').innerHTML,/Manipulate I\/O Image.*Attack Step 1.*T0835.*PLC3.*15\.0 \/ 100/s);
+  assert.equal(env.element('overview-defense-detected').textContent,'11 of 19');
+  assert.equal(env.element('overview-defense-rate').textContent,'57.9%');
+  assert.match(env.element('overview-defense-methods').textContent,/ML \(6\).*Network monitoring \(3\).*Combined monitoring \(2\)/);
+  assert.equal(env.element('overview-topology-name').textContent,'IEEE-14');
+  assert.match(env.element('overview-topology-summary').textContent,/devices · .* connections/);
+  const activity = env.element('overview-activity').innerHTML;
+  for (const value of ['Detection','PLC3','T0835','Detected by ML','PLC14','Failed']) assert.ok(activity.includes(value),value);
+  assert.doesNotMatch(activity,/hidden-correlation|evidence|return_status|\{"/);
+  assert.ok(activity.indexOf('PLC3') < activity.indexOf('PLC14'),'newest activity first');
+  for (const id of ['core-status','watcher-status','run-status','overview-run','overview-core','overview-watcher']) {
+    assert.doesNotMatch(env.element(id).textContent,/run-|generation-|RUNTIME|WATCHER|DAEMON|OWNERSHIP/);
+  }
+  assert.match(env.element('overview-technical-data').innerHTML,/Internal assessment ID.*run-generation-professional/);
+  assert.match(env.element('overview-technical-data').innerHTML,/Internal generation ID.*generation-professional/);
+  assert.equal(env.element('generation-status').textContent,'Runtime Generation 1');
+  const disclosure = htmlSource.match(/<details[^>]*id="overview-technical"[^>]*>(.*?)<\/details>/s);
+  assert.ok(disclosure); assert.doesNotMatch(disclosure[0].split('>')[0],/\bopen\b/);
+  assert.match(disclosure[1],/Technical details|Runtime generation/);
+  assert.doesNotMatch(htmlSource,/Bounded read model|No event history is scanned|CORE ownership marker/);
+  assert.match(cssSource,/\.technical-details strong\{[^}]*white-space:nowrap/);
+  assert.equal(JSON.stringify(system),original);
+  assert.equal(JSON.stringify(events),eventOriginal);
+  assert.equal(countRequests(env,'POST'),0);
+  assert.equal(countRequests(env,'GET','/api/campaign/status'),0,'overview must not invoke the result-consuming campaign status path');
+  const busy = await harness(snapshot('RUNTIME','BUSY','processing'));
+  assert.equal(busy.element('overview-watcher').textContent,'Active');
+  const unavailable = snapshot('UNKNOWN','UNKNOWN'); unavailable.core.daemon = 'UNAVAILABLE';
+  const offline = await harness(unavailable);
+  assert.equal(offline.element('overview-core').textContent,'Unavailable');
+  assert.equal(offline.element('overview-watcher').textContent,'Unavailable');
+  const stopped = await harness(snapshot());
+  assert.equal(stopped.element('overview-run').textContent,'No assessment running');
+  assert.match(stopped.element('overview-activity').innerHTML,/No security activity yet/);
+  const finished = {...system.active_run,run:{...system.active_run.run,status:'COMPLETED'}};
+  assert.equal(await env.call('assessmentLabel',finished),'Assessment completed');
+  const liveReads = countRequests(stopped,'GET','/api/live-battle?limit=10');
+  for(let tick=0;tick<5;tick++) await stopped.tickIntervals();
+  assert.equal(countRequests(stopped,'GET','/api/live-battle?limit=10'),liveReads+1,'overview refreshes its existing read-only stream every five ticks');
+  assert.equal(countRequests(stopped,'POST'),0);
+}
+
+async function testOverviewIntroductionAndEmptyState() {
+  for (const phrase of [
+    'Cybersecurity Assessment for Power Grid Systems',
+    'ASCEND-PG safely simulates cyber attacks against a power-grid environment',
+    'WHAT ARE WE PROTECTING?', 'Power Grid', 'HOW IS IT MONITORED?', 'PLC &amp; SCADA', 'Cyber Attacks', 'Security Detection', 'Security Assessment',
+    'ATTACK LIFECYCLE', 'Attacker', 'Target', 'Network Activity', 'Detection', 'Result', 'ATTACKS USED IN THE ASSESSMENT', 'DEFENSE MONITORING', 'Technical concepts'
+  ]) assert.match(htmlSource, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const concept of ['Programmable Logic Controller', 'Supervisory Control and Data Acquisition', 'MITRE ATT&amp;CK', 'PPO / AI', 'Suricata', 'Defense Vulnerability Score', 'CORE']) assert.match(htmlSource, new RegExp(concept));
+  assert.match(htmlSource, /href="#runtime">Start Assessment/);
+  assert.match(htmlSource, /href="#grid">Explore the System/);
+  assert.match(htmlSource, /class="hero-flow"[\s\S]*?Power Grid[\s\S]*?Monitoring[\s\S]*?Cyber Attacks[\s\S]*?Defense \/ Detection[\s\S]*?Evidence[\s\S]*?Security Assessment/);
+  const env = await harness(snapshot());
+  assert.equal(env.element('overview-results-assessment').textContent, 'No assessment results available');
+  assert.equal(env.element('overview-total-findings').textContent, 'Not available');
+  assert.equal(env.element('overview-finding-dvs').textContent, 'Not available');
+  assert.equal(env.element('overview-campaign-dvs').textContent, 'Not available');
+  assert.match(env.element('overview-attack-catalogue').innerHTML, /No completed attacks yet/);
+  assert.equal(env.element('overview-severity-chart').getAttribute('aria-label'), 'No attack severity data available');
+  assert.equal(countRequests(env, 'POST'), 0);
+}
+
+async function testOverviewCustomTopologyPreview() {
+  const env = await harness(snapshot());
+  const custom = {topology:{case_name:'custom_laboratory_network'},
+    visual:{nodes:Array.from({length:8},(_,index)=>({id:`plc${index+1}`})),edges:Array.from({length:9},(_,index)=>({from:index,to:index+1}))},
+    visual_signature:'custom-overview',pyvis_html:'<html>Custom Laboratory Network</html>'};
+  env.enqueue('/api/topology', custom);
+  env.enqueue('/api/live-battle?limit=10', {active_run:null,display_identity:{},security_events:[]});
+  await env.call('loadOverview');
+  assert.equal(env.element('overview-topology-name').textContent, 'Custom Laboratory Network');
+  assert.equal(env.element('overview-topology-summary').textContent, '8 devices · 9 connections');
+  assert.match(env.element('overview-topology').children[0].srcdoc, /Custom Laboratory Network/);
+  assert.equal(countRequests(env, 'POST'), 0);
 }
 
 async function testOtherControlGating() {
@@ -443,14 +565,14 @@ async function testObsoleteRouteFailure() {
       if (navigateBack) await env.navigate(`#${oldRoute}`);
       const notice = env.element('runtime-refresh-status');
       const currentNotice = notice.textContent, currentState = notice.dataset.state;
-      assert.equal(env.element('core-status').textContent, 'CORE — RUNTIME');
+      assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running');
       assert.equal(currentState, 'current');
       pending.reject(new Error(`obsolete ${oldRoute} fixture failure`));
       await oldNavigation;
       await flush();
       assert.equal(notice.textContent, currentNotice, 'an obsolete route failure must not overwrite the fresh global notice');
       assert.equal(notice.dataset.state, currentState, 'an obsolete route failure must not mark current diagnostics stale');
-      assert.equal(env.element('runtime-generation').textContent, 'generation-route-current');
+      assert.equal(env.element('runtime-generation').textContent, 'Runtime Generation 1');
       assertRuntimeControls(env, false, true, false);
       assert.equal(countRequests(env, 'POST'), 0, 'navigation and obsolete route errors must remain read-only');
     }
@@ -458,9 +580,9 @@ async function testObsoleteRouteFailure() {
 }
 
 function assertWatcherReady(env) {
-  assert.equal(env.element('watcher-status').textContent, 'WATCHER — IDLE');
+  assert.equal(env.element('watcher-status').textContent, 'Monitoring — Ready');
   assert.equal(env.element('runtime-watcher').textContent, 'IDLE');
-  assert.match(env.element('runtime-action-status').textContent, /\bIDLE\b.*\bready\b/i, 'matching diagnostics must replace the transient POST acknowledgement with verified readiness');
+  assert.equal(env.element('runtime-action-status').textContent, 'Security monitoring is ready.', 'matching diagnostics must replace the transient acknowledgement with verified readiness');
   for (const id of ['watcher-status', 'runtime-watcher', 'runtime-action-status']) {
     assert.doesNotMatch(env.element(id).textContent, /UNVERIFIED/, `${id} must no longer display the transient acknowledgement`);
   }
@@ -485,8 +607,7 @@ async function testWatcherImmediateReadiness() {
   busy.enqueue('/api/runtime/watcher/start', {ok: true, session_id: 7, watcher: 'UNVERIFIED'}, {method: 'POST', status: 202});
   await busy.click('watcher-start');
   assert.equal(busy.element('runtime-watcher').textContent, 'BUSY');
-  assert.match(busy.element('runtime-action-status').textContent, /\bBUSY\b.*\bverified\b/i);
-  assert.match(busy.element('runtime-action-status').textContent, /not ready|busy/i, 'BUSY must not be described as ready for a campaign');
+  assert.equal(busy.element('runtime-action-status').textContent, 'Security monitoring is active.');
   assertRuntimeControls(busy, false, true, false);
   assert.equal(countRequests(busy, 'POST'), 1);
 }
@@ -611,7 +732,7 @@ async function testWatcherIdentityAndBoundedObservation() {
   await finalTick;
   const boundedReads = countRequests(pending, 'GET', diagnosticsPath);
   assert.equal(boundedReads - initialReads, 30, 'unsuccessful readiness observation must be bounded to thirty diagnostics snapshots including confirmation');
-  assert.match(pending.element('runtime-action-status').textContent, /not verified|unverified|timed out|limit/i);
+  assert.match(pending.element('runtime-action-status').textContent, /not verified|could not be verified|unverified|timed out|limit/i);
   assert.doesNotMatch(pending.element('runtime-action-status').textContent, /verified and ready/i);
   for (let tick = 0; tick < 5; tick += 1) await pending.tickIntervals();
   assert.equal(countRequests(pending, 'GET', diagnosticsPath), boundedReads, 'exhausted readiness budget must stop the GET loop');
@@ -639,7 +760,7 @@ async function testBackgroundTrafficIsSeparate() {
   assert.match(backgroundHtml, /Suricata EVE flow/);
   assert.match(backgroundHtml, /10\.0\.0\.100/);
   assert.match(backgroundHtml, /10\.0\.0\.8/);
-  assert.match(htmlSource, /not correlated to a campaign run or PPO step/);
+  assert.match(htmlSource, /not associated with a specific attack step/);
   assert.equal(countRequests(env, 'GET', '/api/live-battle?limit=100'), 1);
 }
 
@@ -678,6 +799,33 @@ async function testTopologySelectionFailureIsVisible() {
   assert.equal(countRequests(env, 'POST', '/api/topology/select'), 1);
 }
 
+async function testCustomTopologyEditorAndGuards() {
+  const env = await harness(snapshot());
+  await env.navigate('#network');
+  const definition = {case_name:'custom_lab', nodes:[{bus_id:0,name:'Generator',type:'slack'}], edges:[]};
+  const selected = {configuration:{node_count:5,edge_count:4,case_name:'custom_lab',selected_case:'custom_lab',
+    available_topologies:[{case_name:'case14',name:'IEEE 14'},{case_name:'custom_lab',name:'custom_lab'}],
+    node_types:{plc:1,hub:1,scada:1,attacker:1,ids:1},definition},topology:{case_name:'custom_lab'},
+    visual:{nodes:[{id:'plc1'}],edges:[]},pyvis_html:'<html>Custom PyVis plc1</html>'};
+  env.element('custom-topology-json').value = JSON.stringify(definition);
+  env.enqueue('/api/topology/custom', selected, {method:'POST'});
+  await env.click('custom-topology-save');
+  assert.equal(env.element('topology-selector').value, 'custom_lab');
+  assert.match(env.element('network-topology').children[0].srcdoc, /Custom PyVis plc1/);
+  const posted = env.requests.find(r=>r.method==='POST' && r.url==='/api/topology/custom');
+  assert.deepEqual(JSON.parse(posted.options.body), {definition});
+  await env.click('custom-topology-copy');
+  assert.deepEqual(JSON.parse(env.element('custom-topology-json').value), definition);
+  env.element('custom-topology-json').value = 'invalid JSON';
+  await env.click('custom-topology-save');
+  assert.match(env.element('topology-selection-status').textContent, /Custom topology failed/);
+  assert.equal(countRequests(env,'POST','/api/topology/custom'),1);
+  const running = await harness(snapshot('RUNTIME','IDLE','custom-generation'));
+  for(const id of ['custom-topology-json','custom-topology-save','custom-topology-copy']) assert.equal(running.element(id).disabled,true);
+  await running.click('custom-topology-save');
+  assert.equal(countRequests(running,'POST'),0);
+}
+
 async function testOpenCoreGuiUsesExistingRuntimeHelperRoute() {
   const env = await harness(snapshot('RUNTIME', 'IDLE', 'gui-session'));
   env.location.hash = '#runtime';
@@ -685,7 +833,8 @@ async function testOpenCoreGuiUsesExistingRuntimeHelperRoute() {
   env.enqueue('/api/runtime/gui', {session_id: 7, gui_pid: 321}, {method: 'POST'});
   await env.click('core-gui');
   assert.equal(countRequests(env, 'POST', '/api/runtime/gui'), 1);
-  assert.match(env.element('runtime-action-status').textContent, /CORE GUI opened for session 7 \(PID 321\)/);
+  assert.match(env.element('runtime-action-status').textContent, /CORE GUI opened for CORE Session 1/);
+  assert.doesNotMatch(env.element('runtime-action-status').textContent, /session 7|PID 321/);
   assert.equal(countRequests(env, 'GET', diagnosticsPath) >= 2, true, 'successful GUI launch refreshes authoritative runtime diagnostics');
   const failed = await harness(snapshot('RUNTIME', 'IDLE', 'gui-failure'));
   failed.location.hash = '#runtime'; await failed.refresh();
@@ -707,6 +856,36 @@ async function testBattleOnlyRefreshesPyvisWhenStateChanges() {
     'live refresh asks the backend to omit unchanged PyVis HTML');
 }
 
+async function testHumanReadableIdentifiersKeepRawValuesTechnical() {
+  const system = snapshot('RUNTIME', 'IDLE', 'opaque-generation-value');
+  const env = await harness(system);
+  const correlation = 'step-1-d2294dea07c1';
+  env.enqueue('/api/live-battle?limit=100', {
+    topology: {nodes: [{id: 'plc14'}], links: []}, visual: {nodes: [], edges: []},
+    visual_signature: 'identity-visual', pyvis_html: '<html>identity</html>', active_run: system.active_run,
+    display_identity: system.display_identity,
+    campaign: {state: 'READY', campaign_id: system.active_run.run.run_id, generation_id: system.generation, correlation_id: correlation},
+    campaign_display: {Assessment: 'Assessment 1', State: 'READY', Runtime: 'Runtime Generation 1', 'Attack step': 'Attack Step 1', 'Attack event': 'Attack Event 1'},
+    network_events: [], background_network: [], network_event_count: 0, security_event_count: 1, limit: 100,
+    security_events: [{timestamp: '2026-10-06T12:00:00Z', event_type: 'attack_started', target_node: 'plc14',
+      mitre_technique: 'T0835', correlation_id: correlation, run_id: system.active_run.run.run_id,
+      generation_id: system.generation, severity: 'HIGH',
+      display_identity: {attack_step: 'Attack Step 1', attack_event: 'Attack Event 1'}}]
+  });
+  await env.navigate('#battle');
+  assert.equal(env.element('battle-run').textContent, 'Assessment 1');
+  const campaign = env.element('battle-campaign-meta').innerHTML;
+  for (const value of ['Assessment 1', 'Runtime Generation 1', 'Attack Step 1', 'Attack Event 1']) assert.match(campaign, new RegExp(value));
+  assert.doesNotMatch(campaign, /run-opaque|opaque-generation|step-1-d229/);
+  const attackLog = env.element('security-events-body').innerHTML;
+  const primary = attackLog.split('<details')[0];
+  for (const value of ['Attack Step 1', 'Attack Event 1', 'plc14', 'T0835']) assert.match(primary, new RegExp(value));
+  assert.doesNotMatch(primary, /step-1-d229/);
+  assert.match(attackLog, /Technical details/);
+  assert.match(attackLog, /step-1-d2294dea07c1/, 'raw correlation remains available in the expanded technical event');
+  assert.match(env.element('overview-technical-data').innerHTML, /Internal assessment ID.*run-opaque-generation-value/);
+}
+
 const tests = [
   ['A: STOPPED state and enabled/disabled styles', testStoppedAndStyles],
   ['B: coherent RUNTIME snapshot and watcher rules', testRuntimeSnapshot],
@@ -714,6 +893,9 @@ const tests = [
   ['D: stale refresh retains last known diagnostics', testStaleRefresh],
   ['E: out-of-order snapshots cannot overwrite newer results', testOutOfOrderRefreshes],
   ['F: canonical XML markup and backend contract', testCanonicalXmlContract],
+  ['F2: professional overview, canonical counts, recent activity and collapsed diagnostics', testProfessionalOverviewUsesExistingData],
+  ['F3: visual introduction, verified concepts and understandable empty state', testOverviewIntroductionAndEmptyState],
+  ['F4: overview network preview uses the selected custom topology', testOverviewCustomTopologyPreview],
   ['G: existing campaign and defense prerequisite gates', testOtherControlGating],
   ['H: obsolete route failures preserve fresh runtime diagnostics', testObsoleteRouteFailure],
   ['I: accepted watcher start uses immediate authoritative readiness', testWatcherImmediateReadiness],
@@ -723,8 +905,10 @@ const tests = [
   ,['M: background traffic remains a separate refreshed table', testBackgroundTrafficIsSeparate]
   ,['N: canonical topology selection refreshes a real PyVis view', testTopologySelectionUsesCanonicalApiAndPyvis]
   ,['N2: topology selection errors remain visible and restore selection', testTopologySelectionFailureIsVisible]
+  ,['N3: custom topology editor, API, PyVis and runtime guards', testCustomTopologyEditorAndGuards]
   ,['O: Open CORE GUI uses the existing runtime helper route', testOpenCoreGuiUsesExistingRuntimeHelperRoute]
   ,['P: Live Battle reuses unchanged PyVis state', testBattleOnlyRefreshesPyvisWhenStateChanges]
+  ,['Q: identifier aliases are shared while raw IDs remain technical', testHumanReadableIdentifiersKeepRawValuesTechnical]
 ];
 
 (async () => {

@@ -74,13 +74,13 @@ class CampaignController:
 
     def start_core(self) -> dict[str, Any]:
         """Follow the existing Run Simulation launch sequence for one owned run."""
-        with self._state_lock:
+        from testbed.topology import TOPOLOGY_LOCK
+        with self._state_lock, TOPOLOGY_LOCK:
             status = self.request("status")
             if status.get("state") == "RUNTIME":
                 raise CampaignError("core_already_running", "An ASCEND-owned CORE session is already active.")
             topology = self.topology(); snapshot = topology.canonical_snapshot()
-            case = 30 if "30" in str(topology.case_name) else 14
-            xml = generate_core_xml(case=case, output_path=str(ROOT / "core_topology.xml"))
+            xml = generate_core_xml(output_path=str(ROOT / "core_topology.xml"), topology=topology)
             run = run_store.create_run(snapshot)
             result = self.request("start", xml=str(xml))
             runtime = self._runtime()
@@ -272,12 +272,13 @@ class CampaignController:
             detected = bool(result.get("detected", False))
             evidence = {"step_name": request["step_name"], "return_status": result.get("status", "FAILED"),
                         "detection_method": result.get("detection_method", "none"), "ml_confidence": float(result.get("ml_confidence", 0.0))}
+            evidence["finding_evidence"] = deepcopy(result.get("finding_evidence"))
             common = {"mitre_technique": request["technique_id"], "attack_stage": request.get("attack_stage", 0),
                       "campaign_id": request["campaign_id"], "generation_id": request["generation_id"],
                       "correlation_id": correlation_id, "evidence": evidence}
-            run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="attack_finished", source_node="attacker", target_node=request["target_node"], severity="INFO", result="compromised" if result.get("evaded") else "detected" if detected else "failed", timestamp=result.get("end_time"), **common)
+            run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="attack_finished", source_node="attacker", target_node=request["target_node"], result="compromised" if result.get("evaded") else "detected" if detected else "failed", timestamp=result.get("end_time"), **common)
             if detected:
-                run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="detection", source_node="ids_monitor", target_node=request["target_node"], severity="HIGH", result="detected", timestamp=result.get("end_time"), **common)
+                run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="detection", source_node="ids_monitor", target_node=request["target_node"], result="detected", timestamp=result.get("end_time"), **common)
         if session and session.get("last_completed_correlation_id") != correlation_id:
             # Apply the real watcher result using the existing Streamlit semantics.
             # env.step() would independently evaluate an attack and must not be used.

@@ -76,6 +76,21 @@ class CoreXmlTests(unittest.TestCase):
 
 
 class CoreLifecycleTests(unittest.TestCase):
+    def test_gui_launch_attaches_owned_session_directly(self):
+        from scripts import core_session as manager
+        session = SimpleNamespace(id=7, state=manager.w.SessionState.RUNTIME)
+        with patch.object(manager, "owned_session", return_value=session), \
+                patch.dict(os.environ, {"DISPLAY": ":0", "ASCEND_CORE_GUI": "/configured/core-gui"}), \
+                patch.object(manager.os, "access", return_value=True), \
+                patch.object(manager.subprocess, "Popen", return_value=SimpleNamespace(pid=123)) as launch:
+            result = manager.perform(MagicMock(), {"action": "gui"})
+        self.assertEqual(result, {"session_id": 7, "gui_pid": 123})
+        launch.assert_called_once_with(
+            ["/configured/core-gui", "--session", "7"], cwd=manager.ROOT,
+            stdout=manager.subprocess.DEVNULL, stderr=manager.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
     def test_grpc_hub_interfaces_are_unique(self):
         from testbed.core_xml import to_session
         with tempfile.TemporaryDirectory() as directory:

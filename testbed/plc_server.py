@@ -153,7 +153,8 @@ def main():
                          help="Modbus TCP port (default 502)")
     parser.add_argument("--bus-id", type=int, required=True,
                          help="IEEE-14 bus ID (0-13)")
-    parser.add_argument("--case", type=int, choices=[14, 30], default=14)
+    parser.add_argument("--case", type=int, default=14,
+                        help="Canonical bus count; custom counts require --node-json")
     parser.add_argument("--node-json", help="Bus metadata snapshot embedded by the topology generator")
     parser.add_argument("-n", "--num-registers", type=int, default=100,
                          help="number of holding registers")
@@ -164,6 +165,8 @@ def main():
     if node_data is not None and not isinstance(node_data, dict):
         parser.error("node-json must be an object")
     if node_data is None:
+        if args.case not in (14, 30):
+            parser.error("Custom bus counts require the generated --node-json metadata")
         from testbed.topology import load_case
         load_case(args.case)
 

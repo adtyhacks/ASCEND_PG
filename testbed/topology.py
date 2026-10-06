@@ -8,6 +8,9 @@ and device info for all components (RL env, PLC server, CORE testbed, UI, report
 
 import csv
 import os
+import math
+import re
+import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Union, Optional
@@ -25,6 +28,10 @@ PLC_TEMPLATES = [
     "siemens_s7_1200", "siemens_s7_1500", "allen_bradley_compactlogix",
     "schneider_modicon_m340", "generic_modbus"
 ]
+
+# Serialize canonical selection with GUI CORE generation, not CORE ownership.
+TOPOLOGY_LOCK = threading.RLock()
+SELECTION_PATH = Path(__file__).resolve().parents[1] / "data" / "topology_selection.json"
 
 class Topology:
     """
@@ -192,6 +199,58 @@ class Topology:
         return cls(nodes=nodes, edges=edges, case_name=case_name)
 
     @classmethod
+    def from_custom_dict(cls, data: dict) -> "Topology":
+        """Validate the existing bus/edge representation for the CORE GUI workflow."""
+        from testbed.ip_config import MAX_PLC_COUNT
+        if not isinstance(data, dict):
+            raise ValueError("Custom topology must be a JSON object.")
+        case = data.get("case_name", "custom_grid")
+        if not isinstance(case, str) or not re.fullmatch(r"custom_[a-z0-9_]{1,40}", case):
+            raise ValueError("case_name must start with custom_ and contain lowercase letters, digits or underscores.")
+        source = data.get("nodes")
+        if not isinstance(source, list) or not 1 <= len(source) <= MAX_PLC_COUNT:
+            raise ValueError(f"Custom topology needs 1–{MAX_PLC_COUNT} PLC buses.")
+        nodes = []
+        for bus_id, item in enumerate(source):
+            if not isinstance(item, dict) or type(item.get("bus_id")) is not int or item["bus_id"] != bus_id:
+                raise ValueError("Nodes must have ordered, consecutive bus_id values starting at 0.")
+            node = dict(item)
+            name = node.get("name", f"Bus{bus_id + 1}")
+            if not isinstance(name, str) or not name.strip() or len(name) > 80:
+                raise ValueError("Each bus name must be a nonempty string of at most 80 characters.")
+            kind = node.get("type", "pq")
+            if not isinstance(kind, str) or kind not in {"slack", "pv", "pq"}:
+                raise ValueError("Bus type must be slack, pv or pq.")
+            ip = get_plc_ip(bus_id)
+            if node.get("ip", ip) != ip:
+                raise ValueError(f"Bus {bus_id} must use canonical address {ip}.")
+            plc_type = node.get("plc_type", "generic_modbus")
+            if not isinstance(plc_type, str) or plc_type not in PLC_TEMPLATES:
+                raise ValueError("Unknown PLC template.")
+            node.update(name=name, type=kind, ip=ip, plc_type=plc_type,
+                        bus_role=node.get("bus_role", "generator" if kind in {"slack", "pv"} else "load"))
+            for key, default in (("voltage", 1.0), ("pg", 0.0), ("qg", 0.0), ("pl", 0.0), ("ql", 0.0)):
+                value = node.get(key, default)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (key == "voltage" and value <= 0):
+                    raise ValueError(f"{key} must be a finite number; voltage must be positive.")
+                node[key] = float(value)
+            nodes.append(node)
+        source_edges = data.get("edges", [])
+        if not isinstance(source_edges, list):
+            raise ValueError("edges must be an array of bus pairs.")
+        edges, seen = [], set()
+        for edge in source_edges:
+            pair = [edge.get("from"), edge.get("to")] if isinstance(edge, dict) else edge
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2 or any(type(i) is not int or not 0 <= i < len(nodes) for i in pair):
+                raise ValueError("Every edge must reference two existing integer bus IDs.")
+            key = tuple(sorted(pair))
+            if pair[0] == pair[1] or key in seen:
+                raise ValueError("Self-links and duplicate electrical links are not allowed.")
+            seen.add(key)
+            edges.append(tuple(pair))
+        return cls(nodes=nodes, edges=edges, case_name=case)
+
+    @classmethod
     def from_pandapower(cls, case: Union[str, int] = "case14") -> "Topology":
         """Build Topology directly from standard Pandapower cases (case14 or case30)."""
         import pandapower.networks as pn
@@ -335,7 +394,22 @@ def get_topology() -> Topology:
     """Get the current global topology. Defaults to IEEE-14 if uninitialized."""
     global _current_topology
     if _current_topology is None:
-        _current_topology = Topology.from_pandapower("case14")
+        if SELECTION_PATH.exists():
+            import json
+            data = json.loads(SELECTION_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Saved topology selection must be an object.")
+            case = data.get("case_name")
+            if case in {"case14", "case30"}:
+                selected = Topology.from_custom_dict({**data, "case_name": "custom_validation"})
+                if selected.num_buses != int(case.replace("case", "")):
+                    raise ValueError("Saved preset bus count does not match its case.")
+                selected.case_name = case
+            else:
+                selected = Topology.from_custom_dict(data)
+            _current_topology = selected
+        else:
+            _current_topology = Topology.from_pandapower("case14")
     return _current_topology
 
 def set_topology(topo: Topology):

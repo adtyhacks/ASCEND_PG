@@ -11,7 +11,7 @@ Complete reference of all evaluation metrics, KPIs, and parameters across the AS
 3. [Network Metrics](#3-network-metrics)
 4. [Report Metrics](#4-report-metrics)
 5. [Training Metrics](#5-training-metrics)
-6. [DVS (Defense Vulnerability Score)](#6-dvs-defense-vulnerability-score)
+6. [Campaign DVS / Defence Performance Score](#6-campaign-dvs--defence-performance-score)
 7. [XAI Metrics](#7-xai-metrics)
 
 ---
@@ -338,7 +338,13 @@ Complete reference of all evaluation metrics, KPIs, and parameters across the AS
 | `technique_id` | string | MITRE ATT&CK technique ID |
 | `technique_name` | string | Technique name |
 | `severity` | string | Critical / High / Medium / Low / Informational |
-| `cvss` | float | Approximate CVSS score |
+| `finding_dvs` | float/null | Finding severity + verified adverse effects, 0-100; null when required inputs are absent |
+| `finding_dvs_breakdown` | dict | Points, maximum and evidence state per component |
+| `finding_dvs_reason` | string | Explanation and limitations of the finding score |
+| `finding_dvs_version` | string | `finding-dvs-v1` policy version |
+| `base_attack_severity` | string/null | Correlated attack-start severity, independent of detection-event severity |
+| `execution_result` | string | Recorded executor status; Unknown if absent |
+| `verified_impact` | dict/null | Accepted correlated adverse observations; current production runs lack this data |
 | `target` | string | Target host IP/name |
 | `stage` | int | MITRE tactical stage (0-3) |
 | `detected` | bool | Whether attack was detected |
@@ -349,17 +355,162 @@ Complete reference of all evaluation metrics, KPIs, and parameters across the AS
 | `impact` | string | Generic impact description |
 | `remediation` | string | How to fix the vulnerability |
 
-### 4.3 CVSS Scores
+### 4.3 Finding DVS and Campaign DVS
 
-| Severity | CVSS Score |
-|----------|------------|
-| Critical | 9.5 |
-| High | 7.5 |
-| Medium | 5.0 |
-| Low | 2.5 |
-| Informational | 0.0 |
+**Finding DVS** measures the recorded severity and verified adverse effects of
+one attack. **Campaign DVS / Defence Performance Score** is the existing aggregate
+multi-episode defence metric. Neither is CVSS; no standards compliance is claimed.
+The fields are distinct: `findings[].finding_dvs` versus top-level `dvs`.
 
-### 4.4 Severity Classification Logic
+#### Finding DVS v1 policy
+
+`metrics/finding_dvs.py:compute_finding_dvs` is deterministic and bounded [0,100]:
+
+```
+finding_dvs = clip(severity_points + sum(verified_effect_points), 0, 100)
+```
+
+Output is rounded to one decimal. Component maxima sum to exactly 100, so no
+additional rescaling is needed. Missing dimensions contribute zero, explicitly
+marked unavailable, rather than being inferred from technique capability.
+
+| Component | Allowed input | Maximum points | Evidence rule |
+|-----------|---------------|----------------|---------------|
+| Severity | Informational/INFO=0, Low=5, Medium=10, High=15, Critical=20 | 20 | Explicit base attack severity; canonical path uses correlated attack-start event |
+| Integrity | No evidence=0; verified adverse change=10 | 10 | Attacker ACK plus independent matching before/after state reads |
+| Availability | No evidence=0; verified adverse change=10 | 10 | Disruption attempt, successful baseline, repeated failed polls and healthy control target |
+| Confidentiality | No evidence=0; verified adverse disclosure=5 | 5 | Actual returned collection data, not summary counts alone |
+| Operational/process impact | No evidence=0; verified adverse change=15 | 15 | Explicit process-sensor facts, limits and controlled-action attribution |
+| Physical impact | No evidence=0; verified adverse change=20 | 20 | Explicit physical-sensor facts, limits and controlled-action attribution |
+| Safety impact | No evidence=0; verified adverse change=20 | 20 | Explicit safety-sensor facts, limits and controlled-action attribution |
+
+These are explicit ASCEND policy weights, not empirically calibrated measurements
+or technique-specific scores. The ordering follows existing severity labels and
+ICS consequence semantics: process disruption and physical/safety consequences
+outweigh a protocol-level effect. Severity is capped at 20 so alerts/capability
+alone cannot yield a high impact score. Detection contributes **zero** points.
+No weights are assigned to target criticality, asset counts, measured magnitude,
+persistence or evidence-confidence fractions: current per-step data cannot
+establish those dimensions. Detector confidence is not impact confidence.
+
+#### Evidence v2, verification and execution gates
+
+The weights/formula remain `finding-dvs-v1`; input interpretation uses
+`metrics/finding_evidence.py` and its `finding-evidence-v2` bundle. Legacy
+`verified=True`/`adverse=True` claims and unresolved reference strings no longer
+qualify on their own. References resolve to retained structured facts inside the
+bundle; hashes detect fact changes, **not** authenticate a measurement producer.
+Trusted application producers and the controlled testbed remain explicit assumptions.
+
+A bundle has `identity` (scenario_id, run_id, generation_id, correlation_id),
+`version`, bounded `records` and retention metadata. Each record has `kind`,
+`source`, `target`, `timestamp`, those identity fields, `step_id` (correlation ID),
+`attack_window_start`, `attack_window_end`, and content-derived `reference`.
+Type-specific fields include `space`, `address`, `count`, `values`, `value`,
+`available`, `packets_sent`, observed_before/observed_after, units, instrument and
+safe limits. No before/after pair is required for collection/disclosure. stdout
+without an event timestamp is explicitly labelled `timestamp_basis=capture_end`.
+The verifier returns states/reasons/references/attribution; producers do not simply
+set trusted impact flags. Detector confidence is never evidence confidence.
+
+- **Integrity:** attacker write ACK plus independent passive SCADA before/after
+  read values, matching target, address and register space. After must match the
+  acknowledged value. A change is verified_adverse in the simulated attacker
+  context; unchanged observed value is verified_none. ACK alone is unknown.
+  Capture-end ACK timestamps support only a corroborated different-to-written
+  transition within the window; they do not prove an exact write instant.
+- **Availability:** positive sent-packet evidence for a disruption attempt plus
+  a successful polling baseline, two consecutive failed polls for the same
+  target/range, and successful polling of another control target between failures.
+  This establishes target-specific polling disruption associated with the attack,
+  not independently proven causality, a PLC reboot or physical process outage.
+  All retained subsequent successful samples can establish verified_none only
+  for the sampled polling scope. Partial failure or missing controls remain unknown.
+- **Confidentiality:** actual parsed register values returned to the collection
+  attack, with count matching retained data. A positive count alone is unknown.
+  An explicit successful empty return is verified_none for that retrieval;
+  zero summary counts from failed attempts do not prove absence of disclosure.
+- **Operational/physical/safety:** no current producer qualifies. Future instrument
+  records must explicitly identify process/physical/safety sensor respectively,
+  units, independently measured before/after values, safe limits and an instrument
+  reference, plus a resolved attacker-action reference and controlled-intervention
+  attribution. A safe baseline followed by excursion is verified_adverse; retained
+  safe readings are verified_none only for that instrument/sample. Coil/register
+  names, generic technique descriptions and network messages never substitute.
+
+Unknown, verified_none and verified_adverse have distinct breakdown states and
+explanations. Unknown and verified_none both add zero points, with different meaning.
+Only verified_adverse earns existing effect points. **FAILED and TIMEOUT may retain
+corroborated partial effects observed within the window**; neither receives a success
+bonus. CLI/API failure without supporting facts yields no effect points. Missing
+severity/outcome still means Not assessed. No out-of-window or foreign-generation
+facts qualify, including late effects; no baseline-lookback exception is introduced.
+
+Overlap policy: a write/read result never automatically creates process, physical
+or safety consequences. Distinct outcomes are required per dimension. Independent
+instrument dimensions cannot reuse the same instrument/consequence reference for
+multiple adverse credits; corroborating the same action across distinct outcomes is
+allowed. This is a conservative evidence rule, not a recalibration of the weights.
+
+Retention is passive and bounded: each existing log tail is at most 512 KiB,
+stdout/stderr parsing is limited to 131,072 characters per stream, bundles retain at most 256
+records. Raw stdout/stderr is not dumped into the finding. Timeout partial output
+is captured and structured like other results. Truncation/missing logs may lose
+corroboration and yield unknown; absence is never inferred from an empty bundle.
+No extra PLC queries, service probes or power-flow runs are introduced.
+
+#### Canonical attack severity policy
+
+`metrics/attack_severity.py:resolve_attack_severity` owns `attack-capability-v1`.
+It resolves registry IDs/aliases and records its policy/reason with attack-start
+metadata. Severity describes **implemented capability**, not observed damage:
+
+| Implemented family | Technique IDs | Severity | Basis |
+|--------------------|---------------|----------|-------|
+| Discovery/fingerprinting | T0846, T0888, T0840 / historical T0842 | LOW | Registry discovery descriptions and probe implementations |
+| Information access/collection/enumeration | T0886, T0801, T0802, T0806 | MEDIUM | Remote access/read/collection implementations; T0806 actually reads I/O despite registry wording about writes |
+| Modification/interception/control or service interference | Other implemented registry techniques, including FDI, manipulate I/O, denial, restart, MITM, command injection | HIGH | Documented write/interference capabilities |
+| Unknown/unregistered technique | Unknown | HIGH | Conservative legacy fallback; insufficient metadata to distinguish safely |
+
+No CRITICAL capability is inferred from simulated coil names or hypothetical safety
+consequences. Detection, executor status, requested magnitude and ungraded target
+roles never change this resolver. Target-specific severity requires explicit future
+criticality evidence. Historical saved HIGH events are not rewritten or rescored by
+this policy; it applies to future start events only.
+
+#### Existing per-finding evidence audit
+
+| Field/dimension | Current availability and treatment |
+|-----------------|------------------------------------|
+| Technique/category | Technique ID/name and tactical stage; context only, no technique score |
+| Base severity | New starts use canonical capability policy; historical starts retain recorded severity |
+| Execution | Completion `evidence.return_status`; gating only, no success bonus |
+| Detection/confidence | Detection event, method, ML confidence; display only |
+| Target | PLC node/IP; no criticality inferred from topology role |
+| Requested magnitude/register | Start evidence; request metadata, never observed impact |
+| Network observations | Correlated flows; no process/physical impact credit |
+| Write results | Structured ACK logs and known stdout messages retained; alone they remain unknown impact |
+| Integrity/availability/confidentiality | New passive SCADA value/failure logs and collection data can provide corroboration; completed historical run lacks the new bundle |
+| Process/physical/safety | No live instrument producer; unknown unless explicit future instrument facts qualify |
+| Scope/persistence/actual magnitude/impact confidence | Not established per finding; neutral |
+
+Detection != impact; capability != demonstrated impact; traffic != physical
+consequence; failed execution != successful impact; missing evidence != invented
+impact. Generic `impact` descriptions remain potential consequences only.
+
+#### Campaign DVS remains unchanged
+
+Reports reuse `metrics/dvs.py:compute_dvs`, shared through `metrics/dvs_score.py`.
+Saved `evaluate_agent()` statistics can be supplied under
+`campaign_info.run_metadata.dvs_evaluation`. Current GUI runs do not persist these
+multi-episode statistics; absent/invalid inputs yield an unavailable campaign score.
+No report loads PPO or evaluates episodes to fill this gap.
+
+Its existing weights remain evasion 30%, completion 30%, stage depth 25%, plateau
+15%, clipped [0,100]. Valid inputs have minimum 7.5 because the non-plateau component
+is 50. Finding severity/verified effects do not alter this aggregate formula.
+
+### 4.4 Legacy Noncanonical Severity Classification Logic
 
 | Condition | Severity |
 |-----------|----------|
@@ -444,7 +595,29 @@ Complete reference of all evaluation metrics, KPIs, and parameters across the AS
 
 ---
 
-## 6. DVS (Defense Vulnerability Score)
+## 6. Campaign DVS / Defence Performance Score
+
+### 6.0 Implementation Audit and Canonical Ownership
+
+| Implementation | Inputs / output | Caller and status |
+|----------------|-----------------|-------------------|
+| `metrics/dvs.py:compute_dvs` (now re-exported from `metrics/dvs_score.py`) | Evaluation rates, depth and plateau; bounded 0-100 composite | Canonical arithmetic, documented here and consumed by evaluation/XAI; now shared with reports |
+| `metrics/dvs.py:evaluate_agent`, `run_dvs_evaluation`, `run_dvs_demo` | PPO episodes -> evaluation statistics -> canonical score | Evaluation/CLI workflow; not called by GUI report generation; not executed during this change |
+| `metrics/finding_dvs.py:compute_finding_dvs` | Attack severity/outcome plus verified observations -> 0-100 | New finding metric; separate from aggregate evaluation semantics |
+| Former `reports/pentest_report.py:_calculate_cvss` | Severity -> fixed 0/2.5/5/7.5/9.5 | Former live report placeholder, disconnected from canonical DVS; removed |
+| `reports/pentest_report.py:_classify_severity` | Stage/confidence -> severity label | Retained for noncanonical historical report inputs; does not calculate DVS |
+| `xai/recommendation_templates.py:get_dvs_recommendations`, `format_report` | Existing composite breakdown -> recommendations/Markdown | Consumers, not independent scoring implementations; demo uses a fixed fixture |
+| `scripts/test_unified_pipeline.py` | Two evaluation episodes -> `compute_dvs` | Test harness calling canonical DVS, not a separate metric; not run here |
+| `scripts/gen_eval_pdf.py` / this document | Formula/rating tables | Documentation duplicates, not runtime score calculators; former report lookup documentation corrected |
+| `strategic/rl_env.py:calculate_step_reward`, `PlateauTracker` | Execution/detection/stage rewards; plateau tracking | PPO reward and DVS input generation, respectively; not alternate DVS formulas |
+
+Before the finding-level implementation, no other DVS, risk/severity-score or vulnerability-score implementation was
+found in the tracked source. Numeric constants in attack parameters, detection
+thresholds, topology/ML data and PPO rewards are not DVS implementations.
+The live GUI campaign stores step outcomes and events, not the multi-episode
+evaluation statistics consumed by canonical DVS. Reporting must not fill this
+gap by equating failed steps with evasion, manual completion with successful
+campaign completion, or technique selection with verified impact.
 
 ### 6.1 Evaluation Results
 
@@ -568,8 +741,11 @@ Complete reference of all evaluation metrics, KPIs, and parameters across the AS
 | `defense/modbus_logger.py` | Modbus packet metrics |
 | `testbed/topology.py` | Topology metrics |
 | `testbed/plc_server.py` | PLC register data |
-| `reports/pentest_report.py` | Report metrics, severity, CVSS |
-| `metrics/dvs.py` | DVS composite score |
+| `reports/pentest_report.py` | Report metrics, event severity, canonical aggregate DVS integration |
+| `metrics/dvs.py` / `metrics/dvs_score.py` | Canonical Campaign DVS evaluation / shared pure composite score |
+| `metrics/finding_dvs.py` | Finding DVS severity and corroborated-effect scoring |
+| `metrics/finding_evidence.py` | Passive retention, step identity, dimension-specific verification |
+| `metrics/attack_severity.py` | Canonical implemented-capability severity policy |
 | `xai/shap_explain.py` | SHAP feature importance |
 | `xai/lime_explain.py` | LIME anomaly detection |
 | `xai/attack_decision_explain.py` | RL decision rationale |

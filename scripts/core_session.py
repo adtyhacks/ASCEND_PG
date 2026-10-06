@@ -132,7 +132,10 @@ def perform(c, request):
         executable = os.environ.get("ASCEND_CORE_GUI", "/opt/core/venv/bin/core-gui")
         if not os.access(executable, os.X_OK):
             raise RuntimeError(f"CORE GUI executable is unavailable: {executable}")
-        process = subprocess.Popen([executable], cwd=ROOT, stdout=subprocess.DEVNULL,
+        # CORE's startup --session path joins on the Tk thread. The Sessions
+        # dialog joins via ProgressTask, which cannot create canvas widgets on
+        # the installed Tcl/Tk 9 runtime. Attach directly to the owned session.
+        process = subprocess.Popen([executable, "--session", str(session.id)], cwd=ROOT, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, start_new_session=True)
         return {"session_id": session.id, "gui_pid": process.pid}
     if action == "start":

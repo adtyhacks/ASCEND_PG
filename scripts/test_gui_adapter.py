@@ -14,6 +14,10 @@ class FakeTopology:
         self.case_name = case_name
         self.node_count = node_count
 
+    def to_dict(self) -> dict:
+        return {"case_name": self.case_name,
+                "nodes": [{"bus_id": index, "type": "pq"} for index in range(self.node_count - 1)], "edges": []}
+
     def canonical_snapshot(self) -> dict:
         nodes = [{"id": "hub", "hostname": "s1", "node_type": "hub"}]
         nodes += [{"id": f"plc{index + 1}", "hostname": f"plc{index + 1}", "node_type": "plc"} for index in range(self.node_count - 1)]

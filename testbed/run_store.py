@@ -134,6 +134,18 @@ def append_event(scenario_id: str, run_id: str, *, category: str, event_type: st
     # producing an interleaved physical JSONL line.  It is unrelated to CORE's
     # lifecycle and ownership locks.
     with _event_lock(root, fcntl.LOCK_EX):
+        if category == "security" and event_type in {"attack_started", "attack_finished", "detection"}:
+            path = root / "security_events.jsonl"
+            previous = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()] if path.exists() else []
+            start = _attack_start(previous, event)
+            if event_type == "attack_started" and start is None:
+                from metrics.attack_severity import resolve_attack_severity
+                policy = resolve_attack_severity({"technique_id": event.get("mitre_technique"),
+                                                 "step_name": (evidence or {}).get("step_name")})
+                event["severity"] = event["attack_severity"] = policy["severity"]
+                event["evidence"] = {**(evidence or {}), "severity_policy": policy}
+            else:
+                event["severity"] = event["attack_severity"] = _canonical_attack_severity(start, event)
         _append_jsonl(root / name, event)
         _append_jsonl(root / "events.jsonl", event)
     return event
@@ -219,11 +231,32 @@ def visual_data(topology: dict, events: list[dict]) -> tuple[list[dict], list[di
     edges = [{"from": e["from"], "to": e["to"], "type": e["type"], "protocol": e.get("protocol", "")} for e in topology["links"]]
     return nodes, edges, compromised, detected, [path] if len(path) > 1 else []
 
+def _attack_identity(event: dict) -> tuple:
+    return tuple(event.get(k) for k in ("scenario_id", "run_id", "generation_id", "correlation_id"))
+
+
+def _attack_start(events: list[dict], event: dict) -> dict | None:
+    if not event.get("correlation_id"):
+        return None
+    return next((candidate for candidate in events if candidate.get("event_type") == "attack_started"
+                 and _attack_identity(candidate) == _attack_identity(event)), None)
+
+
+def _canonical_attack_severity(start: dict | None, event: dict) -> str | None:
+    # Historical start boundaries remain authoritative. Never use detector
+    # severity or the legacy INFO finish default to invent attack severity.
+    return (start.get("attack_severity") or start.get("severity")) if start else event.get("attack_severity")
+
+
 def report_events(events: list[dict]) -> list[dict]:
     """Normalize one run's canonical events for the legacy report renderer."""
     def key(e):
-        return (e.get("scenario_id"), e.get("run_id"), e.get("generation_id"), e.get("correlation_id"))
+        return _attack_identity(e)
     detections = {key(e): e for e in events if e.get("event_type") == "detection" and e.get("correlation_id")}
+    starts = {}
+    for event in events:
+        if event.get("event_type") == "attack_started" and event.get("correlation_id"):
+            starts.setdefault(key(event), event)
     normalized = []
     for event in events:
         if event.get("event_type") != "attack_finished":
@@ -231,6 +264,9 @@ def report_events(events: list[dict]) -> list[dict]:
         evidence = event.get("evidence") or {}
         detection = detections.get(key(event)) if event.get("correlation_id") else None
         detection_evidence = (detection or {}).get("evidence") or {}
+        start = starts.get(key(event)) if event.get("correlation_id") else None
         detected = bool(detection) or str(event.get("result", "")).lower() == "detected"
-        normalized.append({"Timestamp": event["timestamp"], "MITRE ID": event.get("mitre_technique", ""), "Technique Name": evidence.get("step_name", event.get("mitre_technique", "")), "Stage": event.get("attack_stage", 0), "Target Host": event.get("target_node", ""), "Detected": detected, "Detector Confidence": detection_evidence.get("ml_confidence", evidence.get("ml_confidence")), "Detection Method": (detection or {}).get("detection_method") or detection_evidence.get("detection_method") or evidence.get("detection_method", "unknown"), "Status": "Detected" if detected else event.get("result", "Unknown"), "Severity": (detection or event).get("severity", "INFO"), "Correlation ID": event.get("correlation_id"), "Canonical": True, "Evidence": {"attack": event, "detection": detection}, "Source IP": evidence.get("source_ip", "N/A")})
+        normalized.append({"Timestamp": event["timestamp"], "MITRE ID": event.get("mitre_technique", ""), "Technique Name": evidence.get("step_name", event.get("mitre_technique", "")), "Stage": event.get("attack_stage", 0), "Target Host": event.get("target_node", ""), "Detected": detected, "Detector Confidence": detection_evidence.get("ml_confidence", evidence.get("ml_confidence")), "Detection Method": (detection or {}).get("detection_method") or detection_evidence.get("detection_method") or evidence.get("detection_method", "unknown"), "Status": "Detected" if detected else event.get("result", "Unknown"), "Severity": _canonical_attack_severity(start, event), "Correlation ID": event.get("correlation_id"), "Canonical": True, "Evidence": {"attack": event, "detection": detection}, "Source IP": evidence.get("source_ip", "N/A")})
+        normalized[-1]["Attack Severity"] = normalized[-1]["Severity"]
+        normalized[-1]["Evidence"]["start"] = start
     return normalized

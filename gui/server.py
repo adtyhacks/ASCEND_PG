@@ -7,7 +7,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from gui import adapter, reporting
+from gui import adapter, reporting, grid_status
 from gui.campaign import CampaignController, CampaignError
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -30,6 +30,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload = adapter.get_topology()
             elif parsed.path == "/api/network-configuration":
                 payload = adapter.get_network_configuration()
+            elif parsed.path == "/api/grid-status":
+                payload = grid_status.snapshot()
             elif parsed.path == "/api/runtime-diagnostics":
                 payload = adapter.get_runtime_diagnostics()
             elif parsed.path == "/api/report-summary":
@@ -111,6 +113,8 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload, status = CAMPAIGNS.defend("restore", str(data.get("target_node", ""))), HTTPStatus.OK
             elif self.path == "/api/topology/select":
                 payload, status = adapter.select_topology(str(data.get("case_name", ""))), HTTPStatus.OK
+            elif self.path == "/api/topology/custom":
+                payload, status = adapter.save_custom_topology(data.get("definition")), HTTPStatus.OK
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"code": "not_found", "message": "Unknown API endpoint."}})
                 return

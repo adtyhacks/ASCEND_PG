@@ -137,7 +137,7 @@ def record_attack_started(pending: Dict[str, Any], generation_id: str) -> dict:
     run_id = pending["run_id"]
     return append_event(
         scenario_id, run_id, category="security", event_type="attack_started",
-        source_node="attacker", target_node=pending["target_node"], severity="HIGH",
+        source_node="attacker", target_node=pending["target_node"],
         result="started", mitre_technique=pending["technique_id"],
         attack_stage=pending.get("attack_stage", 0), campaign_id=pending["campaign_id"],
         generation_id=generation_id, correlation_id=pending["correlation_id"],
@@ -308,6 +308,9 @@ def main():
                     result["run_id"] = pending.get("run_id")
                     result["scenario_id"] = pending.get("scenario_id")
                     result["attack_started_at"] = started_event["timestamp"]
+                    from metrics.finding_evidence import bind_evidence
+                    result["finding_evidence"] = bind_evidence(result.get("finding_evidence"),
+                        pending, started_event["timestamp"], result.get("end_time"))
 
                     steps_executed += 1
                     status = result.get("status", AttackStatus.SUCCESS.value)

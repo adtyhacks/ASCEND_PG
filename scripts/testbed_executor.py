@@ -426,6 +426,8 @@ def run_step(step: Dict[str, Any]) -> Dict[str, Any]:
         else:
             status = AttackStatus.SUCCESS
     except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
         status = AttackStatus.TIMEOUT
         returncode = -1
         error_msg = f"Timed out after {step_timeout}s"
@@ -602,8 +604,13 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
         final_status = AttackStatus.UNDETECTED
         evaded = True
 
+    from metrics.finding_evidence import retain_evidence, passive_scada, attack_log_records
+    finding_evidence = retain_evidence(timing["name"], timing.get("stdout"), timing.get("stderr"),
+        timing["end"].isoformat(), passive_scada(Path(__file__).resolve().parents[1] / "data/core-runtime/scada.jsonl"),
+        attack_log_records(Path(__file__).resolve().parents[1] / "data/log_store.json", timing["name"]))
     return {
         "status": final_status.value,
+        "finding_evidence": finding_evidence,
         "success": execution_success,
         "detected": detected,
         "evaded": evaded,

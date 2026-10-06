@@ -8,7 +8,8 @@ from typing import Any
 
 from testbed import run_store
 from testbed.core_runtime import core_request
-from testbed.topology import get_topology as canonical_topology, load_case
+from testbed.topology import get_topology as canonical_topology, load_case, set_topology, Topology, TOPOLOGY_LOCK
+from gui.identity_presentation import aliases_for, saved_run_metadata
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,16 +114,23 @@ def _topology_view(
 
 
 def get_available_topologies() -> list[dict[str, str]]:
-    """Expose only the existing preset topology references supported by CORE."""
+    """List preset references and validated custom definitions in the existing library."""
     options = []
     for path in sorted((DATA / "sample_topologies").glob("*.json")):
         try:
             source = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if not isinstance(source, dict):
+            continue
         case = str(source.get("pandapower_case", "")).lower()
         if case not in {"case14", "case30"}:
-            continue
+            try:
+                case = Topology.from_custom_dict(source).case_name
+            except (ValueError, TypeError):
+                continue
+            if path.stem != case:
+                continue
         options.append({
             "case_name": case,
             "name": str(source.get("name", case)),
@@ -133,14 +141,56 @@ def get_available_topologies() -> list[dict[str, str]]:
 
 def select_topology(case_name: str) -> dict[str, Any]:
     """Select an existing preset through the shared canonical topology model."""
-    options = {item["case_name"]: item for item in get_available_topologies()}
-    case = str(case_name).strip().lower()
-    if case not in options:
-        raise ValueError("Choose an available canonical topology preset.")
+    with TOPOLOGY_LOCK:
+        options = {item["case_name"]: item for item in get_available_topologies()}
+        case = str(case_name).strip().lower()
+        if case not in options:
+            raise ValueError("Choose an available canonical topology.")
+        _require_topology_editable()
+        if case in {"case14", "case30"}:
+            selected = load_case(case)
+        else:
+            selected = Topology.from_custom_dict(json.loads((DATA / "sample_topologies" / f"{case}.json").read_text()))
+            set_topology(selected)
+        _persist_topology_selection(selected)
+        return {"configuration": get_network_configuration(), **_topology_view(selected, [])}
+
+
+def _require_topology_editable() -> None:
     if (DATA / "core-runtime" / "session.json").exists():
         raise ValueError("Topology selection is available only when no owned CORE session marker exists.")
-    selected = load_case(case)
-    return {"configuration": get_network_configuration(), **_topology_view(selected, [])}
+
+
+def _persist_topology_selection(selected: Topology) -> None:
+    # Retain the selected definition across GUI restarts without altering run evidence.
+    path = DATA / "topology_selection.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    try:
+        temporary.write_text(json.dumps(selected.to_dict(), indent=2), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def save_custom_topology(definition: dict) -> dict[str, Any]:
+    """Save/select the existing bus model, without operating CORE or a live run."""
+    with TOPOLOGY_LOCK:
+        _require_topology_editable()
+        selected = Topology.from_custom_dict(definition)
+        view = _topology_view(selected, [])
+        directory = DATA / "sample_topologies"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{selected.case_name}.json"
+        temporary = path.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps(selected.to_dict(), indent=2), encoding="utf-8")
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        set_topology(selected)
+        _persist_topology_selection(selected)
+        return {"configuration": get_network_configuration(), **view}
 
 
 def get_network_configuration() -> dict[str, Any]:
@@ -151,7 +201,8 @@ def get_network_configuration() -> dict[str, Any]:
         types[node_type] = types.get(node_type, 0) + 1
     return {"topology_version": topology.get("topology_version"), "case_name": topology.get("case_name"),
             "selected_case": topology.get("case_name"), "available_topologies": get_available_topologies(),
-            "node_count": len(topology["nodes"]), "edge_count": len(topology["links"]), "node_types": types}
+            "node_count": len(topology["nodes"]), "edge_count": len(topology["links"]), "node_types": types,
+            "definition": canonical_topology().to_dict() if isinstance(canonical_topology(), Topology) else None}
 
 
 def _recent_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
@@ -300,7 +351,19 @@ def get_background_network_events(limit: int = 100) -> list[dict[str, Any]]:
 
 def get_runtime_diagnostics() -> dict[str, Any]:
     status = get_system_status()
-    return {**status, "active_run": get_active_run()}
+    active = get_active_run()
+    runs = saved_run_metadata()
+    run = active.get("run") if active and active.get("state") == "ACTIVE" else None
+    registry = aliases_for(runs)
+    identity = registry.run_identity(run)
+    # Runtime diagnostics can briefly lead run recovery during startup.  Use a
+    # matching persisted run when possible without changing lifecycle state.
+    if run is None:
+        match = next((candidate for candidate in runs
+                      if str(candidate.get("core_session_id")) == str(status["core"].get("session_id"))
+                      and candidate.get("generation_id") == status.get("generation")), None)
+        identity = registry.run_identity(match)
+    return {**status, "active_run": active, "display_identity": identity}
 
 
 def get_report_summary() -> dict[str, Any]:
@@ -328,11 +391,25 @@ def get_live_battle_snapshot(limit: int = 100, visual_signature: str | None = No
         topology = _topology_view(canonical_topology(), [], visual_signature)
         return {"active_run": active, "network_events": [], "security_events": [], "background_network": background_network,
                 "network_event_count": 0, "security_event_count": 0, "campaign": None,
-                **topology, "limit": limit}
+                "display_identity": {}, "campaign_display": {}, **topology, "limit": limit}
     run = active["run"]
     network_events = get_recent_network_events(run["scenario_id"], run["run_id"], limit)
     security_events = get_recent_security_events(run["scenario_id"], run["run_id"], limit)
+    registry = aliases_for(saved_run_metadata(), security_events)
+    presented_security = [registry.decorate_event(event) for event in security_events]
+    campaign = run.get("campaign_request") or {}
+    campaign_display = {
+        "Assessment": registry.assessment(run.get("run_id")),
+        "State": campaign.get("state"),
+        "Runtime": registry.runtime_generation(run.get("generation_id")),
+        "Attack step": registry.attack_step(campaign),
+        "Attack event": registry.attack_event(campaign.get("correlation_id"), run.get("run_id")),
+        "Requested": campaign.get("requested_at"),
+    }
     topology_view = _topology_view(canonical_topology(), security_events, visual_signature)
     return {"active_run": active, "limit": limit, "network_events": network_events, "background_network": background_network,
-            "security_events": security_events, "network_event_count": len(network_events),
-            "security_event_count": len(security_events), "campaign": run.get("campaign_request"), **topology_view}
+            "security_events": presented_security, "network_event_count": len(network_events),
+            "security_event_count": len(security_events), "campaign": run.get("campaign_request"),
+            "display_identity": registry.run_identity(run),
+            "campaign_display": {key: value for key, value in campaign_display.items() if value not in (None, "")},
+            **topology_view}

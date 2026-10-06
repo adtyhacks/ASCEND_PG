@@ -34,7 +34,7 @@ from testbed.ip_config import (
     get_plc_ip,
     audit_ip_uniqueness,
 )
-from testbed.topology import load_case
+from testbed.topology import Topology, load_case
 from testbed.core_services import SERVICE, node_templates, service_name
 from testbed.core_xml import validate_xml
 
@@ -57,7 +57,8 @@ def check_core_environment() -> Dict[str, Any]:
     except RuntimeError as exc:
         return {"daemon_ready": False, "error": str(exc)}
 
-def generate_core_xml(case: int = 14, output_path: str = "core_topology.xml", use_hub: bool = True) -> str:
+def generate_core_xml(case: int = 14, output_path: str = "core_topology.xml", use_hub: bool = True,
+                      topology: Topology = None) -> str:
     """
     Generate a valid CORE 9.2.1 XML scenario for IEEE-14 or IEEE-30.
 
@@ -69,13 +70,19 @@ def generate_core_xml(case: int = 14, output_path: str = "core_topology.xml", us
     Returns:
         Absolute path to the generated XML file.
     """
-    if case not in (14, 30):
+    if topology is None and case not in (14, 30):
         raise ValueError(f"Invalid case {case}. Only IEEE-14 and IEEE-30 are supported.")
 
     if os.name != "posix":
         raise RuntimeError("Generate CORE scenarios inside WSL2 so service paths are Linux paths.")
+    topo = topology if topology is not None else load_case(case)
+    if topology is not None:
+        if not isinstance(topology, Topology):
+            raise ValueError("CORE generation requires the canonical Topology model.")
+        # Apply the same CORE constraints to JSON, CSV and directly constructed models.
+        Topology.from_custom_dict({**topology.to_dict(), "case_name": "custom_validation"})
+    case = topo.num_buses
     audit_ip_uniqueness(case)
-    topo = load_case(case)
 
     scenario = ET.Element("scenario")
 
@@ -151,7 +158,7 @@ def generate_core_xml(case: int = 14, output_path: str = "core_topology.xml", us
     for b in range(num_buses):
         nid = node_id_start + b
         name = f"plc{b + 1}"
-        ip = get_plc_ip(b)
+        ip = topo.get_ip(b) if topology is not None else get_plc_ip(b)
 
         angle = (2.0 * math.pi * b) / num_buses
         x = center_x + radius * math.cos(angle)
