@@ -67,12 +67,30 @@ def main() -> None:
             assert selected["topology"]["case_name"] == "case30" and len(selected["visual"]["nodes"]) == 3
             assert "plc2" in selected["pyvis_html"] and selected["configuration"]["selected_case"] == "case30"
             runtime_marker.write_text(saved_marker, encoding="utf-8")
-            try: adapter.select_topology("case14")
-            except ValueError as exc: assert "session marker exists" in str(exc)
-            else: raise AssertionError("topology must not change during an owned CORE runtime")
+            def reconciled_status(action: str) -> dict:
+                assert action == "status"
+                runtime_marker.unlink(missing_ok=True)
+                return {"state": "STOPPED", "session_id": None, "watcher": "STOPPED"}
+            adapter.core_request = reconciled_status
+            custom = adapter.get_custom_topology_template()
+            applied = adapter.save_custom_topology(custom)
+            assert applied["topology"]["case_name"] == "custom_template"
+            assert not runtime_marker.exists(), "existing lifecycle reconciliation removes the stale marker"
+
+            runtime_marker.write_text(saved_marker, encoding="utf-8")
+            adapter.core_request = lambda _: {"state": "RUNTIME", "session_id": 3, "watcher": "IDLE"}
+            try: adapter.save_custom_topology(custom)
+            except ValueError as exc: assert "managed CORE session is active" in str(exc)
+            else: raise AssertionError("custom topology must not change during an active managed CORE session")
+            runtime_marker.unlink()
+            adapter.core_request = lambda action: (_ for _ in ()).throw(AssertionError("daemon availability alone must not be queried or block topology editing"))
+            selected = adapter.select_topology("case14")
+            assert selected["topology"]["case_name"] == "case14"
+
+            runtime_marker.write_text(saved_marker, encoding="utf-8")
             adapter.core_request = lambda _: {"state": "RUNTIME", "session_id": 3, "watcher": "IDLE"}
             assert {node["state"] for node in adapter.get_topology()["visual"]["nodes"]} == {"normal"}
-            assert "plc2" in adapter.get_topology()["pyvis_html"]
+            assert "plc1" in adapter.get_topology()["pyvis_html"]
             for number in range(140): run_store.append_event(run["scenario_id"], run["run_id"], category="network", event_type="packet", source_node="attacker", target_node="plc1", sequence=number)
             for number in range(120): run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="attack_started", target_node="plc1", correlation_id=f"corr-{number}", sequence=number)
             run_store.append_event(run["scenario_id"], run["run_id"], category="security", event_type="attack_finished", target_node="plc1", correlation_id="corr-report", mitre_technique="T0836", result="detected", evidence={"step_name": "write register", "ml_confidence": 0.91, "detection_method": "hybrid"})

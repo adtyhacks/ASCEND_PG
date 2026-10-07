@@ -366,7 +366,18 @@ def build_step(technique_id: str, target_ip: str = "10.0.0.1",
         new_args = [target_ip if a == "10.0.0.1" else a for a in step["args"]]
         reg_flag = step.get("register_arg")
         val_flag = step.get("value_arg")
-        if reg_flag and val_flag:
+        if technique_id == "T0855" and step_name == "cmd_inject_coil" and reg_flag in new_args and val_flag in new_args:
+            # T0855's configured value is a boolean actuator command. Apply the
+            # selected coil address in place, but do not feed the generic PPO
+            # floating-point magnitude into cmd_inject_coil's boolean option.
+            register_index = new_args.index(reg_flag) + 1
+            new_args[register_index] = str(register_address)
+        elif technique_id == "T0836" and reg_flag in new_args and val_flag in new_args:
+            register_index = new_args.index(reg_flag) + 1
+            value_index = new_args.index(val_flag) + 1
+            new_args[register_index] = str(register_address)
+            new_args[value_index] = str(round(int(new_args[value_index]) * value_magnitude))
+        elif reg_flag and val_flag:
             new_args.extend([reg_flag, str(register_address),
                              val_flag, str(value_magnitude)])
         step["args"] = new_args

@@ -168,6 +168,31 @@ class GridStatus(unittest.TestCase):
         self.assertEqual(len(baseline['line_loadings']), 2)
         self.assertEqual(len(baseline['telemetry']), 2)
 
+    def test_zero_output_custom_pv_bus_does_not_create_circulating_reactive_power(self):
+        self.topo = Topology.from_custom_dict({
+            'case_name': 'custom_template',
+            'nodes': [
+                {'bus_id': 0, 'name': 'Generator 1', 'type': 'slack', 'vn_kv': 110, 'voltage': 1.06, 'pg': 40.0},
+                {'bus_id': 1, 'name': 'Load Bus 2', 'type': 'pq', 'vn_kv': 110, 'voltage': 1.0, 'pl': 25.0, 'ql': 5.0},
+                {'bus_id': 2, 'name': 'Load Bus 3', 'type': 'pq', 'vn_kv': 110, 'voltage': 1.0, 'pl': 35.0, 'ql': 12.0},
+                {'bus_id': 3, 'name': 'Bus 4', 'type': 'pv', 'vn_kv': 110, 'voltage': 1.0, 'pg': 0.0, 'qg': 0.0},
+            ],
+            'edges': [
+                {'from': 0, 'to': 1, 'length_km': 1, 'r_ohm_per_km': .1, 'x_ohm_per_km': .1, 'c_nf_per_km': 0, 'max_i_ka': .4},
+                {'from': 1, 'to': 2, 'length_km': 1, 'r_ohm_per_km': .1, 'x_ohm_per_km': .1, 'c_nf_per_km': 0, 'max_i_ka': .4},
+                {'from': 2, 'to': 3, 'length_km': 1, 'r_ohm_per_km': .1, 'x_ohm_per_km': .1, 'c_nf_per_km': 0, 'max_i_ka': .4},
+            ],
+        })
+        before = copy.deepcopy(self.topo.to_dict())
+        baseline = grid_status.snapshot()['baseline_grid']
+        self.assertNotIn('error', baseline)
+        self.assertEqual(baseline['summary']['electrical_buses'], 4)
+        self.assertEqual(baseline['summary']['lines'], 3)
+        self.assertGreater(baseline['summary']['max_line_loading'], 0)
+        self.assertLess(baseline['summary']['max_line_loading'], 100)
+        self.assertTrue(all(.95 <= bus['voltage_pu'] <= 1.1 for bus in baseline['bus_voltages']))
+        self.assertEqual(self.topo.to_dict(), before, 'the configured custom topology and line ratings remain unchanged')
+
 
 if __name__=='__main__':
     unittest.main()

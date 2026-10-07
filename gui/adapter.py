@@ -36,7 +36,6 @@ def _runtime_marker() -> dict[str, Any] | None:
 
 def get_system_status() -> dict[str, Any]:
     """Read CORE status through its existing read-only helper."""
-    runtime = _runtime_marker()
     try:
         core = core_request("status")
         core_state = core.get("state", "UNKNOWN")
@@ -44,6 +43,9 @@ def get_system_status() -> dict[str, Any]:
         daemon = "AVAILABLE"
     except RuntimeError as exc:
         core, core_state, watcher_state, daemon = {"error": str(exc)}, "OFFLINE", "STOPPED", "UNAVAILABLE"
+    # The status helper removes an obsolete ownership marker when its CORE
+    # session no longer exists, so report marker state after reconciliation.
+    runtime = _runtime_marker()
     return {
         "core": {"state": core_state, "daemon": daemon, "session_id": core.get("session_id")},
         "watcher": {"state": watcher_state},
@@ -201,8 +203,20 @@ def select_topology(case_name: str) -> dict[str, Any]:
 
 
 def _require_topology_editable() -> None:
-    if (DATA / "core-runtime" / "session.json").exists():
-        raise ValueError("Topology selection is available only when no owned CORE session marker exists.")
+    if not (DATA / "core-runtime" / "session.json").exists():
+        return
+    try:
+        status = core_request("status")
+    except RuntimeError as exc:
+        raise ValueError(
+            "Topology selection is unavailable while the managed CORE session state cannot be verified."
+        ) from exc
+    if status.get("state") == "STOPPED" and status.get("session_id") is None:
+        # core_session.owned_session() has reconciled a marker whose recorded
+        # session no longer exists. A reachable daemon alone does not lock the
+        # canonical topology.
+        return
+    raise ValueError("Topology selection is available only when no managed CORE session is active.")
 
 
 def _persist_topology_selection(selected: Topology) -> None:

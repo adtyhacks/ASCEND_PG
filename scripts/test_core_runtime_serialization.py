@@ -92,11 +92,20 @@ def _concurrent_gui_paths_are_serialized() -> None:
 
 
 def _single_call_and_timeout_behave_as_expected() -> None:
-    with patch.object(core_runtime.os, "name", "posix"), \
+    with patch.dict(core_runtime.os.environ, {}, clear=True), \
+            patch.object(core_runtime.os, "name", "posix"), \
             patch.object(core_runtime.subprocess, "run", return_value=_successful_result("status")) as run:
         result = core_runtime.core_request("status")
     assert result["ok"] is True and result["action"] == "status"
     assert run.call_count == 1
+    assert run.call_args.args[0][0] == str(core_runtime.ROOT / ".venv-wsl/bin/python")
+
+    configured = "/configured/core/python"
+    with patch.dict(core_runtime.os.environ, {"ASCEND_CORE_PYTHON": configured}, clear=True), \
+            patch.object(core_runtime.os, "name", "posix"), \
+            patch.object(core_runtime.subprocess, "run", return_value=_successful_result("status")) as run:
+        core_runtime.core_request("status")
+    assert run.call_args.args[0][0] == configured
 
     original_timeout = core_runtime.CORE_REQUEST_LOCK_TIMEOUT_SECONDS
     core_runtime.CORE_REQUEST_LOCK_TIMEOUT_SECONDS = 0.01

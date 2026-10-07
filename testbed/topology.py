@@ -322,7 +322,15 @@ class Topology:
             if kind == "slack":
                 pp.create_ext_grid(net, buses[bid], vm_pu=float(node.get("voltage", 1.0)), name=f"Slack {bid + 1}")
             elif kind == "pv":
-                pp.create_gen(net, buses[bid], p_mw=float(node.get("pg", 0.0)), vm_pu=float(node.get("voltage", 1.0)), name=f"Generator {bid + 1}")
+                generation_p = float(node.get("pg", 0.0))
+                generation_q = float(node.get("qg", 0.0))
+                # A zero-output custom generator is an inactive configured
+                # component, not an unlimited voltage controller. Otherwise a
+                # setpoint difference can create enormous circulating reactive
+                # power across short, low-impedance lines.
+                if generation_p or generation_q:
+                    pp.create_gen(net, buses[bid], p_mw=generation_p,
+                                  vm_pu=float(node.get("voltage", 1.0)), name=f"Generator {bid + 1}")
             load_p, load_q = float(node.get("pl", 0.0)), float(node.get("ql", 0.0))
             if load_p or load_q:
                 pp.create_load(net, buses[bid], p_mw=load_p, q_mvar=load_q, name=f"Load {bid + 1}")

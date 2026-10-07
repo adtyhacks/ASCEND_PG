@@ -76,6 +76,8 @@ class MockElement {
     this.dataset = {};
     this.listeners = new Map();
     this._innerHTML = '';
+    this._details = [];
+    this.scrollTop = 0;
     this.options = [];
     this.children = [];
     for (const [name, value] of Object.entries(attributes)) {
@@ -101,6 +103,14 @@ class MockElement {
   get innerHTML() { return this._innerHTML; }
   set innerHTML(value) {
     this._innerHTML = String(value);
+    this._details = [];
+    if (this.tagName === 'TBODY') {
+      for (const match of this._innerHTML.matchAll(/<tr data-evidence-key="([^"]+)">([\s\S]*?)<\/tr>/g)) {
+        const row = {dataset: {evidenceKey: match[1]}};
+        const detailsTag = /<details class="evidence-details"( open)?>/.exec(match[2]);
+        if (detailsTag) this._details.push({open: Boolean(detailsTag[1]), closest: () => row});
+      }
+    }
     if (this.tagName === 'SELECT') {
       this.options = [...this._innerHTML.matchAll(/<option\b[^>]*value="([^"]*)"[^>]*>([^<]*)<\/option>/g)]
         .map(match => ({value: match[1], textContent: match[2]}));
@@ -113,6 +123,11 @@ class MockElement {
   hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
   appendChild(child) { this.children.push(child); return child; }
   replaceChildren(...children) { this.children = children; }
+  querySelectorAll(selector) {
+    if (selector === 'tr[data-evidence-key] details[open]') return this._details.filter(details => details.open);
+    if (selector === 'tr[data-evidence-key] details.evidence-details') return this._details;
+    throw new Error(`Unimplemented element selector in test harness: ${selector}`);
+  }
   addEventListener(name, callback) {
     const callbacks = this.listeners.get(name) || [];
     callbacks.push(callback);
@@ -212,6 +227,9 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
     throw new Error(`Unexpected mocked GET: ${url}`);
   };
   const window = {
+    scrollX: 0,
+    scrollY: 0,
+    scrollTo: (x, y) => { window.scrollX = Number(x) || 0; window.scrollY = Number(y) || 0; },
     addEventListener: (name, callback) => windowListeners.set(name, callback),
     setInterval: (callback, delay) => { const id = ++timerId; intervals.set(id, {callback, delay}); return id; },
     clearInterval: id => intervals.delete(id),
@@ -226,11 +244,15 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
   await flush();
   return {
     requests, enqueue, response, intervals, location,
+    hasElement: id => Boolean(document.getElementById(id)),
     element: id => {
       const element = document.getElementById(id);
       assert.ok(element, `Expected DOM element #${id}`);
       return element;
     },
+    evidenceDetails: id => document.getElementById(id).querySelectorAll('tr[data-evidence-key] details.evidence-details'),
+    setPageScroll: value => { window.scrollY = value; },
+    pageScroll: () => window.scrollY,
     call: (name, ...args) => {
       assert.equal(typeof context[name], 'function', `Expected app function ${name}`);
       return context[name](...args);
@@ -268,7 +290,6 @@ function styleRules(selectorPattern) {
 
 async function testStoppedAndStyles() {
   const env = await harness(snapshot());
-  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Ready');
   assert.equal(env.element('runtime-daemon').textContent, 'Available');
   assert.equal(env.element('runtime-session').textContent, 'No active session', 'reachable daemon must not imply an active CORE session');
   assertRuntimeControls(env, false, false, false);
@@ -303,11 +324,9 @@ async function testRuntimeSnapshot() {
   const before = countRequests(env, 'GET', diagnosticsPath);
   await env.call('loadRuntime');
   assert.equal(countRequests(env, 'GET', diagnosticsPath), before + 1, 'opening Runtime uses one unified snapshot');
-  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running');
   assert.equal(env.element('runtime-daemon').textContent, 'Available');
   assert.equal(env.element('runtime-session').textContent, 'Active managed session');
   assert.equal(env.element('runtime-generation').textContent, 'Runtime Generation 1');
-  assert.equal(env.element('run-status').textContent, 'Assessment 1 — in progress');
   assert.equal(env.element('runtime-watcher').textContent, 'Not started');
   assertRuntimeControls(env, false, true, true);
   assert.equal(env.element('core-gui').disabled, false, 'CORE GUI is available for the running owned session');
@@ -346,7 +365,7 @@ async function testStartConflictAndPending() {
   await flush();
   assert.ok(countRequests(env, 'GET', diagnosticsPath) > beforeRefresh, 'a rejected POST must refresh runtime diagnostics');
   assert.equal(env.element('runtime-action-status').textContent, backendMessage, 'refresh must preserve the backend conflict message');
-  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running');
+  assert.equal(env.element('runtime-session').textContent, 'Active managed session');
   assertRuntimeControls(env, false, true, false);
   assert.notEqual(env.element('core-start').getAttribute('aria-busy'), 'true', 'settled Start clears aria-busy');
   assert.equal(countRequests(env, 'POST'), 1, 'a backend conflict must not trigger retries or automatic controls');
@@ -395,7 +414,7 @@ async function testStartConflictAndPending() {
   assert.equal(countRequests(superseded, 'POST'), 1, 'a superseded confirmation must never retry Start');
   newestSnapshot.resolve(superseded.response(snapshot('RUNTIME', 'IDLE', 'generation-confirmation-winner')));
   await newestRefresh;
-  assert.equal(superseded.element('core-status').textContent, 'Assessment Environment — Running');
+  assert.equal(superseded.element('runtime-session').textContent, 'Active managed session');
   assert.equal(superseded.element('runtime-action-status').textContent, backendMessage, 'the newest snapshot must preserve the original 409 message');
   assertRuntimeControls(superseded, false, true, false);
   assert.equal(countRequests(superseded, 'POST'), 1);
@@ -403,7 +422,7 @@ async function testStartConflictAndPending() {
 
 async function testStaleRefresh() {
   const env = await harness(snapshot('RUNTIME', 'IDLE', 'generation-last-known'));
-  const retained = Object.fromEntries(['core-status', 'runtime-session', 'runtime-generation', 'runtime-watcher']
+  const retained = Object.fromEntries(['runtime-daemon', 'runtime-session', 'runtime-generation', 'runtime-watcher']
     .map(id => [id, env.element(id).textContent]));
   env.enqueue(diagnosticsPath, null, {error: new Error('fixture connection unavailable')});
   await env.refresh();
@@ -416,7 +435,7 @@ async function testStaleRefresh() {
   assert.doesNotMatch(env.element('runtime-refresh-status').textContent, /stale|failed/i, 'a successful snapshot clears stale feedback');
 
   const initiallyUnavailable = await harness(snapshot(), {bootstrapError: new Error('initial connection unavailable')});
-  assert.equal(initiallyUnavailable.element('core-status').textContent, 'Assessment Environment — Unavailable', 'initial failure must never fabricate STOPPED');
+  assert.equal(initiallyUnavailable.element('runtime-session').textContent, 'No active session', 'initial failure retains the last rendered session state');
   assert.match(initiallyUnavailable.element('runtime-refresh-status').textContent, /stale|failed|unavailable|error/i);
   assertRuntimeControls(initiallyUnavailable, false, false, false);
   assert.equal(countRequests(initiallyUnavailable, 'POST'), 0);
@@ -433,7 +452,7 @@ async function testOutOfOrderRefreshes() {
   await newRefresh;
   older.resolve(env.response(snapshot()));
   await oldRefresh;
-  assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running', 'older response must not overwrite the header');
+  assert.equal(env.element('runtime-session').textContent, 'Active managed session', 'older response must not overwrite Runtime diagnostics');
   assert.equal(env.element('runtime-generation').textContent, 'Runtime Generation 1', 'older response must not overwrite Runtime diagnostics');
   assertRuntimeControls(env, false, true, false);
 
@@ -509,9 +528,6 @@ async function testProfessionalOverviewUsesExistingData() {
   for (const value of ['Detection','PLC3','T0835','Detected by ML','PLC14','Failed']) assert.ok(activity.includes(value),value);
   assert.doesNotMatch(activity,/hidden-correlation|evidence|return_status|\{"/);
   assert.ok(activity.indexOf('PLC3') < activity.indexOf('PLC14'),'newest activity first');
-  for (const id of ['core-status','watcher-status','run-status']) {
-    assert.doesNotMatch(env.element(id).textContent,/run-|generation-|RUNTIME|WATCHER|DAEMON|OWNERSHIP/);
-  }
   assert.doesNotMatch(htmlSource,/id="overview-(?:session|generation|technical-data)"/);
   assert.doesNotMatch(htmlSource,/Bounded read model|No event history is scanned|CORE ownership marker/);
   assert.match(cssSource,/\.technical-details strong\{[^}]*white-space:nowrap/);
@@ -538,11 +554,10 @@ async function testOverviewIntroductionAndEmptyState() {
   ]) assert.match(htmlSource, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const concept of ['Programmable Logic Controller', 'Supervisory Control and Data Acquisition', 'MITRE ATT&amp;CK', 'PPO / AI', 'Suricata', 'Defense Vulnerability Score', 'CORE']) assert.match(htmlSource, new RegExp(concept));
   assert.match(htmlSource, /href="#network">Start Assessment/);
-  assert.match(htmlSource, /href="#grid">Explore the System/);
+  assert.doesNotMatch(htmlSource, /Explore the System/);
   assert.match(htmlSource, /class="hero-flow"[\s\S]*?Power Grid[\s\S]*?Monitoring[\s\S]*?Cyber Attacks[\s\S]*?Defense \/ Detection[\s\S]*?Evidence[\s\S]*?Security Assessment/);
   const env = await harness(snapshot());
   assert.equal(env.element('overview-results-section').hasAttribute('hidden'), true);
-  assert.equal(env.element('global-status-row').hasAttribute('hidden'), true);
   assert.equal(env.element('overview-severity-total').textContent, 18);
   assert.match(env.element('overview-severity-legend').innerHTML, /High.*11.*Medium.*4.*Low.*3/);
   assert.match(env.element('overview-attack-catalogue').innerHTML, /Remote Services.*T0886/s);
@@ -607,7 +622,7 @@ async function testObsoleteRouteFailure() {
       if (navigateBack) await env.navigate(`#${oldRoute}`);
       const notice = env.element('runtime-refresh-status');
       const currentNotice = notice.textContent, currentState = notice.dataset.state;
-      assert.equal(env.element('core-status').textContent, 'Assessment Environment — Running');
+      assert.equal(env.element('runtime-session').textContent, 'Active managed session');
       assert.equal(currentState, 'current');
       pending.reject(new Error(`obsolete ${oldRoute} fixture failure`));
       await oldNavigation;
@@ -622,10 +637,9 @@ async function testObsoleteRouteFailure() {
 }
 
 function assertWatcherReady(env) {
-  assert.equal(env.element('watcher-status').textContent, 'Monitoring — Ready');
   assert.equal(env.element('runtime-watcher').textContent, 'Ready');
   assert.equal(env.element('runtime-action-status').textContent, 'Security monitoring is ready.', 'matching diagnostics must replace the transient acknowledgement with verified readiness');
-  for (const id of ['watcher-status', 'runtime-watcher', 'runtime-action-status']) {
+  for (const id of ['runtime-watcher', 'runtime-action-status']) {
     assert.doesNotMatch(env.element(id).textContent, /UNVERIFIED/, `${id} must no longer display the transient acknowledgement`);
   }
 }
@@ -804,6 +818,124 @@ async function testBackgroundTrafficIsSeparate() {
   assert.match(backgroundHtml, /10\.0\.0\.8/);
   assert.match(htmlSource, /not associated with a specific attack step/);
   assert.equal(countRequests(env, 'GET', '/api/live-battle?limit=100'), 1);
+}
+
+async function testCampaignNetworkEvidenceIsHumanReadableAndTruthful() {
+  const env = await harness(snapshot('RUNTIME', 'IDLE', 'generation-network-evidence'));
+  const request = {timestamp: '2026-10-07T09:30:15Z', source_ip: '10.0.0.1', destination_ip: '10.0.0.2',
+    protocol: 'TCP', source_port: 53380, destination_port: 502, ppo_step: 1, technique_id: 'T0846',
+    correlation_id: 'correlated-step-1', evidence: {packet_count: 4, raw_marker: 'request-packet-json'}};
+  const responseFlow = {timestamp: '2026-10-07T09:30:16Z', source_ip: '10.0.0.2', destination_ip: '10.0.0.1',
+    protocol: 'TCP', source_port: '502', destination_port: 53380, ppo_step: 1, technique_id: 'T0846',
+    correlation_id: 'correlated-step-1', evidence: {packet_count: 3, raw_marker: 'response-packet-json'}};
+  const uncorrelated = {timestamp: '2026-10-07T09:31:00Z', source_ip: '10.0.0.3', destination_ip: '10.0.0.4',
+    protocol: 'UDP', source_port: 41000, destination_port: 41001, evidence: {raw_marker: 'uncorrelated-packet-json'}};
+  const originalNetworkEvidence = JSON.stringify([request, responseFlow, uncorrelated]);
+  const security = [
+    {timestamp: '2026-10-07T09:30:17Z', event_type: 'attack_finished', target_node: 'plc2', mitre_technique: 'T0846', result: 'detected'},
+    {timestamp: '2026-10-07T09:31:17Z', event_type: 'attack_finished', target_node: 'plc3', mitre_technique: 'T0855', result: 'failed'}
+  ];
+  env.enqueue('/api/live-battle?limit=100', {...snapshot('RUNTIME', 'IDLE', 'generation-network-evidence'),
+    topology: {nodes: [{id: 'plc2'}, {id: 'plc3'}], links: []}, visual: {nodes: [], edges: []},
+    network_events: [request, responseFlow, uncorrelated], security_events: security, background_network: [],
+    network_event_count: 3, security_event_count: 2, campaign: null, limit: 100});
+  await env.navigate('#battle');
+
+  const headings = env.element('network-events-head').innerHTML;
+  for (const heading of ['Time', 'Source', 'Destination', 'Communication', 'Protocol', 'Port', 'Related assessment step', 'Evidence meaning', 'Details']) {
+    assert.match(headings, new RegExp(`>${heading}<`));
+  }
+  for (const oldHeading of ['Source port', 'Destination port', 'Packet / flow']) assert.doesNotMatch(headings, new RegExp(`>${oldHeading}<`));
+
+  const network = env.element('network-events-body').innerHTML;
+  assert.match(network, /SCADA \/ Modbus TCP communication/);
+  assert.match(network, /502 \(Modbus TCP\)/);
+  assert.match(network, /Step 1 · T0846/);
+  assert.match(network, /Request traffic sent to a monitored Modbus\/TCP service/);
+  assert.match(network, /Response traffic associated with the monitored Modbus\/TCP communication/);
+  assert.match(network, /Assessment network activity; no specific attack attribution is established/);
+  assert.match(network, /Technical details/);
+  assert.doesNotMatch(network.slice(0, network.indexOf('<details')), /packet-json/, 'raw JSON is absent from primary cells');
+  assert.ok(network.indexOf('request-packet-json') > network.indexOf('Technical details'), 'raw request JSON stays in the collapsed technical disclosure');
+  assert.equal(await env.call('relatedAssessmentStep', uncorrelated), 'Assessment network activity');
+  assert.doesNotMatch(await env.call('networkEvidenceMeaning', uncorrelated), /attack succeeded|T0846|T0855/i);
+
+  const results = env.element('security-events-body').innerHTML;
+  assert.match(results, /T0846/);
+  assert.match(results, /detected/);
+  assert.match(results, /T0855/);
+  assert.match(results, /failed/);
+  assert.match(htmlSource, /Network activity alone does not mean an attack succeeded/);
+  assert.equal(JSON.stringify([request, responseFlow, uncorrelated]), originalNetworkEvidence, 'presentation does not rewrite evidence');
+  assert.equal(countRequests(env, 'POST'), 0);
+}
+
+async function testEvidenceDisclosureStateSurvivesAutomaticRefresh() {
+  const env = await harness(snapshot('RUNTIME', 'IDLE', 'generation-disclosure-state'));
+  const networkEvent = (id, timestamp) => ({event_id: id, timestamp, event_type: 'flow_observed',
+    source_ip: '10.0.0.1', destination_ip: '10.0.0.2', protocol: 'TCP', source_port: 53000, destination_port: 502,
+    correlation_id: `correlation-${id}`, ppo_step: 1, technique_id: 'T0846', evidence: {packet_count: 2}});
+  const securityEvent = (id, timestamp, result = 'detected') => ({event_id: id, timestamp, event_type: 'attack_finished',
+    source_node: 'attacker', target_node: 'plc2', mitre_technique: 'T0846', result,
+    correlation_id: `correlation-${id}`, display_identity: {attack_step: 'Attack Step 1', attack_event: `Attack Event ${id}`}});
+  const responseBody = (network_events, security_events) => ({...snapshot('RUNTIME', 'IDLE', 'generation-disclosure-state'),
+    topology: {nodes: [{id: 'plc2'}], links: []}, visual: {nodes: [], edges: []}, background_network: [],
+    network_events, security_events, network_event_count: network_events.length, security_event_count: security_events.length,
+    campaign: null, limit: 100});
+
+  const n1 = networkEvent('network-one', '2026-10-07T10:00:01Z');
+  const n2 = networkEvent('network-two', '2026-10-07T10:00:02Z');
+  const n3 = networkEvent('network-three', '2026-10-07T10:00:03Z');
+  const s1 = securityEvent('security-one', '2026-10-07T10:00:04Z');
+  const s2 = securityEvent('security-two', '2026-10-07T10:00:05Z', 'failed');
+  const s3 = securityEvent('security-three', '2026-10-07T10:00:06Z');
+  env.enqueue('/api/live-battle?limit=100', responseBody([n1, n2], [s1, s2]));
+  await env.navigate('#battle');
+
+  const networkDetails = env.evidenceDetails('network-events-body');
+  const securityDetails = env.evidenceDetails('security-events-body');
+  networkDetails[0].open = true;
+  networkDetails[1].open = true;
+  securityDetails[0].open = true;
+  securityDetails[1].open = true;
+  env.element('network-evidence-scroll').scrollTop = 137;
+  env.element('security-evidence-scroll').scrollTop = 241;
+  env.setPageScroll(389);
+  const keys = {
+    n1: await env.call('evidenceRowIdentity', n1), n2: await env.call('evidenceRowIdentity', n2), n3: await env.call('evidenceRowIdentity', n3),
+    s1: await env.call('evidenceRowIdentity', s1), s2: await env.call('evidenceRowIdentity', s2), s3: await env.call('evidenceRowIdentity', s3)
+  };
+
+  // Simulate the existing timer refresh. Rows are reordered, one network row
+  // disappears, and new rows arrive in both tables.
+  env.enqueue('/api/live-battle?limit=100', responseBody([n3, n1], [s2, s3, s1]));
+  await env.tickIntervals();
+  const stateByKey = id => Object.fromEntries(env.evidenceDetails(id).map(details => [details.closest('tr[data-evidence-key]').dataset.evidenceKey, details.open]));
+  let networkState = stateByKey('network-events-body');
+  let securityState = stateByKey('security-events-body');
+  assert.equal(networkState[keys.n1], true, 'expanded network event survives reordering and refresh');
+  assert.equal(networkState[keys.n3], false, 'new network event starts collapsed');
+  assert.equal(Object.hasOwn(networkState, keys.n2), false, 'removed network event has no retained disclosure state');
+  assert.equal(securityState[keys.s1], true, 'first expanded security event survives refresh');
+  assert.equal(securityState[keys.s2], true, 'multiple expanded security events survive refresh');
+  assert.equal(securityState[keys.s3], false, 'new security event starts collapsed');
+  assert.equal(env.element('network-evidence-scroll').scrollTop, 137, 'network table scroll position survives refresh');
+  assert.equal(env.element('security-evidence-scroll').scrollTop, 241, 'attack log scroll position survives refresh');
+  assert.equal(env.pageScroll(), 389, 'page vertical scroll position survives refresh');
+  assert.match(env.element('network-events-body').innerHTML, new RegExp(`data-evidence-key="${keys.n1}"`));
+  assert.doesNotMatch(env.element('network-events-body').innerHTML, /data-evidence-key="[^"]*(?:network-one|correlation-network-one)/, 'stable DOM identity is opaque');
+  assert.doesNotMatch(env.element('network-events-body').innerHTML, /data-evidence-key="(?:row|index):/i, 'row indexes are not identities');
+  assert.equal(await env.call('evidenceRowIdentity', {...n1}), keys.n1, 'same event ID produces the same stable key');
+  assert.notEqual(keys.n1, keys.n2, 'different event IDs produce distinct stable keys');
+
+  // Reappearing evidence was absent from the previous DOM and must therefore
+  // behave as a newly added row rather than inheriting stale state.
+  env.enqueue('/api/live-battle?limit=100', responseBody([n2, n3, n1], [s2, s3, s1]));
+  await env.tickIntervals();
+  networkState = stateByKey('network-events-body');
+  assert.equal(networkState[keys.n2], false, 'reappearing removed row does not recover stale expanded state');
+  assert.equal(networkState[keys.n1], true);
+  assert.equal(countRequests(env, 'POST'), 0);
 }
 
 async function testTopologySelectionUsesCanonicalApiAndPyvis() {
@@ -1016,6 +1148,59 @@ async function testCustomTopologyWorkflowAndStateReset() {
   assert.equal(env.element('core-start').disabled, true, 'unapplied custom topology blocks Start CORE');
 }
 
+async function testSavedCustomTopologyCanSwitchBeforeCoreStartup() {
+  const stoppedWithReconciledMarker = snapshot();
+  stoppedWithReconciledMarker.runtime_marker = true;
+  const env = await harness(stoppedWithReconciledMarker);
+  const definition = {case_name: 'custom_template', nodes: [
+    {bus_id: 0, name: 'Generator', type: 'slack'},
+    {bus_id: 1, name: 'Load', type: 'pq'}
+  ], edges: [{from: 0, to: 1}]};
+  const custom = {configuration: {node_count: 6, edge_count: 5, case_name: 'custom_template',
+    selected_case: 'custom_template', topology_version: 'custom_template:2',
+    available_topologies: [{case_name: 'case14', name: 'IEEE 14'}, {case_name: 'case30', name: 'IEEE 30'},
+      {case_name: 'custom_template', name: 'Custom Template'}],
+    node_types: {plc: 2, hub: 1, scada: 1, attacker: 1, ids: 1}, definition},
+    topology: {case_name: 'custom_template'}, visual: {nodes: [{id: 'plc1'}], edges: []},
+    pyvis_html: '<html>custom_template</html>'};
+  env.enqueue('/api/network-configuration', custom.configuration);
+  env.enqueue('/api/topology', custom);
+  await env.navigate('#network');
+
+  assert.equal(env.element('topology-selector').value, 'custom_template');
+  assert.equal(env.element('topology-selector').disabled, false,
+    'an obsolete marker must not lock topology selection when CORE reports no active session');
+  assert.equal(env.element('custom-topology-preview').hasAttribute('hidden'), false);
+  env.element('custom-topology-file').value = 'custom.json';
+
+  const selected14 = {configuration: {...custom.configuration, case_name: 'case14', selected_case: 'case14',
+    definition: null}, topology: {case_name: 'case14'}, visual: {nodes: [{id: 'plc1'}], edges: []},
+    pyvis_html: '<html>case14</html>'};
+  env.element('topology-selector').value = 'case14';
+  env.enqueue('/api/topology/select', selected14, {method: 'POST'});
+  env.enqueue('/api/topology', selected14);
+  await env.element('topology-selector').dispatch('change');
+  assert.equal(env.element('topology-selector').value, 'case14');
+  assert.equal(env.element('custom-topology-panel').hasAttribute('hidden'), true);
+  assert.equal(env.element('custom-topology-preview').hasAttribute('hidden'), true);
+  assert.equal(env.element('custom-topology-file').value, '', 'switching to a preset clears stale custom upload state');
+
+  const selected30 = {configuration: {...custom.configuration, case_name: 'case30', selected_case: 'case30',
+    definition: null}, topology: {case_name: 'case30'}, visual: {nodes: [{id: 'plc1'}], edges: []},
+    pyvis_html: '<html>case30</html>'};
+  env.element('topology-selector').value = 'case30';
+  env.enqueue('/api/topology/select', selected30, {method: 'POST'});
+  env.enqueue('/api/topology', selected30);
+  await env.element('topology-selector').dispatch('change');
+  assert.equal(env.element('topology-selector').value, 'case30');
+  assert.equal(env.element('core-start').disabled, false, 'a selected preset remains ready for CORE startup');
+
+  const active = await harness(snapshot('RUNTIME', 'IDLE', 'active-topology-lock'));
+  await active.call('renderNetworkConfiguration', custom.configuration, custom);
+  assert.equal(active.element('topology-selector').disabled, true,
+    'topology selection is locked when a managed CORE session is active');
+}
+
 async function testCustomTopologyUploadAndValidation() {
   const env = await harness(snapshot());
   await env.navigate('#network');
@@ -1043,6 +1228,27 @@ async function testCustomTopologyUploadAndValidation() {
   assert.equal(env.element('custom-preview-communication').textContent, '5 hosts/devices · 4 CORE links');
 }
 
+async function testGlobalStatusPillsAreAbsentFromEveryPage() {
+  const removedIds = ['global-status-row', 'core-status', 'watcher-status', 'run-status'];
+  const removedLabels = [
+    'Assessment Environment — Unavailable',
+    'Monitoring — Unavailable',
+    'No assessment running'
+  ];
+  for (const id of removedIds) assert.doesNotMatch(htmlSource, new RegExp(`id="${id}"`));
+  for (const label of removedLabels) assert.doesNotMatch(htmlSource, new RegExp(label));
+
+  const env = await harness(snapshot());
+  for (const route of ['overview', 'network', 'grid', 'runtime', 'battle', 'reports']) {
+    await env.navigate(`#${route}`);
+    for (const id of removedIds) {
+      assert.equal(env.hasElement(id), false, `${id} must be absent from ${route}`);
+    }
+  }
+  assert.equal(env.element('runtime-daemon').textContent, 'Available', 'detailed Runtime status remains available');
+  assert.equal(countRequests(env, 'POST'), 0, 'route checks must remain read-only');
+}
+
 const tests = [
   ['A: STOPPED state and enabled/disabled styles', testStoppedAndStyles],
   ['B: coherent RUNTIME snapshot and watcher rules', testRuntimeSnapshot],
@@ -1060,6 +1266,8 @@ const tests = [
   ['K: watcher refresh failure and backend errors remain visible', testWatcherRefreshFailureAndPostError],
   ['L: watcher ownership identity and bounded GET-only observation', testWatcherIdentityAndBoundedObservation],
   ['M: background traffic remains a separate refreshed table', testBackgroundTrafficIsSeparate],
+  ['M2: campaign network evidence is readable without inventing attribution', testCampaignNetworkEvidenceIsHumanReadableAndTruthful],
+  ['M3: evidence disclosures and scroll survive automatic refresh by stable event identity', testEvidenceDisclosureStateSurvivesAutomaticRefresh],
   ['N: canonical topology selection refreshes a real PyVis view', testTopologySelectionUsesCanonicalApiAndPyvis],
   ['N2: topology selection errors remain visible and restore selection', testTopologySelectionFailureIsVisible],
   ['N3: custom topology editor, API, PyVis and runtime guards', testCustomTopologyEditorAndGuards],
@@ -1069,7 +1277,9 @@ const tests = [
   ['R1: overview hides unavailable and empty high-level states', testOverviewHidesUnavailableEmptyStates],
   ['R2: workflow next navigation provides guided progression', testWorkflowNextNavigation],
   ['R3: custom topology state cleanly resets between presets and custom', testCustomTopologyWorkflowAndStateReset],
-  ['R4: custom topology template and upload validation', testCustomTopologyUploadAndValidation]
+  ['R4: custom topology template and upload validation', testCustomTopologyUploadAndValidation],
+  ['R5: saved custom topology can switch presets until CORE starts', testSavedCustomTopologyCanSwitchBeforeCoreStartup],
+  ['R6: global status pills are absent from every application page', testGlobalStatusPillsAreAbsentFromEveryPage]
 ];
 
 (async () => {

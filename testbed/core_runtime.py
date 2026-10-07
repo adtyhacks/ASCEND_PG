@@ -13,7 +13,7 @@ _CORE_REQUEST_LOCK = threading.Lock()
 def core_request(action, **arguments):
     if os.name != "posix":
         raise RuntimeError("Run Streamlit inside WSL2; CORE namespaces require Linux.")
-    python = os.environ.get("ASCEND_CORE_PYTHON", "/opt/core/venv/bin/python")
+    python = os.environ.get("ASCEND_CORE_PYTHON", str(ROOT / ".venv-wsl/bin/python"))
     request = {"action": action, **arguments}
     if not _CORE_REQUEST_LOCK.acquire(timeout=CORE_REQUEST_LOCK_TIMEOUT_SECONDS):
         raise RuntimeError("Timed out waiting for another GUI CORE helper operation.")

@@ -1,5 +1,4 @@
 const byId = id => document.getElementById(id);
-const statusText = (label, value) => `${label} — ${value || 'NONE'}`;
 const text = value => value === null || value === undefined || value === '' ? 'NONE' : String(value);
 const unavailable = value => value === null || value === undefined || value === '' ? 'N/A' : (typeof value === 'object' ? JSON.stringify(value) : String(value));
 const escapeHtml = value => unavailable(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
@@ -56,6 +55,10 @@ function drawPyvisTopology(target, html) {
   target.replaceChildren(frame);
 }
 
+function topologyEditingLocked() {
+  const core = latestSystem?.core;
+  return core?.state === 'RUNTIME' || core?.session_id != null;
+}
 function updateControlStates() {
   const usable = runtimeFresh && !runtimeControlPending;
   const core = latestSystem?.core, watcher = latestSystem?.watcher;
@@ -77,7 +80,7 @@ function updateControlStates() {
   byId('campaign-isolate').disabled = !coreReady;
   byId('campaign-restore').disabled = !coreReady;
   byId('defense-target').disabled = !coreReady;
-  byId('topology-selector').disabled = !runtimeFresh || running || latestSystem?.runtime_marker || runtimeControlPending || topologyControlPending;
+  byId('topology-selector').disabled = !runtimeFresh || topologyEditingLocked() || runtimeControlPending || topologyControlPending;
   for (const id of ['custom-topology-json', 'custom-topology-save', 'custom-topology-copy']) byId(id).disabled = byId('topology-selector').disabled;
   for (const id of ['custom-builder-name','custom-builder-add-node','custom-builder-add-edge','custom-builder-validate']) if (byId(id)) byId(id).disabled = byId('topology-selector').disabled;
   setElementVisibility(byId('runtime-next-bar'), running && watcher?.state === 'IDLE');
@@ -86,13 +89,6 @@ function renderRuntimeState(system) {
   const active = system.active_run;
   const identity = system.display_identity || {};
   const core = system.core.state, watcher = system.watcher.state;
-  const environment = core === 'RUNTIME' ? 'Running' : core === 'STOPPED' && system.core.daemon === 'AVAILABLE' ? 'Ready' : 'Unavailable';
-  const monitoring = core === 'RUNTIME' && watcher === 'IDLE' ? 'Ready' : core === 'RUNTIME' && watcher === 'BUSY' ? 'Active' : 'Unavailable';
-  const assessmentState = assessmentLabel(active);
-  const assessment = active?.state === 'ACTIVE' ? displayName(identity, 'assessment', 'Current assessment') : assessmentState;
-  byId('core-status').textContent = statusText('Assessment Environment', environment);
-  byId('watcher-status').textContent = statusText('Monitoring', monitoring);
-  byId('run-status').textContent = active?.state === 'ACTIVE' ? `${assessment} — ${assessmentState.replace('Assessment ', '')}` : assessmentState;
   byId('runtime-daemon').textContent = system.core.daemon === 'AVAILABLE' ? 'Available' : 'Not reachable';
   byId('runtime-session').textContent = core === 'RUNTIME' ? 'Active managed session' : 'No active session';
   byId('runtime-generation').textContent = core === 'RUNTIME' ? displayName(identity, 'runtime_generation', 'Active') : 'Not started';
@@ -255,7 +251,6 @@ async function loadOverview() {
   byId('overview-topology-summary').textContent = `${data.visual.nodes.length} devices · ${data.visual.edges.length} connections`;
   const assessmentState = assessmentLabel(active);
   const assessment = active?.state === 'ACTIVE' ? displayName(activity.display_identity, 'assessment', 'Current assessment') : assessmentState;
-  byId('run-status').textContent = active?.state === 'ACTIVE' ? `${assessment} — ${assessmentState.replace('Assessment ', '')}` : assessmentState;
   if (activeCatalogue) {
     renderSeverityDistribution(activeCatalogue.severity_distribution || {});
     renderAttackCatalogue(activeCatalogue.attacks || []);
@@ -444,7 +439,7 @@ function renderNetworkConfiguration(config, topology) {
   }
   selector.innerHTML = options.join('');
   selector.value = current;
-  selector.disabled = !runtimeFresh || latestSystem?.core?.state === 'RUNTIME' || latestSystem?.runtime_marker || runtimeControlPending || topologyControlPending;
+  selector.disabled = !runtimeFresh || topologyEditingLocked() || runtimeControlPending || topologyControlPending;
   byId('topology-selection-status').textContent = `Selected backend topology: ${current}. Changes are available before CORE startup.`;
   drawPyvisTopology(byId('network-topology'), topology.pyvis_html);
 
@@ -472,12 +467,12 @@ function evidenceValue(value) {
   if (value === '') return '<span title="Empty string">&quot;&quot;</span>';
   return escapeHtml(typeof value === 'object' ? JSON.stringify(value) : String(value));
 }
-function evidenceDetails(value, label = null) {
+function evidenceDetails(value, label = null, expanded = false) {
   if (value === null || value === undefined || value === 'N/A' || value === '') return evidenceValue(value);
   const compact = typeof value === 'object' ? JSON.stringify(value) : String(value);
   const full = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
   const preview = label || (compact.length > 96 ? compact.slice(0, 96) + '…' : compact);
-  return `<details class="evidence-details"><summary><span class="payload-preview">${escapeHtml(preview)}</span></summary><pre>${escapeHtml(full)}</pre></details>`;
+  return `<details class="evidence-details"${expanded ? ' open' : ''}><summary><span class="payload-preview">${escapeHtml(preview)}</span></summary><pre>${escapeHtml(full)}</pre></details>`;
 }
 function meaningfulEvidence(value) { return value !== null && value !== undefined && value !== '' && value !== 'N/A'; }
 function attackEventSeverity(event, events) {
@@ -486,13 +481,74 @@ function attackEventSeverity(event, events) {
   const start = event.correlation_id ? events.find(candidate => candidate.event_type === 'attack_started' && identity.every(key => candidate[key] === event[key])) : null;
   return start ? (start.attack_severity ?? start.severity) : (event.attack_severity ?? null);
 }
-function renderEvidenceTable(target, rows, columns, emptyMessage, headerId) {
+function stableEvidenceToken(value) {
+  let hash = 2166136261;
+  for (const character of String(value)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return (hash >>> 0).toString(36);
+}
+function evidenceRowIdentity(row) {
+  if (meaningfulEvidence(row.event_id)) return `event-${stableEvidenceToken(row.event_id)}`;
+  const correlation = networkField(row, 'correlation_id', 'attack_event_id');
+  if (meaningfulEvidence(correlation)) {
+    return `correlation-${stableEvidenceToken(`${correlation}|${row.event_type || ''}|${row.timestamp || ''}|${row.source_ip || row.source_node || ''}|${row.destination_ip || row.target_node || ''}`)}`;
+  }
+  return `record-${stableEvidenceToken(`${row.timestamp || ''}|${row.event_type || ''}|${row.source_ip || row.source_node || ''}|${row.destination_ip || row.target_node || ''}|${row.protocol || ''}|${networkField(row, 'source_port', 'src_port') || ''}|${networkField(row, 'destination_port', 'dest_port', 'dst_port') || ''}`)}`;
+}
+function renderEvidenceTable(target, rows, columns, emptyMessage, headerId, state = null) {
+  const container = state?.containerId ? byId(state.containerId) : null;
+  const scrollTop = container?.scrollTop ?? 0;
+  const pageScrollY = state && Number.isFinite(window.scrollY) ? window.scrollY : null;
+  const expanded = new Set(state ? [...target.querySelectorAll('tr[data-evidence-key] details[open]')]
+    .map(details => details.closest('tr[data-evidence-key]')?.dataset.evidenceKey).filter(Boolean) : []);
   const visible = columns.filter(column => !column.optional || rows.some(row => meaningfulEvidence(column.value(row))));
   byId(headerId).innerHTML = visible.map(column => `<th scope="col">${escapeHtml(column.label)}</th>`).join('') + '<th scope="col">Details</th>';
-  if (!rows.length) { target.innerHTML = `<tr><td colspan="${visible.length + 1}" class="table-empty">${escapeHtml(emptyMessage)}</td></tr>`; return; }
-  target.innerHTML = rows.map(row => `<tr>${visible.map(column => `<td>${column.payload ? evidenceDetails(column.value(row)) : evidenceValue(column.value(row))}</td>`).join('')}<td>${evidenceDetails(row, 'Technical details')}</td></tr>`).join('');
+  if (!rows.length) {
+    target.innerHTML = `<tr><td colspan="${visible.length + 1}" class="table-empty">${escapeHtml(emptyMessage)}</td></tr>`;
+  } else {
+    target.innerHTML = rows.map(row => {
+      const key = evidenceRowIdentity(row);
+      return `<tr data-evidence-key="${escapeHtml(key)}">${visible.map(column => `<td>${column.payload ? evidenceDetails(column.value(row)) : evidenceValue(column.value(row))}</td>`).join('')}<td>${evidenceDetails(row, 'Technical details', expanded.has(key))}</td></tr>`;
+    }).join('');
+  }
+  if (container) container.scrollTop = scrollTop;
+  if (pageScrollY !== null && typeof window.scrollTo === 'function') window.scrollTo(window.scrollX || 0, pageScrollY);
 }
 function networkField(event, ...names) { const name = names.find(key => event[key] !== null && event[key] !== undefined && event[key] !== 'N/A'); return name === undefined ? (event[names[0]] ?? null) : event[name]; }
+function readableNetworkTime(value) {
+  if (!meaningfulEvidence(value)) return value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], {
+    year:'numeric', month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'
+  });
+}
+function isModbusPort(value) { return meaningfulEvidence(value) && String(value) === '502'; }
+function networkCommunication(event) {
+  const sourcePort = networkField(event, 'source_port', 'src_port');
+  const destinationPort = networkField(event, 'destination_port', 'dest_port', 'dst_port');
+  const application = String(event.application_protocol || '').toLowerCase();
+  if (isModbusPort(sourcePort) || isModbusPort(destinationPort) || application === 'modbus') return 'SCADA / Modbus TCP communication';
+  const protocol = meaningfulEvidence(event.protocol) ? String(event.protocol).toUpperCase() : null;
+  return protocol ? `${protocol} network communication` : 'Network communication';
+}
+function networkServicePort(event) {
+  const sourcePort = networkField(event, 'source_port', 'src_port');
+  const destinationPort = networkField(event, 'destination_port', 'dest_port', 'dst_port');
+  if (isModbusPort(sourcePort) || isModbusPort(destinationPort)) return '502 (Modbus TCP)';
+  return meaningfulEvidence(destinationPort) ? destinationPort : sourcePort;
+}
+function relatedAssessmentStep(event) {
+  if (!meaningfulEvidence(event.ppo_step)) return 'Assessment network activity';
+  const technique = networkField(event, 'technique_id', 'mitre_technique');
+  return `Step ${event.ppo_step}${meaningfulEvidence(technique) ? ` · ${technique}` : ''}`;
+}
+function networkEvidenceMeaning(event) {
+  const sourcePort = networkField(event, 'source_port', 'src_port');
+  const destinationPort = networkField(event, 'destination_port', 'dest_port', 'dst_port');
+  if (isModbusPort(destinationPort)) return 'Request traffic sent to a monitored Modbus/TCP service.';
+  if (isModbusPort(sourcePort)) return 'Response traffic associated with the monitored Modbus/TCP communication.';
+  if (meaningfulEvidence(event.ppo_step)) return 'Network activity observed during this assessment step.';
+  return 'Assessment network activity; no specific attack attribution is established.';
+}
 async function loadBattle() {
   const sequence = ++battleRefreshSequence, runtimeSequence = runtimeRefreshSequence;
   const visualQuery = battleVisualSignature ? `&visual_signature=${encodeURIComponent(battleVisualSignature)}` : '';
@@ -506,13 +562,15 @@ async function loadBattle() {
   if (data.pyvis_html) drawPyvisTopology(byId('battle-topology'), data.pyvis_html);
   battleVisualSignature = data.visual_signature || battleVisualSignature;
   renderEvidenceTable(byId('network-events-body'), data.network_events, [
-    {label: 'Timestamp', value: e => e.timestamp}, {label: 'Source', value: e => networkField(e, 'source_ip', 'source_node')},
-    {label: 'Destination', value: e => networkField(e, 'destination_ip', 'target_node')}, {label: 'Protocol', value: e => e.protocol},
-    {label: 'Source port', value: e => networkField(e, 'source_port', 'src_port')}, {label: 'Destination port', value: e => networkField(e, 'destination_port', 'dest_port', 'dst_port')},
-    {label: 'Packet / flow', value: e => networkField(e, 'packet', 'flow', 'details', 'evidence'), payload: true},
-    {label: 'Modbus', value: e => networkField(e, 'modbus', 'modbus_fields', 'modbus_function'), payload: true, optional: true},
-    {label: 'IDS', value: e => networkField(e, 'ids', 'ids_metadata', 'suricata'), payload: true, optional: true}
-  ], 'No canonical network events available.', 'network-events-head');
+    {label: 'Time', value: e => readableNetworkTime(e.timestamp)},
+    {label: 'Source', value: e => networkField(e, 'source_ip', 'source_node')},
+    {label: 'Destination', value: e => networkField(e, 'destination_ip', 'target_node')},
+    {label: 'Communication', value: networkCommunication},
+    {label: 'Protocol', value: e => e.protocol},
+    {label: 'Port', value: networkServicePort},
+    {label: 'Related assessment step', value: relatedAssessmentStep},
+    {label: 'Evidence meaning', value: networkEvidenceMeaning}
+  ], 'No canonical network events available.', 'network-events-head', {containerId: 'network-evidence-scroll'});
   renderEvidenceTable(byId('background-network-body'), data.background_network || [], [
     {label: 'Timestamp', value: e => e.timestamp}, {label: 'Feed', value: e => e.source_type},
     {label: 'Source IP', value: e => e.source_ip}, {label: 'Destination IP', value: e => e.destination_ip},
@@ -526,7 +584,7 @@ async function loadBattle() {
     {label: 'MITRE', value: e => e.mitre_technique}, {label: 'Result', value: e => e.result},
     {label: 'Detection', value: e => networkField(e, 'detected', 'detection_method'), optional: true}, {label: 'Severity', value: e => attackEventSeverity(e, data.security_events)},
     {label: 'Defense', value: e => e.defense_action, optional: true}
-  ], 'No canonical security events available.', 'security-events-head');
+  ], 'No canonical security events available.', 'security-events-head', {containerId: 'security-evidence-scroll'});
   updateControlStates();
   const targets = data.topology.nodes.filter(node => node.id.startsWith('plc')).map(node => node.id); const selector = byId('defense-target');
   if (!selector.options.length) { selector.innerHTML = targets.map(target => `<option value="${escapeHtml(target)}">${escapeHtml(target)}</option>`).join(''); }
@@ -577,7 +635,6 @@ async function activateRoute() {
   const sequence = ++routeRefreshSequence, route = location.hash.slice(1) || 'overview';
   document.querySelectorAll('[data-page]').forEach(page => page.classList.toggle('active', page.dataset.page === route));
   document.querySelectorAll('[data-route]').forEach(link => link.classList.toggle('active', link.dataset.route === route));
-  setElementVisibility(byId('global-status-row'), route !== 'overview');
   setElementVisibility(byId('runtime-refresh-status'), route !== 'overview');
   await loadStatus();
   if (sequence !== routeRefreshSequence || route !== (location.hash.slice(1) || 'overview') || route === 'runtime') return;

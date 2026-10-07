@@ -1,6 +1,6 @@
 {
   "case_name": "custom_template",
-  "num_buses": 3,
+  "num_buses": 4,
   "nodes": [
     {
       "bus_id": 0,
@@ -43,6 +43,20 @@
       "ip": "10.0.0.3",
       "plc_type": "generic_modbus",
       "bus_role": "load"
+    },
+    {
+      "bus_id": 3,
+      "name": "Bus 4",
+      "type": "pv",
+      "vn_kv": 110.0,
+      "voltage": 1.0,
+      "pg": 0.0,
+      "qg": 0.0,
+      "pl": 0.0,
+      "ql": 0.0,
+      "ip": "10.0.0.4",
+      "plc_type": "generic_modbus",
+      "bus_role": "generator"
     }
   ],
   "edges": [
@@ -63,29 +77,43 @@
       "x_ohm_per_km": 0.1,
       "c_nf_per_km": 0.0,
       "max_i_ka": 0.4
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "length_km": 1.0,
+      "r_ohm_per_km": 0.1,
+      "x_ohm_per_km": 0.1,
+      "c_nf_per_km": 0.0,
+      "max_i_ka": 0.4
     }
   ],
   "bus_types": [
     3,
     2,
-    2
+    2,
+    1
   ],
   "voltages": [
     1.06,
+    1.0,
     1.0,
     1.0
   ],
   "bus_degrees": [
     1.0,
     2.0,
+    2.0,
     1.0
   ],
   "gen_buses": [
-    0
+    0,
+    3
   ],
   "ip_map": {
     "0": "10.0.0.1",
     "1": "10.0.0.2",
-    "2": "10.0.0.3"
+    "2": "10.0.0.3",
+    "3": "10.0.0.4"
   }
 }

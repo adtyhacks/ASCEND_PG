@@ -166,7 +166,22 @@ class CampaignController:
         """Build a new topology-bound environment for one campaign only."""
         from strategic.rl_env import AttackStrategyEnv
 
-        return AttackStrategyEnv(case=30 if "30" in str(topology.case_name) else 14, real_mode=False)
+        return AttackStrategyEnv(topology=topology, real_mode=False)
+
+    @staticmethod
+    def _resolve_target(topology: Any, target_bus: int) -> tuple[str, str]:
+        """Resolve a campaign target only when it exists in the canonical topology."""
+        target_node = f"plc{target_bus + 1}"
+        target_ip = topology.get_ip(target_bus)
+        nodes = topology.canonical_snapshot().get("nodes", [])
+        matching = [node for node in nodes if node.get("id") == target_node
+                    and node.get("node_type", "plc") == "plc"]
+        if not matching or matching[0].get("ip", target_ip) != target_ip:
+            raise CampaignError(
+                "invalid_campaign_target",
+                f"Campaign target {target_node} ({target_ip}) is not present in the selected topology.",
+            )
+        return target_ip, target_node
 
     def _new_session(self, run: dict[str, Any]) -> dict[str, Any]:
         timings: dict[str, Any] = {}
@@ -249,7 +264,7 @@ class CampaignController:
                 self._initialization_timings[run["run_id"]] = dict(session.get("initialization_timings", {}))
             step = self._select_step(session); target_bus = step["target_bus"]
             action = step.pop("_action")
-            topology = self.topology(); target_ip = topology.get_ip(target_bus); target_node = f"plc{target_bus + 1}"
+            topology = self.topology(); target_ip, target_node = self._resolve_target(topology, target_bus)
             request = {**step, "target_ip": target_ip, "target_node": target_node,
                        "generation_id": runtime.get("generation_id", runtime.get("token")), "campaign_id": run["run_id"],
                        "run_id": run["run_id"], "scenario_id": run["scenario_id"],
