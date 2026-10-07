@@ -74,23 +74,18 @@ def get_baseline_grid(topology=None) -> dict:
     if cache_key in _baseline_cache:
         return _baseline_cache[cache_key]
     try:
-        from testbed.grid_env import build_baseline
         import pandas as pd
-        if norm_case in {"case14", "case30"}:
-            net, grid_df, traffic_df = build_baseline(n_packets=100, seed=42, case_name=norm_case)
-            simulation_source = norm_case
-        else:
-            net = topo.to_pandapower()
-            grid_df = pd.DataFrame({"bus_id": net.res_bus.index, "voltage_pu": net.res_bus["vm_pu"].values,
-                                    "voltage_angle_deg": net.res_bus["va_degree"].values})
-            rows, base = [], datetime(2026, 1, 1)
-            for index, edge in enumerate(topo.edge_models):
-                source, destination = int(edge["from"]), int(edge["to"])
-                rows.append({"timestamp": base + timedelta(seconds=index + 1), "src_bus": source,
-                             "dst_bus": destination, "packet_size_bytes": 256,
-                             "voltage_pu": float(net.res_bus.at[source, "vm_pu"])})
-            traffic_df = pd.DataFrame(rows, columns=["timestamp", "src_bus", "dst_bus", "packet_size_bytes", "voltage_pu"])
-            simulation_source = "canonical_custom"
+        net = topo.to_pandapower()
+        grid_df = pd.DataFrame({"bus_id": net.res_bus.index, "voltage_pu": net.res_bus["vm_pu"].values,
+                                "voltage_angle_deg": net.res_bus["va_degree"].values})
+        rows, base = [], datetime(2026, 1, 1)
+        for index, edge in enumerate(topo.edge_models):
+            source, destination = int(edge["from"]), int(edge["to"])
+            rows.append({"timestamp": base + timedelta(seconds=index + 1), "src_bus": source,
+                          "dst_bus": destination, "packet_size_bytes": 256,
+                          "voltage_pu": float(net.res_bus.at[source, "vm_pu"])})
+        traffic_df = pd.DataFrame(rows, columns=["timestamp", "src_bus", "dst_bus", "packet_size_bytes", "voltage_pu"])
+        simulation_source = topo.source
         voltage_min = float(grid_df["voltage_pu"].min())
         voltage_max = float(grid_df["voltage_pu"].max())
         line_loading = net.res_line["loading_percent"] if hasattr(net, "res_line") and not net.res_line.empty else pd.Series(dtype=float)
@@ -179,6 +174,13 @@ def snapshot():
                 continue
         if target not in latest or stamp > latest[target][0]:
             latest[target] = (stamp, row)
+    physical = None
+    if scoped:
+        try:
+            from testbed.physical_feedback import load_state
+            physical = load_state(topo, run)
+        except Exception as exc:
+            physical = {"physical_model_available": topo.physical_available, "power_flow_success": False, "error": str(exc)}
     components = []
     for node in topo.nodes:
         observed = latest.get(topo.get_ip(node['bus_id']))
@@ -187,7 +189,7 @@ def snapshot():
             status = 'Monitoring' if observed[1].get('observation_type') == 'poll_result' else 'Offline'
         components.append({'name': node.get('name') or f"Bus {node['bus_id'] + 1}",
             'type': 'Generator' if node.get('type') in {'slack', 'pv', 'generator', 'gen'} else 'Load',
-            'model_voltage_pu': _number(node.get('voltage')),
+            'model_voltage_pu': (_number(physical.get('voltage_after', {}).get(str(node['bus_id']))) if physical is not None else _number(node.get('voltage'))),
             'model_generation_mw': _number(node.get('pg')), 'model_load_mw': _number(node.get('pl')),
             'measured_voltage_pu': None, 'measured_power_mw': None,
             'status': status, 'last_observed': observed[1].get('timestamp') if observed else None,
@@ -201,7 +203,7 @@ def snapshot():
     rate = _flow_rate(flows, {node['ip'] for node in canonical['nodes'] if node.get('ip')}, boundary, now)
     monitoring = sum(row['status'] == 'Monitoring' for row in components)
     offline = sum(row['status'] == 'Offline' for row in components)
-    return {'case_name': topo.case_name, 'components': components,
+    return {'case_name': topo.case_name, 'components': components, 'physical_feedback': physical, 'physical_model_available': topo.physical_available,
         'baseline_grid': get_baseline_grid(topo),
         'runtime_available': scoped,
         'grid': {'component_count': len(components), 'healthy': None, 'warning': None, 'critical': None,
@@ -217,7 +219,7 @@ def snapshot():
                     'offline_components': offline if scoped else None,
                     'status': 'Monitoring' if monitoring else 'Offline' if scoped and offline == len(components) else 'Not available',
                     'bandwidth_capacity_bps': None, 'observed_traffic': rate, 'recent_detection_notices': detections},
-        'provenance': {'electrical': 'Canonical topology model / baseline values; not live measurements. Custom model defaults may be present.',
+        'provenance': {'electrical': ('Run-scoped Pandapower results driven by declared Modbus readbacks; simulated electrical state, not physical sensor measurements.' if physical and physical.get('power_flow_success') else 'Physical recalculation/readback failed; current voltages unavailable.' if physical is not None else 'Canonical topology model / baseline values; not live measurements. Custom model defaults may be present.'),
                        'scada': 'Latest retained SCADA holding-register read within the current assessment and 120 seconds. Monitoring means communication was observed; Offline means the latest read failed.',
                        'live_electrical': 'Not available: existing SCADA polls do not read the input-register voltage/power measurements. Electrical health classifications and line loading are not established.',
                        'power': 'Preset zero placeholders are not presented as calculated power. Custom generation/load values are model configuration, not measured output.',

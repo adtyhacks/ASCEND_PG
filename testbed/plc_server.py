@@ -131,6 +131,20 @@ def build_context(bus_id: int, num_registers: int = 100, node_data=None):
     # Holding registers (read/write analog)
     hr_block = _build_block(template.hr_start, template.hr_count,
                             [(a, n, v, *r) for a, n, v, *r in reg_map.holding_registers])
+    # Explicit canonical definitions use actual client offsets, unlike legacy
+    # template labels such as 40000. Physical mappings remain declarative.
+    definitions = node.get("plc", {}).get("registers", [])
+    def semantic_block(kind, fallback):
+        selected = [r for r in definitions if r["type"] == kind]
+        if not selected: return fallback
+        values = [0] * (max(r["address"] for r in selected) + 1)
+        for register in selected:
+            values[register["address"]] = register.get("initial_value", False if kind in {"coil", "discrete_input"} else 0)
+        return ModbusSequentialDataBlock(1, values)
+    hr_block = semantic_block("holding_register", hr_block)
+    ir_block = semantic_block("input_register", ir_block)
+    co_block = semantic_block("coil", co_block)
+    di_block = semantic_block("discrete_input", di_block)
 
     # Store device ID for FC43 responses
     device_id = build_device_id(template, bus_id)

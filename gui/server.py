@@ -7,11 +7,24 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from gui import adapter, reporting, grid_status
+from gui import adapter, reporting, grid_status, imports
 from gui.campaign import CampaignController, CampaignError
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 CAMPAIGNS = CampaignController()
+
+
+def _event_limit(query: dict[str, list[str]]) -> int:
+    values = query.get("limit", ["100"])
+    if len(values) != 1:
+        raise ValueError(f"limit must be an integer between 1 and {adapter.MAX_EVENT_LIMIT}")
+    try:
+        limit = int(values[0])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"limit must be an integer between 1 and {adapter.MAX_EVENT_LIMIT}") from exc
+    if not 1 <= limit <= adapter.MAX_EVENT_LIMIT:
+        raise ValueError(f"limit must be an integer between 1 and {adapter.MAX_EVENT_LIMIT}")
+    return limit
 
 
 class GuiHandler(SimpleHTTPRequestHandler):
@@ -22,7 +35,13 @@ class GuiHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
         try:
-            if parsed.path == "/api/dashboard":
+            if parsed.path == "/api/topology/source":
+                payload = imports.active()
+            elif parsed.path == "/api/topology/imported":
+                payload = imports.workspace()
+            elif parsed.path == "/api/topology/import-sample":
+                payload = json.loads((WEB_ROOT.parent.parent / "examples" / "ascend_exchange.json").read_text(encoding="utf-8"))
+            elif parsed.path == "/api/dashboard":
                 payload = {"system": adapter.get_system_status(), "active_run": adapter.get_active_run()}
             elif parsed.path == "/api/active-run-integrity":
                 payload = adapter.get_displayable_active_run()
@@ -53,7 +72,7 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 return
             elif parsed.path == "/api/live-battle":
                 payload = adapter.get_live_battle_snapshot(
-                    int(query.get("limit", ["100"])[0]), query.get("visual_signature", [None])[0]
+                    _event_limit(query), query.get("visual_signature", [None])[0]
                 )
             elif parsed.path == "/api/topology/template":
                 body = json.dumps(adapter.get_custom_topology_template(), indent=2).encode("utf-8")
@@ -81,8 +100,9 @@ class GuiHandler(SimpleHTTPRequestHandler):
 
     def _json_body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
-        if length > 64 * 1024:
-            raise CampaignError("request_too_large", "JSON request body exceeds 64 KiB.", 413)
+        limit = 2 * 1024 * 1024 if self.path == "/api/topology/import" else 64 * 1024
+        if length < 0 or length > limit:
+            raise CampaignError("request_too_large", f"JSON request body exceeds {limit} bytes.", 413)
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError as exc:
@@ -102,12 +122,18 @@ class GuiHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         try:
             data = self._json_body()
-            if self.path == "/api/report/generate":
+            if self.path == "/api/runtime/start" and not adapter.canonical_topology().core_compatible:
+                raise ValueError(adapter.canonical_topology().capability_status()["reason"])
+            if self.path == "/api/topology/use-imported":
+                payload, status = imports.use_imported(data), HTTPStatus.OK
+            elif self.path == "/api/topology/import":
+                payload, status = imports.import_document(data), HTTPStatus.OK
+            elif self.path == "/api/firewall/evaluate":
+                payload, status = imports.decision(data), HTTPStatus.OK
+            elif self.path == "/api/report/generate":
                 payload, status = reporting.create_report(data.get("scenario_id"), data.get("run_id")), HTTPStatus.OK
             elif self.path == "/api/runtime/start":
                 payload, status = CAMPAIGNS.start_core(), HTTPStatus.ACCEPTED
-            elif self.path == "/api/runtime/gui":
-                payload, status = adapter.core_request("gui"), HTTPStatus.OK
             elif self.path == "/api/runtime/stop":
                 payload, status = CAMPAIGNS.stop_core(), HTTPStatus.OK
             elif self.path == "/api/runtime/watcher/start":
@@ -124,10 +150,12 @@ class GuiHandler(SimpleHTTPRequestHandler):
                 payload, status = CAMPAIGNS.defend("restore", str(data.get("target_node", ""))), HTTPStatus.OK
             elif self.path == "/api/topology/select":
                 payload, status = adapter.select_topology(str(data.get("case_name", ""))), HTTPStatus.OK
+                imports.use_canonical()
             elif self.path == "/api/topology/validate":
                 payload, status = adapter.validate_custom_topology(data.get("definition")), HTTPStatus.OK
             elif self.path == "/api/topology/custom":
                 payload, status = adapter.save_custom_topology(data.get("definition")), HTTPStatus.OK
+                imports.use_canonical()
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"code": "not_found", "message": "Unknown API endpoint."}})
                 return

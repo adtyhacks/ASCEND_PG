@@ -17,6 +17,8 @@ from testbed import run_store
 
 
 class FakeTopology:
+    revision = "test"
+    physical_state = None
     case_name = "case14"
     num_buses = 1
     def get_ip(self, bus: int) -> str: return "10.0.0.1"
@@ -725,7 +727,7 @@ def main() -> None:
                     return [0, 3, 0, 0], None
             model = PredictModel()
             controller._new_session = lambda active: {"env": FakeEnvironment(), "model": model,
-                "observation": [0], "current_step": 0}
+                "observation": [0], "current_step": 0, "topology_revision": "test"}
             # Exercise the real selection method without importing PPO/grid dependencies.
             modules = {"strategic.rl_env": SimpleNamespace(MITRE_TECHNIQUES=[{"id": "T0836", "stage": 2}],
                 REGISTER_BASES={"T0836": 40000}, VALUE_MAGNITUDES=[1.0]),

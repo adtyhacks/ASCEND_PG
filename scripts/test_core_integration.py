@@ -16,9 +16,11 @@ from testbed.core_services import SERVICE, node_templates
 
 class CoreXmlTests(unittest.TestCase):
     def generate(self, directory, case=14):
-        nodes = [{"bus_id": i, "voltage": 1.0, "plc_type": "generic_modbus"} for i in range(case)]
-        with patch("testbed.generate_core_topo.load_case", return_value=SimpleNamespace(num_buses=case, nodes=nodes)):
-            return Path(generate_core_xml(case, str(Path(directory) / "topology.xml")))
+        from testbed.topology import Topology
+        topology = Topology.from_custom_dict({"case_name": "custom_core_test", "nodes": [
+            {"bus_id": i, "type": "slack" if i == 0 else "pq", "voltage": 1.0, "plc_type": "generic_modbus"} for i in range(case)],
+            "edges": [[i, i + 1] for i in range(case - 1)]})
+        return Path(generate_core_xml(case, str(Path(directory) / "topology.xml"), topology=topology))
 
     def test_both_sizes_and_startup_arguments(self):
         with tempfile.TemporaryDirectory() as directory:

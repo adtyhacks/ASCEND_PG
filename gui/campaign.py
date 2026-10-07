@@ -80,9 +80,13 @@ class CampaignController:
             if status.get("state") == "RUNTIME":
                 raise CampaignError("core_already_running", "An ASCEND-owned CORE session is already active.")
             topology = self.topology(); snapshot = topology.canonical_snapshot()
+            from gui.imports import current as imported_design
+            design = imported_design()
             xml = generate_core_xml(output_path=str(ROOT / "core_topology.xml"), topology=topology)
             run = run_store.create_run(snapshot)
-            result = self.request("start", xml=str(xml))
+            if design:
+                run_store.update_run(run["scenario_id"], run["run_id"], imported_design=design)
+            result = self.request("start", xml=str(xml), scenario_id=run["scenario_id"], run_id=run["run_id"])
             runtime = self._runtime()
             if str(runtime["id"]) != str(result["session_id"]):
                 raise CampaignError("core_identity_invalid", "CORE did not persist the created owned session identity.", 503)
@@ -166,14 +170,20 @@ class CampaignController:
         """Build a new topology-bound environment for one campaign only."""
         from strategic.rl_env import AttackStrategyEnv
 
-        return AttackStrategyEnv(case=30 if "30" in str(topology.case_name) else 14, real_mode=False)
+        if not topology.ppo_compatible:
+            raise CampaignError("topology_incompatible", topology.capability_status()["ppo_reason"], 409)
+        return AttackStrategyEnv(topology=topology, real_mode=False)
 
     def _new_session(self, run: dict[str, Any]) -> dict[str, Any]:
         timings: dict[str, Any] = {}
         started = time.monotonic()
         topo = self.topology()
+        from testbed.physical_feedback import load_state
+        load_state(topo, run)
         stage = time.monotonic()
         env = self._create_environment(topo)
+        if getattr(topo, "physical_state", None) is not None:
+            topo.physical_state.update({k: run[k] for k in ("scenario_id", "run_id", "generation_id") if k in run})
         timings["environment_construction_seconds"] = time.monotonic() - stage
         stage = time.monotonic()
         observation, _ = env.reset()
@@ -181,6 +191,7 @@ class CampaignController:
         model = self._cached_ppo_model(timings)
         stage = time.monotonic()
         session = {"env": env, "model": model, "observation": observation, "current_step": 0}
+        session["topology_revision"] = topo.revision
         session["initialization_timings"] = timings
         timings["final_campaign_session_initialization_seconds"] = time.monotonic() - stage
         timings["total_seconds"] = time.monotonic() - started
@@ -212,6 +223,9 @@ class CampaignController:
         # Start performs the displayability gate once. Polling must not reread
         # an aggregate event store merely to return campaign metadata.
         runtime = self._runtime(); run = self._active_run(runtime, displayable=False)
+        if run.get("topology_version") and run["topology_version"] != self.topology().canonical_snapshot()["topology_version"]:
+            self._sessions.clear(); self._full_runs.clear()
+            raise CampaignError("topology_changed", "The active topology differs from this run. Rebuild the owned testbed before starting a new campaign.", 409)
         campaign = run.get("campaign_request") or {}
         if campaign.get("campaign_id") != run["run_id"] or campaign.get("generation_id") != runtime.get("generation_id", runtime.get("token")):
             raise CampaignError("campaign_not_started", "Start a campaign for the current CORE generation first.")
@@ -230,7 +244,7 @@ class CampaignController:
         if not step_name:
             raise CampaignError("unsupported_technique", f"PPO selected {technique['id']}, which has no watcher step mapping.")
         return {"technique_id": technique["id"], "step_name": step_name, "target_bus": target_bus,
-                "register_address": REGISTER_BASES.get(technique["id"], 40000) + register_offset,
+                "register_address": (session["env"].resolve_register_address(technique["id"], register_offset, target_bus) if hasattr(session["env"], "resolve_register_address") else REGISTER_BASES.get(technique["id"], 40000) + register_offset),
                 "value_magnitude": float(VALUE_MAGNITUDES[value_level]), "attack_stage": technique["stage"],
                 "_action": action}
 
@@ -241,12 +255,22 @@ class CampaignController:
                 raise CampaignError("pending_step_exists", "A campaign step is already pending.")
             self._core_and_watcher(runtime, require_idle=True)
             session = self._sessions.get(run["run_id"])
+            if session is not None and session.get("topology_revision") != self.topology().revision:
+                self._sessions.clear()
+                raise CampaignError("topology_changed", "Campaign topology changed; start a new campaign.", 409)
             if session is None:
                 session = self._new_session(run)
                 self._sessions.clear()
                 self._sessions[run["run_id"]] = session
                 self._initialization_timings.clear()
                 self._initialization_timings[run["run_id"]] = dict(session.get("initialization_timings", {}))
+            from testbed.physical_feedback import load_state
+            state = load_state(self.topology(), run)
+            if state is not None or session.get("observation") is None:
+                try:
+                    session["observation"] = session["env"]._get_obs()
+                except ValueError as exc:
+                    raise CampaignError("physical_observation_unavailable", str(exc), 409) from exc
             step = self._select_step(session); target_bus = step["target_bus"]
             action = step.pop("_action")
             topology = self.topology(); target_ip = topology.get_ip(target_bus); target_node = f"plc{target_bus + 1}"
@@ -273,6 +297,7 @@ class CampaignController:
             evidence = {"step_name": request["step_name"], "return_status": result.get("status", "FAILED"),
                         "detection_method": result.get("detection_method", "none"), "ml_confidence": float(result.get("ml_confidence", 0.0))}
             evidence["finding_evidence"] = deepcopy(result.get("finding_evidence"))
+            evidence["physical_impact"] = deepcopy(result.get("physical_impact"))
             common = {"mitre_technique": request["technique_id"], "attack_stage": request.get("attack_stage", 0),
                       "campaign_id": request["campaign_id"], "generation_id": request["generation_id"],
                       "correlation_id": correlation_id, "evidence": evidence}
@@ -305,7 +330,16 @@ class CampaignController:
                 detected=detected, detection_conf=detector_conf,
                 tech_stage=request["attack_stage"], target_bus=request["target_bus"])
             session["reward"] = session.get("reward", 0.0) + float(reward)
-            session["observation"] = env._get_obs()
+            from testbed.physical_feedback import load_state
+            topology = self.topology()
+            try:
+                load_state(topology, run)
+                if result.get("physical_impact"):
+                    topology.apply_physical_state(result["physical_impact"])
+                session["observation"] = env._get_obs()
+            except (ValueError, OSError) as exc:
+                session["observation"] = None
+                session["physical_observation_error"] = str(exc)
             session["current_step"] += 1
             session["last_completed_correlation_id"] = correlation_id
         completed = {**request, "state": "COMPLETED", "completed_at": _now(), "latest_step_result": result,

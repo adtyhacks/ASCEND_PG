@@ -1,4 +1,4 @@
-"""Validate the supported ASCEND star topology before allocating CORE resources."""
+"""Validate canonical legacy or routed-firewall XML before allocating CORE resources."""
 import ipaddress
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -13,6 +13,9 @@ def validate_xml(path):
     root = ET.fromstring(data)
     if root.tag != "scenario":
         raise ValueError("Expected CORE scenario XML")
+    from testbed.firewall_topology import xml_plan
+    if xml_plan(root) is not None:
+        return root
     nodes = root.findall("networks/network") + root.findall("devices/device")
     ids = [int(n.attrib["id"]) for n in nodes]
     names = [n.attrib["name"] for n in nodes]
@@ -77,12 +80,18 @@ def to_session(root, session_id):
                       position=w.Position(x=float(position.get("x")), y=float(position.get("y"))),
                       services={s.get("name") for s in element.findall("services/service")})
         session.nodes[nid] = node
-    for hub_interface, element in enumerate(root.findall("links/link")):
-        i = element.find("iface1")
+    network_ports = {}
+    network_ids = {int(e.get("id")) for e in root.findall("networks/network")}
+    def interface(element, side):
+        nid = int(element.get(f"node{side}")); i = element.find(f"iface{side}")
+        if i is None:
+            if nid not in network_ids: raise ValueError("Endpoint interface is missing.")
+            port = network_ports.get(nid, 0); network_ports[nid] = port + 1
+            return w.Interface(id=port)
+        return w.Interface(id=int(i.get("id")), name=i.get("name"), mac=i.get("mac"), ip4=i.get("ip4"), ip4_mask=int(i.get("ip4_mask")))
+    for element in root.findall("links/link"):
         session.links.append(w.Link(node1_id=int(element.get("node1")), node2_id=int(element.get("node2")),
-                                   iface2=w.Interface(id=hub_interface),
-                                   iface1=w.Interface(id=int(i.get("id")), name=i.get("name"),
-                                                      mac=i.get("mac"), ip4=i.get("ip4"), ip4_mask=int(i.get("ip4_mask")))))
+                                   iface1=interface(element, 1), iface2=interface(element, 2)))
     for element in root.findall("service_configurations/service"):
         session.nodes[int(element.get("node"))].service_configs[element.get("name")] = w.ServiceData(
             templates={t.get("name"): t.text for t in element.findall("templates/template")})

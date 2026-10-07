@@ -1,0 +1,26 @@
+{
+  "schema": "ascend.exchange/v1",
+  "name": "SCADA firewall PLC design",
+  "power_grid": {
+    "buses": [{"id": "bus1", "voltage_pu": 1.06, "vn_kv": 110}, {"id": "bus8", "voltage_pu": 1.0, "vn_kv": 110}],
+    "lines": [{"id": "line1", "from_bus": "bus1", "to_bus": "bus8"}],
+    "generators": [{"id": "gen1", "bus": "bus1", "p_mw": 40}],
+    "loads": [{"id": "load8", "bus": "bus8", "p_mw": 25}]
+  },
+  "network": {"devices": [
+    {"id": "scada", "name": "SCADA", "type": "scada", "zone": "operations", "ip": "10.0.0.100", "interfaces": [{"id": "eth0", "name": "eth0"}]},
+    {"id": "fw1", "name": "Firewall", "type": "firewall", "interfaces": [{"id": "inside", "name": "inside", "zone": "operations"}, {"id": "field", "name": "field", "zone": "field"}, {"id": "outside", "name": "outside", "zone": "external"}]},
+    {"id": "plc8", "name": "PLC8", "type": "plc", "zone": "field", "ip": "10.0.0.8", "interfaces": [{"id": "eth0", "name": "eth0"}]},
+    {"id": "attacker", "name": "Attacker", "type": "attacker", "zone": "external", "interfaces": [{"id": "eth0", "name": "eth0"}]}
+  ]},
+  "links": [
+    {"id": "scada-fw", "endpoints": [{"device": "scada", "interface": "eth0"}, {"device": "fw1", "interface": "inside"}]},
+    {"id": "fw-plc", "endpoints": [{"device": "fw1", "interface": "field"}, {"device": "plc8", "interface": "eth0"}]},
+    {"id": "attacker-fw", "endpoints": [{"device": "attacker", "interface": "eth0"}, {"device": "fw1", "interface": "outside"}]}
+  ],
+  "mapping": [{"bus": "bus8", "device": "plc8"}],
+  "firewalls": [{"id": "fw1", "default_action": "deny", "rules": [
+    {"rule_id": "allow-scada", "priority": 10, "source": "scada", "destination": "plc8", "protocol": "tcp", "source_port": "any", "destination_port": 502, "action": "allow"},
+    {"rule_id": "deny-attacker", "priority": 20, "source": "attacker", "destination": "plc8", "protocol": "tcp", "source_port": "any", "destination_port": 502, "action": "deny"}
+  ]}]
+}

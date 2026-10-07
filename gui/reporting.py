@@ -97,6 +97,7 @@ def summary(scenario_id=None, run_id=None):
             "display_identity": registry.run_identity(run),
             "normalized_records": len(records), "normalized_events": records[:100], "finding_summary": finding_summary,
             "assessment_overview": assessment_overview,
+            "remediation_recommendations": [f["remediation_recommendation"] for f in findings],
             "runs": [{"scenario_id": r["scenario_id"], "run_id": r["run_id"],
                       "display_name": registry.assessment(r["run_id"]),
                       "campaign_state": r.get("campaign_request", {}).get("state", "UNKNOWN")} for r in runs]}

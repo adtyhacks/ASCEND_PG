@@ -13,7 +13,7 @@ const appSource = fs.readFileSync(path.join(root, 'gui/web/app.js'), 'utf8');
 const htmlSource = fs.readFileSync(path.join(root, 'gui/web/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(root, 'gui/web/styles.css'), 'utf8');
 const diagnosticsPath = '/api/runtime-diagnostics';
-const runtimeControlIds = ['core-start', 'core-stop', 'watcher-start', 'core-gui'];
+const runtimeControlIds = ['core-start', 'core-stop', 'watcher-start'];
 const campaignControlIds = ['campaign-start', 'campaign-next', 'campaign-run', 'campaign-isolate', 'campaign-restore', 'defense-target'];
 
 function snapshot(state = 'STOPPED', watcher = 'STOPPED', generation = null) {
@@ -275,7 +275,7 @@ async function testStoppedAndStyles() {
   assert.match(env.element('runtime-action-status').textContent, /Complete Network Setup/);
   await env.navigate('#network');
   assertRuntimeControls(env, true, false, false);
-  assert.equal(env.element('core-gui').disabled, true, 'CORE GUI requires a running owned session');
+
   assert.ok(countRequests(env, 'GET', diagnosticsPath) >= 1, 'bootstrap must obtain a unified runtime diagnostics snapshot');
   assert.equal(countRequests(env, 'GET', '/api/dashboard'), 0, 'header and Runtime controls must use the same read endpoint');
   assert.equal(countRequests(env, 'POST'), 0, 'rendering STOPPED must never auto-start CORE');
@@ -310,7 +310,7 @@ async function testRuntimeSnapshot() {
   assert.equal(env.element('run-status').textContent, 'Assessment 1 — in progress');
   assert.equal(env.element('runtime-watcher').textContent, 'Not started');
   assertRuntimeControls(env, false, true, true);
-  assert.equal(env.element('core-gui').disabled, false, 'CORE GUI is available for the running owned session');
+
   assert.equal(countRequests(env, 'POST'), 0);
   for (const watcher of ['IDLE', 'BUSY']) {
     env.setDiagnostics(snapshot('RUNTIME', watcher, 'generation-B'));
@@ -871,24 +871,12 @@ async function testCustomTopologyEditorAndGuards() {
   assert.equal(countRequests(running,'POST'),0);
 }
 
-async function testOpenCoreGuiUsesExistingRuntimeHelperRoute() {
-  const env = await harness(snapshot('RUNTIME', 'IDLE', 'gui-session'));
-  env.location.hash = '#runtime';
-  await env.refresh();
-  env.enqueue('/api/runtime/gui', {session_id: 7, gui_pid: 321}, {method: 'POST'});
-  await env.click('core-gui');
-  assert.equal(countRequests(env, 'POST', '/api/runtime/gui'), 1);
-  assert.match(env.element('runtime-action-status').textContent, /CORE GUI opened for CORE Session 1/);
-  assert.doesNotMatch(env.element('runtime-action-status').textContent, /session 7|PID 321/);
-  assert.equal(countRequests(env, 'GET', diagnosticsPath) >= 2, true, 'successful GUI launch refreshes authoritative runtime diagnostics');
-  const failed = await harness(snapshot('RUNTIME', 'IDLE', 'gui-failure'));
-  failed.location.hash = '#runtime'; await failed.refresh();
-  failed.enqueue('/api/runtime/gui', {error: {code: 'gui_unavailable', message: 'WSLg is unavailable'}}, {method: 'POST', status: 503});
-  await failed.click('core-gui');
-  assert.match(failed.element('runtime-action-status').textContent, /WSLg is unavailable/, 'runtime helper failures remain visible');
-  assert.equal(countRequests(failed, 'POST', '/api/runtime/gui'), 1);
+async function testCoreGuiAbsentFromWorkflow() {
+  assert.doesNotMatch(htmlSource, /id="core-gui"/);
+  assert.doesNotMatch(appSource, /\/api\/runtime\/gui/);
+  const serverSource = fs.readFileSync(path.join(root, 'gui/server.py'), 'utf8');
+  assert.doesNotMatch(serverSource, /\/api\/runtime\/gui/);
 }
-
 async function testBattleOnlyRefreshesPyvisWhenStateChanges() {
   const env = await harness(snapshot('RUNTIME', 'IDLE', 'pyvis-live'));
   await env.navigate('#battle');
@@ -1063,7 +1051,7 @@ const tests = [
   ['N: canonical topology selection refreshes a real PyVis view', testTopologySelectionUsesCanonicalApiAndPyvis],
   ['N2: topology selection errors remain visible and restore selection', testTopologySelectionFailureIsVisible],
   ['N3: custom topology editor, API, PyVis and runtime guards', testCustomTopologyEditorAndGuards],
-  ['O: Open CORE GUI uses the existing runtime helper route', testOpenCoreGuiUsesExistingRuntimeHelperRoute],
+  ['O: CORE GUI is absent from the application workflow', testCoreGuiAbsentFromWorkflow],
   ['P: Live Battle reuses unchanged PyVis state', testBattleOnlyRefreshesPyvisWhenStateChanges],
   ['Q: identifier aliases are shared while raw IDs remain technical', testHumanReadableIdentifiersKeepRawValuesTechnical],
   ['R1: overview hides unavailable and empty high-level states', testOverviewHidesUnavailableEmptyStates],

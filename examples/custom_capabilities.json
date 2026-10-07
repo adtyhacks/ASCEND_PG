@@ -1,0 +1,18 @@
+{
+  "case_name": "custom_semantic_grid",
+  "nodes": [
+    {"bus_id": 0, "name": "Slack", "type": "slack", "voltage_pu": 1.06, "vn_kv": 110},
+    {"bus_id": 1, "name": "Generator", "type": "pv", "voltage_pu": 1.04, "vn_kv": 110, "pg": 20,
+     "attack_capabilities": ["T0836", "cmd_inject_coil"], "detection_capabilities": ["suricata", "ml_flow_detection", "modbus_reads"],
+     "plc": {"id": "plc2", "bus_id": 1, "ip": "10.0.0.2", "modbus_port": 502, "unit_id": 1, "registers": [
+       {"address": 0, "name": "Voltage Setpoint", "type": "holding_register", "data_type": "uint16", "semantic": "generator_voltage_setpoint", "scale": 10000, "unit": "p.u.", "attackable": true, "initial_value": 10400,
+        "physical_mapping": {"model": "pandapower", "element": "gen", "parameter": "vm_pu", "index": 0}},
+       {"address": 0, "name": "Bus Voltage", "type": "input_register", "data_type": "uint16", "semantic": "modeled_bus_voltage", "scale": 10000, "unit": "p.u.", "attackable": false, "initial_value": 10400,
+        "physical_mapping": {"model": "pandapower", "element": "res_bus", "parameter": "vm_pu", "index": 1}},
+       {"address": 0, "name": "Trip Request", "type": "coil", "data_type": "bool", "semantic": "trip_request_data", "scale": 1, "unit": "boolean", "attackable": true, "initial_value": false},
+       {"address": 0, "name": "Ready", "type": "discrete_input", "data_type": "bool", "semantic": "ready_flag_data", "scale": 1, "unit": "boolean", "attackable": false, "initial_value": true}
+     ]}},
+    {"bus_id": 2, "name": "Load", "type": "pq", "voltage_pu": 1.0, "vn_kv": 110, "pl": 10, "ql": 2, "voltage_min_pu": 0.9, "voltage_max_pu": 1.1}
+  ],
+  "edges": [{"from": 0, "to": 1}, {"from": 1, "to": 2}]
+}

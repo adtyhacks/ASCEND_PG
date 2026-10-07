@@ -1,0 +1,48 @@
+PHASE 3F.5 RECOVERY AUDIT
+
+Runtime started: UNKNOWN
+- session.json does NOT exist in data/core-runtime/
+- No evidence CORE was started with an owned session
+- watcher_heartbeat.json has stale entry (generation_id "052540aa8965451096d7aeb8d9f5e300", session_id "1", timestamp 2026-09-30T19:05:34)
+
+Campaign initialized: NO
+- No campaign was started (no session.json, no run created with lifecycle_status)
+- No /api/campaign/next was ever dispatched (pending_step.json does not exist)
+
+Next-step dispatch: NO
+- pending_step.json does NOT exist
+- No campaign step was requested
+
+Attack executed: NO
+- step_result.json does NOT exist
+- No attack subprocess was launched
+- No new security/events JSONL records were created for this phase
+
+New evidence: NO
+- No run/scenario was created during this Phase 3F.5 attempt
+- No detection/evasion state was recorded
+- No reward/history changes occurred
+
+Cleanup: UNKNOWN
+- session.json missing (abort or crash)
+- watcher_heartbeat.json left with stale data
+- watchdog.lock and session.lock files remain
+- Previous run scenarios preserved from earlier phases
+
+Source modified: NO
+- No source files were modified during this inspection
+- All scripts remain unchanged from original
+
+Evidence hash preservation: YES
+- All previous run evidence (JSONL files, run.json scenarios) are preserved intact
+- No files were deleted or overwritten
+
+Final determination: UNVERIFIED
+
+The Phase 3F.5 attempt cannot be confirmed as PASS or FAIL because:
+- The runtime was never properly started (no session.json)
+- No campaign was initialized (no /api/campaign/next dispatched)
+- No attack was executed (no step_result.json)
+- No watcher heartbeat was generated for the current attempt
+- The attempt appears to have been abandoned or failed before the first step could be taken
+- All evidence from previous phases is preserved but does not constitute this Phase 3F.5 result

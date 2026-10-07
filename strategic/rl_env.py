@@ -120,9 +120,7 @@ def _get_topology_arrays():
     topo = get_topology()
     if topo and topo.num_buses > 0:
         return topo.num_buses, topo.edges, topo.bus_types, topo.voltages, topo.bus_degrees, topo.gen_buses
-    return (14, IEEE14_LINES, IEEE14_BUS_TYPES,
-            IEEE14_VOLTAGES, IEEE14_BUS_DEGREES,
-            [i for i, t in enumerate(IEEE14_BUS_TYPES) if t in (1, 3)])
+    raise ValueError("Active topology has no electrical buses; PPO projection is unavailable.")
 
 
 class AttackStrategyEnv(gym.Env):
@@ -135,23 +133,25 @@ class AttackStrategyEnv(gym.Env):
       - Value magnitude: scale factor for write values (0.9x-1.1x, 10 levels)
       - Target PLC: which bus to attack (0-MAX_BUSES)
 
-    Observation Vector (dim = 226):
-      Attack state (24):
+    Observation Vector (dim = 230; unchanged checkpoint shape):
+      Attack state (25), last-action parameters (3), topology (200), scalars (2).
+      Attack state:
         - [0]: Current target stage (normalized)
         - [1]: Recent evasion rate
         - [2]: Last detector confidence
-        - [3..19]: One-hot last technique (17)
-        - [20..23]: Multi-hot completed stages (4)
+        - [3..20]: One-hot last technique (18)
+        - [21..24]: Multi-hot completed stages (4)
+        - [25..27]: Last register/value/target parameters
 
       Topology features (200):
-        - [24..73]: Bus voltages (50) — normalized, zero-padded
-        - [74..123]: Bus connectivity degree (50) — normalized, zero-padded
-        - [124..173]: Bus type encoding (50) — slack=1, PV=0.5, PQ=0
-        - [174..223]: Compromised bus status (50) — 1=compromised, 0=safe
+        - [28..77]: Bus voltages (50) — normalized, zero-padded
+        - [78..127]: Bus connectivity degree (50) — normalized, zero-padded
+        - [128..177]: Bus type encoding (50) — slack=1, PV=0.5, PQ=0
+        - [178..227]: Compromised bus status (50) — 1=compromised, 0=safe
 
       Scalars (2):
-        - [224]: Fraction of buses compromised
-        - [225]: Attack depth — min distance from generator buses
+        - [228]: Fraction of buses compromised
+        - [229]: Attack depth — min distance from generator buses
     """
 
     metadata = {"render_modes": []}
@@ -171,12 +171,22 @@ class AttackStrategyEnv(gym.Env):
 
         # Load topology
         if case is not None:
-            from testbed.topology import load_case
-            topology = load_case(case)
-        if topology is not None:
-            set_topology(topology)
-        topo = get_topology()
+            selected = topology if topology is not None else get_topology()
+            if selected.case_name != f"case{case}":
+                raise ValueError("Select the requested topology before constructing PPO; the environment never replaces it.")
+            topology = selected
+        topo = topology if topology is not None else get_topology()
+        if not topo.physical_available:
+            raise ValueError("physical_model_available=false: PPO requires the active topology's electrical model.")
+        if not topo.ppo_compatible:
+            raise ValueError("Active topology is not compatible with the current PPO/Modbus executor.")
         self._topo = topo
+        if topo.physical_state is None:
+            # Initial observation is solved from the selected electrical model.
+            from testbed.physical_feedback import _snapshot
+            baseline = _snapshot(topo.to_pandapower())
+            topo.apply_physical_state({"topology_revision": topo.revision, "physical_model_available": True,
+                                       "power_flow_success": True, "voltage_after": baseline["voltages"], "source": "initial_model_power_flow"})
         self._num_buses = topo.num_buses  # Actual buses in this topology
 
         # FIXED observation dim: always MAX_BUSES slots (zero-padded for smaller topologies)
@@ -254,6 +264,8 @@ class AttackStrategyEnv(gym.Env):
             self.real_mode = False
 
     def _get_obs(self) -> np.ndarray:
+        # Read the canonical runtime state every observation, not a constructor copy.
+        self._voltages[:self._num_buses] = self._topo.voltages
         recent = self._history[-5:]
         recent_evasion_rate = (sum(1 - x for x in recent) / len(recent)) if recent else 1.0
 
@@ -310,6 +322,12 @@ class AttackStrategyEnv(gym.Env):
             [attack_depth],
         ]).astype(np.float32)
         return obs
+
+    def resolve_register_address(self, technique_id, offset, target_bus):
+        if self._topo.nodes[target_bus].get("plc", {}).get("registers"):
+            # Keep the PPO's logical address slot; remove legacy label prefixes only.
+            return offset
+        return REGISTER_BASES.get(technique_id, 40000) + offset
 
     def _compute_attack_depth(self) -> float:
         """Compute min hop distance from compromised buses to nearest generator.

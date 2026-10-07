@@ -13,6 +13,7 @@ import re
 import json
 import hashlib
 import threading
+from copy import deepcopy
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Union, Optional
@@ -81,10 +82,11 @@ class Topology:
 
     def __init__(self, nodes: list = None, edges: list = None, case_name: str = "case14"):
         if nodes is None or edges is None:
-            # Build default IEEE-14
-            default_topo = Topology.from_pandapower("case14")
-            nodes = default_topo.nodes
-            edges = default_topo.edge_models
+            if nodes is not None or edges is not None: raise ValueError("Both nodes and edges are required.")
+            self.__dict__ = deepcopy(get_topology().__dict__)
+            return
+        if any(not isinstance(n, dict) or type(n.get("bus_id")) is not int or n["bus_id"] != i for i, n in enumerate(nodes)):
+            raise ValueError("Internal bus IDs must be unique ordered indices starting at zero.")
 
         self.nodes = nodes
         self.edge_models = []
@@ -97,15 +99,20 @@ class Topology:
                 left, right = int(edge[0]), int(edge[1])
                 model = {"from": left, "to": right}
             self.edges.append((left, right))
+            if left == right or not 0 <= left < len(nodes) or not 0 <= right < len(nodes): raise ValueError("Electrical link references invalid buses.")
             self.edge_models.append(model)
         self.num_buses = len(nodes)
         self.case_name = case_name
+        self.exchange = None
+        self.source = "ieee" if case_name in {"case14", "case30"} else "custom"
+        self.power_model_json = None
 
         # Build lookup dicts
         self.ip_map: Dict[int, str] = {}
         self.name_map: Dict[int, str] = {}
         self.bus_types: List[int] = []
-        self.voltages: List[float] = []
+        self.physical_state = None
+        self._definition_voltages: List[float] = []
         self.bus_id_set = set()
 
         for node in nodes:
@@ -114,7 +121,7 @@ class Topology:
             self.ip_map[bid] = node.get("ip", get_plc_ip(bid))
             self.name_map[bid] = node.get("name", f"Bus{bid + 1}")
             self.bus_types.append(TYPE_MAP.get(str(node.get("type", "pq")).lower(), 2))
-            self.voltages.append(float(node.get("voltage", 1.0)))
+            self._definition_voltages.append(float(node.get("voltage", 1.0)))
 
         # Build adjacency matrix
         self.adj = [[0.0] * self.num_buses for _ in range(self.num_buses)]
@@ -179,13 +186,16 @@ class Topology:
 
     def to_dict(self) -> dict:
         """Serialize topology to a dict (for JSON storage)."""
+        if self.exchange is not None:
+            return {"canonical_schema": "ascend.canonical/v1", "case_name": self.case_name, "source": self.source, "exchange": deepcopy(self.exchange)}
         return {
+            "canonical_schema": "ascend.canonical/v1", "source": self.source, "power_model_json": self.power_model_json,
             "case_name": self.case_name,
             "num_buses": self.num_buses,
             "nodes": self.nodes,
             "edges": [dict(e) for e in self.edge_models],
             "bus_types": self.bus_types,
-            "voltages": self.voltages,
+            "voltages": self._definition_voltages,
             "bus_degrees": self.bus_degrees,
             "gen_buses": self.gen_buses,
             "ip_map": {str(k): v for k, v in self.ip_map.items()},
@@ -198,6 +208,18 @@ class Topology:
         added here because they are part of every generated CORE scenario, rather
         than being recreated independently by a visualisation module.
         """
+        if self.exchange is not None:
+            from testbed.external_topology import visual_data
+            document = self.exchange
+            mapped = {m["device"]: i for i, bus in enumerate(document["power_grid"].get("buses", [])) for m in document.get("mapping", []) if m["bus"] == bus["id"]}
+            nodes = [{"id": d["id"], "hostname": d.get("name", d["id"]), "node_type": "hub" if d["type"] == "switch" else d["type"],
+                      "ip": d.get("ip"), "interfaces": [p["name"] for p in d.get("interfaces", [])], "bus_id": mapped.get(d["id"]), "role": d["type"], "services": []} for d in document["network"]["devices"]]
+            links = [{"from": link["endpoints"][0]["device"], "to": link["endpoints"][1]["device"], "type": "comm", "protocol": "TCP/IP", "core_link": True} for link in document["links"]]
+            for line in document["power_grid"].get("lines", []):
+                mapping = {m["bus"]: m["device"] for m in document.get("mapping", [])}
+                if line["from_bus"] in mapping and line["to_bus"] in mapping:
+                    links.append({"from": mapping[line["from_bus"]], "to": mapping[line["to_bus"]], "type": "power_line", "protocol": "electrical", "core_link": False})
+            return {"schema": "ascend.topology/v1", "source": self.source, "case_name": self.case_name, "topology_version": self.revision, "nodes": nodes, "links": links}
         nodes = [
             {"id": "hub", "hostname": "s1", "node_type": "hub", "role": "network", "zone": "network", "ip": None, "interfaces": [], "services": [], "operating_system": "CORE", "core_id": 1},
             {"id": "scada", "hostname": "scada", "node_type": "scada", "role": "operator", "zone": "operations", "ip": SCADA_IP, "interfaces": ["eth0"], "services": ["Modbus/TCP client"], "operating_system": "Linux", "core_id": 2},
@@ -224,16 +246,124 @@ class Topology:
             links.append({"from": f"plc{left + 1}", "to": f"plc{right + 1}", "type": "power_line", "protocol": "electrical", "core_link": False})
         version_payload = json.dumps({"nodes": self.nodes, "edges": self.edge_models}, sort_keys=True, separators=(",", ":"))
         return {"schema": "ascend.topology/v1", "case_name": self.case_name,
-                "topology_version": f"{self.case_name}:{self.num_buses}:{hashlib.sha256(version_payload.encode()).hexdigest()[:12]}",
+                "topology_version": self.revision,
                 "nodes": nodes, "links": links}
 
     @classmethod
     def from_dict(cls, data: dict) -> "Topology":
         """Load topology from a serialized dict."""
+        if not isinstance(data, dict): raise ValueError("Topology must be an object.")
+        if "exchange" in data: return cls.from_exchange(data["exchange"])
+        case_name = data.get("case_name", "custom")
+        if case_name in {"case14", "case30"} and not data.get("power_model_json") and "canonical_schema" not in data:
+            # Legacy preset selections stored a case name alongside a lossy bus
+            # projection. Resolve the explicitly selected IEEE source before
+            # validating that projection as a custom electrical definition.
+            return cls.from_pandapower(case_name)
         nodes = data.get("nodes", [])
         edges_raw = data.get("edges", [])
-        case_name = data.get("case_name", "custom")
-        return cls(nodes=nodes, edges=edges_raw, case_name=case_name)
+        validated = cls.from_custom_dict({**data, "case_name": "custom_validation" if case_name in {"case14", "case30"} else case_name})
+        validated.case_name = case_name
+        validated.source = "ieee" if case_name in {"case14", "case30"} else "custom"
+        validated.power_model_json = data.get("power_model_json")
+        if validated.power_model_json:
+            import pandapower as pp
+            net = pp.from_json_string(validated.power_model_json)
+            if list(net.bus.index) != list(range(validated.num_buses)):
+                raise ValueError("Stored physical network conflicts with canonical bus IDs.")
+            modeled_edges = {tuple(sorted((int(row.from_bus), int(row.to_bus)))) for _, row in net.line.iterrows()}
+            modeled_edges |= {tuple(sorted((int(row.hv_bus), int(row.lv_bus)))) for _, row in net.trafo.iterrows()}
+            if modeled_edges != {tuple(sorted(edge)) for edge in validated.edges}:
+                raise ValueError("Stored physical network conflicts with canonical electrical links.")
+            for node in validated.nodes:
+                bid = node["bus_id"]
+                if not math.isclose(node["voltage"], float(net.res_bus.at[bid, "vm_pu"]), abs_tol=1e-6):
+                    raise ValueError("Stored voltage projection conflicts with the canonical physical network.")
+            from testbed.capabilities import validate_semantics
+            counts = {key: len(net[key]) for key in ("bus", "res_bus", "gen", "ext_grid", "load", "line")}
+            for node in validated.nodes: validate_semantics(node, set(range(validated.num_buses)), counts, f"plc{node['bus_id']+1}")
+        return validated
+
+    @property
+    def revision(self):
+        return hashlib.sha256(json.dumps(self.to_dict(), sort_keys=True).encode()).hexdigest()
+
+    @property
+    def voltages(self):
+        if self.physical_state is not None:
+            if self.physical_state.get("power_flow_success") is not True:
+                raise ValueError("Live physical voltage observation unavailable: power flow/readback failed.")
+            return [self.physical_state["voltage_after"][str(i)] for i in range(self.num_buses)]
+        return self._definition_voltages
+
+    def apply_physical_state(self, state):
+        if state.get("topology_revision") != self.revision:
+            raise ValueError("Physical state does not match this canonical topology.")
+        if state.get("power_flow_success") is True:
+            values = state.get("voltage_after", {})
+            if set(values) != {str(i) for i in range(self.num_buses)} or any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in values.values()):
+                raise ValueError("Incomplete/nonfinite canonical physical voltage state.")
+        self.physical_state = deepcopy(state)
+
+    @property
+    def physical_available(self):
+        return self.num_buses > 0 and sum(n.get("type") == "slack" for n in self.nodes) == 1 and all(n.get("type") in {"slack", "pv", "pq"} for n in self.nodes)
+
+    @property
+    def core_compatible(self):
+        if self.exchange and any(d["type"] == "firewall" for d in self.exchange["network"]["devices"]):
+            from testbed.firewall_topology import build_plan
+            try: build_plan(self.exchange, self.revision)
+            except (ValueError, TypeError, KeyError): return False
+            return True
+        if not self.physical_available: return False
+        if self.exchange is not None:
+            expected = {"hub", "scada", "attacker", "ids_monitor"} | {f"plc{i + 1}" for i in range(self.num_buses)}
+            devices = {d["id"]: d for d in self.exchange["network"]["devices"]}
+            links = {frozenset(e["device"] for e in link["endpoints"]) for link in self.exchange["links"]}
+            if set(devices) != expected or links != {frozenset(("hub", name)) for name in expected - {"hub"}}: return False
+            if len(self.exchange["links"]) != self.num_buses + 3: return False
+            for name, dtype, address in (("hub", "switch", None), ("scada", "scada", SCADA_IP), ("attacker", "attacker", ATTACKER_IP), ("ids_monitor", "ids", MONITOR_IP)):
+                if devices[name]["type"] != dtype or devices[name].get("ip") != address: return False
+            if any(d.get("name", d["id"]) != ("s1" if d["id"] == "hub" else d["id"]) for d in devices.values()): return False
+            if any(d["id"] != "hub" and [p.get("name") for p in d.get("interfaces", [])] != ["eth0"] for d in devices.values()): return False
+            if any(devices[f"plc{i+1}"].get("type") != "plc" or devices[f"plc{i+1}"].get("ip") != get_plc_ip(i) for i in range(self.num_buses)): return False
+        return all(n.get("ip") == get_plc_ip(i) and n.get("plc", {}).get("modbus_port", 502) == 502 and n.get("plc", {}).get("unit_id", 1) == 1 for i, n in enumerate(self.nodes))
+
+    @property
+    def ppo_compatible(self):
+        # The existing policy uses legacy register bases. Explicit client-offset
+        # layouts cannot honestly be advertised as policy-compatible without an adapter.
+        return self.core_compatible and not (self.exchange and any(d["type"] == "firewall" for d in self.exchange["network"]["devices"])) and 1 <= self.num_buses <= 50 and all(r["address"] < 50 for n in self.nodes for r in n.get("plc", {}).get("registers", []))
+
+    def capability_status(self):
+        return {"source": self.source, "revision": self.revision, "physical_model": "Available" if self.physical_available else "Not available",
+                "core_testbed": "Not built" if self.core_compatible else "Invalid", "ppo": "Compatible" if self.ppo_compatible else "Not compatible",
+                "ppo_reason": "Existing fixed observation/action projection supported; explicit registers use client offsets." if self.ppo_compatible else "No compatible electrical/CORE projection, or declared registers exceed the fixed 50-address action range.",
+                "reason": ("Addressed routed firewall projection supported; imported devices use Linux endpoints." if self.exchange and any(d["type"] == "firewall" for d in self.exchange["network"]["devices"]) else "Existing hub/Modbus projection supported.") if self.core_compatible else "This graph, firewall configuration, interface addressing or PLC service metadata is not supported by the current CORE executor; no preset is substituted."}
+
+    @classmethod
+    def from_exchange(cls, document):
+        from testbed.external_topology import validate
+        document = deepcopy(validate(document))
+        buses = document["power_grid"].get("buses", [])
+        ids = {bus["id"]: i for i, bus in enumerate(buses)}
+        devices = {d["id"]: d for d in document["network"]["devices"]}
+        mapping = {m["bus"]: m["device"] for m in document.get("mapping", [])}
+        nodes = []
+        for bus in buses:
+            i = ids[bus["id"]]; device = devices.get(mapping.get(bus["id"]), {})
+            loads = [x for x in document["power_grid"].get("loads", []) if x["bus"] == bus["id"]]
+            gens = [x for x in document["power_grid"].get("generators", []) if x["bus"] == bus["id"]]
+            nodes.append({"bus_id": i, "name": bus.get("name", bus["id"]), "type": bus.get("type", "unmodeled"), "voltage": bus.get("voltage_pu", 1.0), "vn_kv": bus.get("vn_kv", 110.0),
+                          "pg": sum(g.get("p_mw", 0) for g in gens), "qg": sum(g.get("q_mvar", 0) for g in gens), "pl": sum(l.get("p_mw", 0) for l in loads), "ql": sum(l.get("q_mvar", 0) for l in loads),
+                          "ip": device.get("ip"), "plc_type": device.get("plc_type", "generic_modbus"), **({"plc": device["plc"]} if "plc" in device else {})})
+        edges = [{"from": ids[line["from_bus"]], "to": ids[line["to_bus"]], **{k: v for k, v in line.items() if k in {"length_km", "r_ohm_per_km", "x_ohm_per_km", "c_nf_per_km", "max_i_ka"}}} for line in document["power_grid"].get("lines", [])]
+        result = cls(nodes, edges, "imported_" + str(document.get("name", "network")))
+        result.exchange = document; result.source = "gns3" if document.get("metadata", {}).get("source") == "gns3" else "ascend"
+        if result.physical_available:
+            cls.from_custom_dict({"case_name": "custom_import_validation", "nodes": [{**n, "ip": get_plc_ip(i), **({"plc": {**n["plc"], "id": f"plc{i+1}", "bus_id": i, "ip": get_plc_ip(i)}} if n.get("plc") else {})} for i, n in enumerate(nodes)], "edges": edges})
+        return result
 
     @classmethod
     def from_custom_dict(cls, data: dict) -> "Topology":
@@ -253,6 +383,9 @@ class Topology:
             if not isinstance(item, dict) or type(item.get("bus_id")) is not int or item["bus_id"] != bus_id:
                 raise ValueError("Nodes must have ordered, consecutive bus_id values starting at 0.")
             node = dict(item)
+            from testbed.capabilities import validate_bus
+            validate_bus(node)
+            if "voltage_pu" in node: node["voltage"] = node["voltage_pu"]
             name = node.get("name", f"Bus{bus_id + 1}")
             if not isinstance(name, str) or not name.strip() or len(name) > 80:
                 raise ValueError("Each bus name must be a nonempty string of at most 80 characters.")
@@ -270,7 +403,7 @@ class Topology:
                         bus_role=node.get("bus_role", "generator" if kind in {"slack", "pv"} else "load"))
             for key, default in (("voltage", 1.0), ("vn_kv", 110.0), ("pg", 0.0), ("qg", 0.0), ("pl", 0.0), ("ql", 0.0)):
                 value = node.get(key, default)
-                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (key == "voltage" and value <= 0):
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (key in {"voltage", "vn_kv"} and value <= 0):
                     raise ValueError(f"{key} must be a finite number; voltage must be positive.")
                 node[key] = float(value)
             nodes.append(node)
@@ -308,11 +441,24 @@ class Topology:
                     reached.add(neighbor); pending.append(neighbor)
             if len(reached) != len(nodes):
                 raise ValueError("Every bus must be connected to the electrical network.")
+        from testbed.capabilities import validate_semantics
+        counts = {"bus": len(nodes), "res_bus": len(nodes), "gen": sum(n["type"] == "pv" for n in nodes), "ext_grid": slack_count,
+                  "load": sum(bool(n["pl"] or n["ql"]) for n in nodes), "line": len(edges)}
+        for node in nodes:
+            validate_semantics(node, set(range(len(nodes))), counts, f"plc{node['bus_id']+1}")
+            if node.get("plc") and (node["plc"]["bus_id"] != node["bus_id"] or node["plc"].get("ip", node["ip"]) != node["ip"]):
+                raise ValueError("PLC metadata conflicts with its bus/IP mapping.")
+        validate_semantics(data, set(range(len(nodes))), counts)
         return cls(nodes=nodes, edges=edges, case_name=case)
 
     def to_pandapower(self):
         """Build the electrical simulation from this canonical topology."""
         import pandapower as pp
+        if not self.physical_available: raise ValueError("Active topology has no supported electrical model.")
+        if self.power_model_json:
+            net = pp.from_json_string(self.power_model_json)
+            run_power_flow(net)
+            return net
         net = pp.create_empty_network()
         buses = {}
         for node in self.nodes:
@@ -341,6 +487,7 @@ class Topology:
         import pandapower as pp
 
         case_str = str(case).lower().replace("ieee", "").replace("-", "").strip()
+        if case_str not in {"14", "30", "case14", "case30"}: raise ValueError("Supported IEEE sources are case14 and case30.")
         if "30" in case_str:
             net = pn.case30()
             canonical_name = "case30"
@@ -351,8 +498,8 @@ class Topology:
         try:
             run_power_flow(net)
             solved = True
-        except Exception:
-            solved = False
+        except Exception as exc:
+            raise ValueError(f"Selected electrical source power flow failed: {exc}") from exc
 
         slack_buses = set(net.ext_grid["bus"].tolist()) if hasattr(net, "ext_grid") else set()
         gen_buses = set(net.gen["bus"].tolist()) if hasattr(net, "gen") else set()
@@ -385,10 +532,11 @@ class Topology:
                 "ip": get_plc_ip(bid),
                 "plc_type": plc_template,
                 "bus_role": role,
-                "pg": 0.0,
-                "qg": 0.0,
-                "pl": 0.0,
-                "ql": 0.0,
+                "vn_kv": float(net.bus.at[bid, "vn_kv"]),
+                "pg": float(net.gen.loc[net.gen.bus == bid, "p_mw"].sum()) + (float(net.res_ext_grid.loc[net.ext_grid.bus == bid, "p_mw"].sum()) if solved else 0.0),
+                "qg": (float(net.res_gen.loc[net.gen.bus == bid, "q_mvar"].sum()) + float(net.res_ext_grid.loc[net.ext_grid.bus == bid, "q_mvar"].sum())) if solved else 0.0,
+                "pl": float(net.load.loc[net.load.bus == bid, "p_mw"].sum()),
+                "ql": float(net.load.loc[net.load.bus == bid, "q_mvar"].sum()),
             })
 
         edges = []
@@ -404,7 +552,9 @@ class Topology:
                 if (u, v) not in edges and (v, u) not in edges:
                     edges.append((u, v))
 
-        return cls(nodes=nodes, edges=edges, case_name=canonical_name)
+        result = cls(nodes=nodes, edges=edges, case_name=canonical_name)
+        result.power_model_json = pp.to_json(net)
+        return result
 
 
 def load_topology_from_csv(nodes_csv: str, edges_csv: str) -> Topology:
@@ -473,33 +623,55 @@ def save_topology_csv(topo: Topology, output_dir: str):
 
 # --- Global Singleton Management ---
 _current_topology: Optional[Topology] = None
+_selection_fingerprint = None
+
+def _fingerprint():
+    return (str(SELECTION_PATH), SELECTION_PATH.stat().st_mtime_ns, SELECTION_PATH.stat().st_size) if SELECTION_PATH.exists() else (str(SELECTION_PATH), None)
+
+def activate_topology(topo):
+    """Persist one complete canonical selection; rebuild projections from it."""
+    import tempfile
+    with TOPOLOGY_LOCK:
+        SELECTION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=SELECTION_PATH.parent, suffix=".tmp", delete=False) as out:
+                temporary = Path(out.name); json.dump(topo.to_dict(), out, indent=2)
+            os.replace(temporary, SELECTION_PATH)
+        finally:
+            if temporary and temporary.exists(): temporary.unlink()
+        set_topology(topo)
 
 def get_topology() -> Topology:
     """Get the current global topology. Defaults to IEEE-14 if uninitialized."""
-    global _current_topology
+    global _current_topology, _selection_fingerprint
+    signature = _fingerprint()
+    if _selection_fingerprint is not None and _selection_fingerprint != signature:
+        _current_topology = None
     if _current_topology is None:
         if SELECTION_PATH.exists():
             import json
             data = json.loads(SELECTION_PATH.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("Saved topology selection must be an object.")
-            case = data.get("case_name")
-            if case in {"case14", "case30"}:
-                selected = Topology.from_custom_dict({**data, "case_name": "custom_validation"})
-                if selected.num_buses != int(case.replace("case", "")):
-                    raise ValueError("Saved preset bus count does not match its case.")
-                selected.case_name = case
-            else:
-                selected = Topology.from_custom_dict(data)
-            _current_topology = selected
+            _current_topology = Topology.from_dict(data)
+            # Read-only compatibility migration of the previous split source.
+            legacy_source = SELECTION_PATH.with_name("topology_source.json")
+            if "canonical_schema" not in data and legacy_source.exists():
+                legacy = json.loads(legacy_source.read_text(encoding="utf-8"))
+                if legacy.get("source") == "external": _current_topology = Topology.from_exchange(legacy["document"])
         else:
-            _current_topology = Topology.from_pandapower("case14")
+            legacy_source = SELECTION_PATH.with_name("topology_source.json")
+            legacy = json.loads(legacy_source.read_text(encoding="utf-8")) if legacy_source.exists() else {}
+            _current_topology = Topology.from_exchange(legacy["document"]) if legacy.get("source") == "external" else Topology.from_pandapower("case14")
+        _selection_fingerprint = signature
     return _current_topology
 
 def set_topology(topo: Topology):
     """Set the global active topology."""
-    global _current_topology
+    global _current_topology, _selection_fingerprint
     _current_topology = topo
+    _selection_fingerprint = _fingerprint()
 
 def load_case(case: Union[str, int]) -> Topology:
     """Load a specific standard case (14 or 30) and set as global topology."""
@@ -534,6 +706,6 @@ def load_topology(path: Optional[str] = None) -> Topology:
         else:
             _current_topology = Topology.from_dict(data)
     else:
-        _current_topology = load_case(14)
+        raise ValueError(f"Topology path does not exist or is unsupported: {path}")
 
     return _current_topology

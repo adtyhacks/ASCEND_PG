@@ -161,7 +161,7 @@ class GridStatus(unittest.TestCase):
         baseline = grid_status.snapshot()['baseline_grid']
         self.assertNotIn('error', baseline)
         self.assertEqual(baseline['case_name'], 'custom_power_flow')
-        self.assertEqual(baseline['simulation_source'], 'canonical_custom')
+        self.assertEqual(baseline['simulation_source'], 'custom')
         self.assertEqual(baseline['summary']['electrical_buses'], 3)
         self.assertEqual(baseline['summary']['lines'], 2)
         self.assertEqual(len(baseline['bus_voltages']), 3)

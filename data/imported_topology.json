@@ -1,0 +1,212 @@
+{
+  "schema": "ascend.exchange/v1",
+  "name": "Fortigate NSE4 Lab2 Vlan Interface and Zone",
+  "network": {
+    "devices": [
+      {
+        "id": "accdd3c2-2a83-40f2-b5a2-edccf3170f09",
+        "name": "Internet",
+        "type": "generic",
+        "interfaces": [
+          {
+            "id": "0:0",
+            "name": "adapter0/port0",
+            "inferred_from_link": true
+          }
+        ],
+        "metadata": {
+          "gns3_node_type": "cloud",
+          "template_id": "39e257dc-8412-3174-b6b3-0ee3ed6a43e9",
+          "classification": "name_hint_or_node_type"
+        }
+      },
+      {
+        "id": "dfcc8fb8-c080-4981-a9ca-dfc6c702bd14",
+        "name": "FW-1",
+        "type": "generic",
+        "interfaces": [
+          {
+            "id": "0:0",
+            "name": "adapter0/port0",
+            "inferred_from_link": true
+          },
+          {
+            "id": "1:0",
+            "name": "adapter1/port0",
+            "inferred_from_link": true
+          }
+        ],
+        "metadata": {
+          "gns3_node_type": "qemu",
+          "template_id": "16a4a4a9-4d27-4516-ab90-340f3a564b93",
+          "classification": "name_hint_or_node_type"
+        }
+      },
+      {
+        "id": "ac12e59d-a968-4429-b240-c54f6a3bda31",
+        "name": "SW-1",
+        "type": "generic",
+        "interfaces": [
+          {
+            "id": "0:0",
+            "name": "adapter0/port0",
+            "inferred_from_link": true
+          },
+          {
+            "id": "0:1",
+            "name": "adapter0/port1",
+            "inferred_from_link": true
+          },
+          {
+            "id": "0:2",
+            "name": "adapter0/port2",
+            "inferred_from_link": true
+          },
+          {
+            "id": "0:3",
+            "name": "adapter0/port3",
+            "inferred_from_link": true
+          }
+        ],
+        "metadata": {
+          "gns3_node_type": "iou",
+          "template_id": "09690044-19c3-4bb4-a590-13d0f1f28664",
+          "classification": "name_hint_or_node_type"
+        }
+      },
+      {
+        "id": "b3a56d9d-cac5-48fb-803d-264ebeeea6d8",
+        "name": "Client1",
+        "type": "generic",
+        "interfaces": [
+          {
+            "id": "0:0",
+            "name": "adapter0/port0",
+            "inferred_from_link": true
+          }
+        ],
+        "metadata": {
+          "gns3_node_type": "qemu",
+          "template_id": "2894ce87-c218-487f-8240-52f0b3c51ee0",
+          "classification": "name_hint_or_node_type"
+        }
+      },
+      {
+        "id": "f82bbaae-6820-44ce-ba8b-a4f0c2d395e2",
+        "name": "Client2",
+        "type": "generic",
+        "interfaces": [
+          {
+            "id": "0:0",
+            "name": "adapter0/port0",
+            "inferred_from_link": true
+          }
+        ],
+        "metadata": {
+          "gns3_node_type": "qemu",
+          "template_id": "2894ce87-c218-487f-8240-52f0b3c51ee0",
+          "classification": "name_hint_or_node_type"
+        }
+      },
+      {
+        "id": "9a8ece62-e2fd-4676-b1f1-7d74877f22c6",
+        "name": "Client3",
+        "type": "generic",
+        "interfaces": [
+          {
+            "id": "0:0",
+            "name": "adapter0/port0",
+            "inferred_from_link": true
+          }
+        ],
+        "metadata": {
+          "gns3_node_type": "qemu",
+          "template_id": "2894ce87-c218-487f-8240-52f0b3c51ee0",
+          "classification": "name_hint_or_node_type"
+        }
+      }
+    ]
+  },
+  "links": [
+    {
+      "id": "3c75ae7b-4583-46f8-9b6e-0bfd09f842f2",
+      "endpoints": [
+        {
+          "device": "accdd3c2-2a83-40f2-b5a2-edccf3170f09",
+          "interface": "0:0"
+        },
+        {
+          "device": "dfcc8fb8-c080-4981-a9ca-dfc6c702bd14",
+          "interface": "0:0"
+        }
+      ]
+    },
+    {
+      "id": "d859f182-cfec-405f-829e-4d392f4921be",
+      "endpoints": [
+        {
+          "device": "ac12e59d-a968-4429-b240-c54f6a3bda31",
+          "interface": "0:0"
+        },
+        {
+          "device": "dfcc8fb8-c080-4981-a9ca-dfc6c702bd14",
+          "interface": "1:0"
+        }
+      ]
+    },
+    {
+      "id": "0dc3695f-3526-4834-bf03-033f8828de4b",
+      "endpoints": [
+        {
+          "device": "b3a56d9d-cac5-48fb-803d-264ebeeea6d8",
+          "interface": "0:0"
+        },
+        {
+          "device": "ac12e59d-a968-4429-b240-c54f6a3bda31",
+          "interface": "0:1"
+        }
+      ]
+    },
+    {
+      "id": "c11615e8-1691-42d5-aaac-6a7bb38a02f3",
+      "endpoints": [
+        {
+          "device": "f82bbaae-6820-44ce-ba8b-a4f0c2d395e2",
+          "interface": "0:0"
+        },
+        {
+          "device": "ac12e59d-a968-4429-b240-c54f6a3bda31",
+          "interface": "0:2"
+        }
+      ]
+    },
+    {
+      "id": "950d4df5-3b15-401e-9d39-b1866c26b61b",
+      "endpoints": [
+        {
+          "device": "ac12e59d-a968-4429-b240-c54f6a3bda31",
+          "interface": "0:3"
+        },
+        {
+          "device": "9a8ece62-e2fd-4676-b1f1-7d74877f22c6",
+          "interface": "0:0"
+        }
+      ]
+    }
+  ],
+  "power_grid": {
+    "buses": [],
+    "lines": [],
+    "generators": [],
+    "loads": []
+  },
+  "mapping": [],
+  "firewalls": [],
+  "metadata": {
+    "source": "gns3",
+    "project_id": "312dadc5-db07-4a2c-846a-5c0078a9756d",
+    "warnings": [
+      "No electrical model, firewall policy, or guest IP is inferred from GNS3 templates/configurations."
+    ]
+  }
+}

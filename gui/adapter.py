@@ -45,7 +45,7 @@ def get_system_status() -> dict[str, Any]:
     except RuntimeError as exc:
         core, core_state, watcher_state, daemon = {"error": str(exc)}, "OFFLINE", "STOPPED", "UNAVAILABLE"
     return {
-        "core": {"state": core_state, "daemon": daemon, "session_id": core.get("session_id")},
+        "core": {"state": core_state, "daemon": daemon, "session_id": core.get("session_id"), "firewalls": core.get("firewalls", [])},
         "watcher": {"state": watcher_state},
         "generation": runtime.get("generation_id") if runtime else None,
         "runtime_marker": bool(runtime),
@@ -129,6 +129,13 @@ def get_displayable_active_run() -> dict[str, Any] | None:
 
 def get_topology() -> dict[str, Any]:
     """Load canonical topology and render its current state with the old PyVis view."""
+    from gui import imports
+    document = imports.current()
+    if document:
+        view = imports.preview(document)
+        from testbed.external_topology import visual_data
+        nodes, edges = visual_data(document)
+        return {**view, "topology": {"case_name": document.get("name"), "source": "external"}, "visual": {"nodes": nodes, "edges": edges}}
     return _topology_view(canonical_topology(), [])
 
 
@@ -207,14 +214,8 @@ def _require_topology_editable() -> None:
 
 def _persist_topology_selection(selected: Topology) -> None:
     # Retain the selected definition across GUI restarts without altering run evidence.
-    path = DATA / "topology_selection.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    try:
-        temporary.write_text(json.dumps(selected.to_dict(), indent=2), encoding="utf-8")
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    from testbed.topology import activate_topology
+    activate_topology(selected)
 
 
 def save_custom_topology(definition: dict) -> dict[str, Any]:
@@ -462,6 +463,8 @@ def get_report_summary() -> dict[str, Any]:
 
 def get_live_battle_snapshot(limit: int = 100, visual_signature: str | None = None) -> dict[str, Any]:
     """Read independent bounded canonical evidence streams for Live Battle."""
+    if type(limit) is not int or not 1 <= limit <= MAX_EVENT_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_EVENT_LIMIT}")
     background_network = get_background_network_events(min(max(limit, 1), MAX_BACKGROUND_LIMIT))
     active = get_active_run()
     if not active or active.get("state") != "ACTIVE":

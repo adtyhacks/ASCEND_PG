@@ -46,6 +46,9 @@ async function postApi(path, payload = {}) {
 function displayName(identity, key, fallback = 'NONE') { return identity?.[key]?.display_name || fallback; }
 function activeRunLabel(active, identity) { return active && active.state === 'ACTIVE' ? displayName(identity, 'assessment', 'Assessment in progress') : 'NONE'; }
 function setDetails(target, rows) { target.innerHTML = rows.map(([label, value]) => `<div><span>${label}</span><strong>${text(value)}</strong></div>`).join(''); }
+function setPillTone(target, tone) {
+  target.className = `pill ${tone}`;
+}
 
 function drawPyvisTopology(target, html) {
   if (!html) { target.innerHTML = '<div class="empty-state">No canonical topology is available.</div>'; return; }
@@ -65,7 +68,6 @@ function updateControlStates() {
   start.textContent = starting ? 'Starting CORE…' : 'Start CORE';
   start.setAttribute('aria-busy', String(starting));
   byId('core-stop').disabled = !running;
-  byId('core-gui').disabled = !(running && !runtimeControlPending);
   const checkingWatcher = watcherReadiness && (watcherReadiness.remaining > 0 || runtimeRefreshPending);
   byId('watcher-start').disabled = !(running && !checkingWatcher && !['IDLE', 'BUSY'].includes(watcher?.state));
   const sameRun = latestBattle?.active_run?.run?.run_id === latestActive?.run?.run_id;
@@ -93,6 +95,9 @@ function renderRuntimeState(system) {
   byId('core-status').textContent = statusText('Assessment Environment', environment);
   byId('watcher-status').textContent = statusText('Monitoring', monitoring);
   byId('run-status').textContent = active?.state === 'ACTIVE' ? `${assessment} — ${assessmentState.replace('Assessment ', '')}` : assessmentState;
+  setPillTone(byId('core-status'), environment === 'Running' ? 'success' : environment === 'Ready' ? 'ready' : 'neutral');
+  setPillTone(byId('watcher-status'), monitoring === 'Active' ? 'running' : monitoring === 'Ready' ? 'success' : 'neutral');
+  setPillTone(byId('run-status'), active?.state === 'ACTIVE' ? 'running' : 'neutral');
   byId('runtime-daemon').textContent = system.core.daemon === 'AVAILABLE' ? 'Available' : 'Not reachable';
   byId('runtime-session').textContent = core === 'RUNTIME' ? 'Active managed session' : 'No active session';
   byId('runtime-generation').textContent = core === 'RUNTIME' ? displayName(identity, 'runtime_generation', 'Active') : 'Not started';
@@ -129,6 +134,7 @@ async function refreshRuntimeState() {
     latestSystem = data; latestActive = data.active_run; runtimeFresh = true; runtimeRefreshPending = false;
     reconcileWatcherReadiness(data);
     renderRuntimeState(data);
+    window.renderFirewallEnforcement?.(data);
     if (byId('overview-status-error')) byId('overview-status-error').textContent = data.core.error || '';
     const notice = byId('runtime-refresh-status');
     notice.textContent = data.core.daemon === 'AVAILABLE' ? '' : 'CORE daemon is not reachable. Start it manually; ASCEND-PG will not start the daemon.';
@@ -137,6 +143,7 @@ async function refreshRuntimeState() {
   } catch (error) {
     if (sequence !== runtimeRefreshSequence) return null;
     runtimeFresh = false; runtimeRefreshPending = false;
+    window.renderFirewallEnforcement?.(null);
     if (watcherReadiness) {
       watcherReadiness.remaining = 0;
       runtimeActionMessage = 'Monitoring startup accepted; readiness is unavailable because assessment status could not be refreshed.';
@@ -268,6 +275,7 @@ async function loadNetwork() {
   const [config, topology] = await Promise.all([api('/api/network-configuration'), api('/api/topology')]);
   renderNetworkConfiguration(config, topology);
   topologySetupReady = true;
+  await globalThis.window?.syncTopologySource?.();
   updateControlStates();
 }
 function gridValue(value, unit = '', digits = 2) {
@@ -465,7 +473,7 @@ function renderNetworkConfiguration(config, topology) {
   }
   setElementVisibility(byId('network-next-bar'), true);
 }
-async function loadRuntime() { return refreshRuntimeState(); }
+async function loadRuntime() { const result = await refreshRuntimeState(); await globalThis.window?.syncRuntimeTopology?.(); return result; }
 function evidenceValue(value) {
   if (value === 'N/A') return '<span title="Not applicable">—</span>';
   if (value === null || value === undefined) return '<span title="Unavailable">—</span>';
@@ -541,6 +549,7 @@ let selectedReportRun = null, reportPending = false;
 function reportQuery() { return selectedReportRun ? `?scenario_id=${encodeURIComponent(selectedReportRun.scenario_id)}&run_id=${encodeURIComponent(selectedReportRun.run_id)}` : ''; }
 async function loadReports() {
   const data = await api('/api/report-summary' + reportQuery());
+  globalThis.window?.renderRemediationRecommendations?.(data.remediation_recommendations || []);
   selectedReportRun = data.run_id ? {scenario_id: data.scenario_id, run_id: data.run_id} : null;
   byId('report-run').innerHTML = (data.runs || []).map(r => `<option value="${escapeHtml(r.run_id)}" ${r.run_id === data.run_id ? 'selected' : ''}>${escapeHtml(r.display_name || 'Assessment')} (${escapeHtml(r.campaign_state)})</option>`).join('');
   byId('report-run').onchange = async () => {
@@ -599,7 +608,7 @@ async function runControl(path, payload, target) {
   let message;
   try {
     const data = await postApi(path, payload);
-    message = path === '/api/runtime/gui' ? `CORE GUI opened for ${displayName(latestSystem?.display_identity, 'core_session', 'the active CORE session')}.` : data.state || data.watcher || 'REQUESTED';
+    message = data.state || data.watcher || 'REQUESTED';
     if (watcherStart) {
       message = 'Monitoring startup accepted; checking readiness…';
       if (data.session_id != null && String(data.session_id) === watcherIdentity.sessionId && watcherIdentity.generation) {
@@ -625,6 +634,12 @@ async function runControl(path, payload, target) {
 async function selectTopology() {
   if (topologyControlPending) return;
   const selectedCase = byId('topology-selector').value;
+  if (selectedCase === 'external') {
+    topologySetupReady = false; updateControlStates();
+    await globalThis.window?.showExternalImport?.();
+    return;
+  }
+  globalThis.window?.showCanonicalTopology?.();
   if (selectedCase === 'custom') {
     topologySetupReady = false;
     updateControlStates();
@@ -642,6 +657,7 @@ async function selectTopology() {
     const selected = await postApi('/api/topology/select', {case_name: selectedCase});
     renderNetworkConfiguration(selected.configuration, selected);
     topologySetupReady = true;
+    await globalThis.window?.syncTopologySource?.();
     notice.textContent = `Selected ${selected.topology.case_name}; showing ${selected.visual.nodes.length} network components and ${selected.visual.edges.length} connections.`;
     await loadOverview();
   } catch (error) {
@@ -703,6 +719,7 @@ async function saveCustomTopology() {
     const selected = await postApi('/api/topology/custom', {definition});
     renderNetworkConfiguration(selected.configuration, selected);
     topologySetupReady = true;
+    await globalThis.window?.syncTopologySource?.();
     notice.textContent = `Saved and selected ${selected.topology.case_name}. Start CORE to use this topology.`;
     await loadOverview();
   } catch (error) {
@@ -720,7 +737,6 @@ function bindControls() {
   byId('core-start').addEventListener('click', () => byId('core-start').disabled ? undefined : runControl('/api/runtime/start', {}, 'runtime-action-status'));
   byId('core-stop').addEventListener('click', () => runControl('/api/runtime/stop', {}, 'runtime-action-status'));
   byId('watcher-start').addEventListener('click', () => runControl('/api/runtime/watcher/start', {}, 'runtime-action-status'));
-  byId('core-gui').addEventListener('click', () => runControl('/api/runtime/gui', {}, 'runtime-action-status'));
   byId('topology-selector').addEventListener('change', selectTopology);
   byId('custom-topology-copy').addEventListener('click', copySelectedTopology);
   byId('custom-topology-save').addEventListener('click', saveCustomTopology);

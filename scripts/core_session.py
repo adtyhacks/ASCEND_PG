@@ -70,9 +70,9 @@ def owned_session(c):
     return session
 
 
-def save_state(sid, token, endpoint):
+def save_state(sid, token, endpoint, run_identity=None):
     temporary = STATE.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"id": sid, "token": token, "generation_id": token, "endpoint": endpoint, "created_at": time.time()}))
+    temporary.write_text(json.dumps({"id": sid, "token": token, "generation_id": token, "endpoint": endpoint, "created_at": time.time(), **(run_identity or {})}))
     temporary.replace(STATE)
 
 
@@ -101,9 +101,44 @@ def watcher_status(c, session):
             return heartbeat.get("status", "UNKNOWN")
     except (OSError, ValueError):
         pass
-    attacker = next(n for n in session.nodes.values() if n.name == "attacker")
+    attacker = next((n for n in session.nodes.values() if n.name == "attacker"), None)
+    if attacker is None: return "STOPPED"
     code, _ = c.node_command(session.id, attacker.id, 'test -f ascend-watcher.pid && kill -0 "$(cat ascend-watcher.pid)"', shell=True)
     return "UNVERIFIED" if code == 0 else "STOPPED"
+
+
+def firewall_record(event_type, evidence):
+    state = json.loads(STATE.read_text())
+    event = {"timestamp": time.time(), "event_type": event_type, "session_id": state["id"],
+             "generation_id": state.get("generation_id", state["token"]), "evidence": evidence}
+    directory = RUNTIME / "firewall-evidence"; directory.mkdir(exist_ok=True)
+    with (directory / f"{event['generation_id']}.jsonl").open("a") as stream:
+        stream.write(json.dumps(event) + "\n")
+    if state.get("scenario_id") and state.get("run_id"):
+        from testbed.run_store import append_event
+        append_event(state["scenario_id"], state["run_id"], category="network", event_type=event_type,
+                     target_node=evidence.get("firewall_id"), evidence=evidence, generation_id=event["generation_id"], core_session_id=state["id"])
+
+
+def firewall_status(c, session):
+    from testbed.firewall_topology import PLAN_KEY
+    if not session or not session.metadata.get(PLAN_KEY): return []
+    from firewall.runtime import verify
+    plan = json.loads(session.metadata[PLAN_KEY]); state = json.loads(STATE.read_text())
+    saved = state.get("firewall_status", [])
+    if not saved:
+        return [{"firewall_id": plan["firewall_id"], "enforced": False, "error": "No verified installation for this generation."}]
+    statuses = []
+    for s in saved:
+        if session.state != w.SessionState.RUNTIME or s.get("generation_id") != state.get("generation_id", state["token"]):
+            statuses.append({**s, "enforced": False, "error": "Firewall generation/state is no longer active."})
+        else:
+            statuses.append(verify(c, session, plan, s))
+    if statuses != saved:
+        state["firewall_status"] = statuses; temporary = STATE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state)); temporary.replace(STATE)
+        for s in statuses: firewall_record("firewall_enforcement_state", s)
+    return statuses
 
 
 def perform(c, request):
@@ -114,16 +149,26 @@ def perform(c, request):
         register(c, validate_xml(request.get("xml", ROOT / "core_topology.xml")))
         return {"service": SERVICE}
     session = owned_session(c)
+    if request.get("generation_id") is not None:
+        if not session or json.loads(STATE.read_text()).get("generation_id") != request["generation_id"]:
+            raise RuntimeError("CORE generation changed; refusing stale runtime operation.")
     if action == "status":
         return {"session_id": session.id if session else None,
                 "state": session.state.name if session else "STOPPED",
                 "nodes": len(session.nodes) if session else 0,
-                "watcher": watcher_status(c, session)}
+                "watcher": watcher_status(c, session), "firewalls": firewall_status(c, session)}
     if action == "stop":
         if session and not c.delete_session(session.id):
             raise RuntimeError(f"CORE could not delete session {session.id}")
         STATE.unlink(missing_ok=True)
         return {"state": "STOPPED"}
+    if action == "firewall_smoke":
+        from testbed.firewall_topology import PLAN_KEY
+        if not session or session.state != w.SessionState.RUNTIME or not session.metadata.get(PLAN_KEY):
+            raise RuntimeError("Controlled firewall smoke requires an owned routed CORE session.")
+        from firewall.smoke import probe
+        statuses = firewall_status(c, session)
+        return probe(c, session, json.loads(session.metadata[PLAN_KEY]), statuses[0], firewall_record)
     if action == "gui":
         if not session or session.state != w.SessionState.RUNTIME:
             raise RuntimeError("Start a managed CORE session before opening CORE GUI")
@@ -151,7 +196,8 @@ def perform(c, request):
         definition.file = path
         created = c.create_session()
         definition.id = created.id
-        save_state(created.id, token, c.address)
+        run_identity = {k: request[k] for k in ("scenario_id", "run_id") if k in request}
+        save_state(created.id, token, c.address, run_identity)
         try:
             result, exceptions = c.start_session(definition)
             if not result or exceptions:
@@ -159,7 +205,17 @@ def perform(c, request):
             live = c.get_session(created.id)
             if live.state != w.SessionState.RUNTIME:
                 raise RuntimeError(f"Unexpected CORE state: {live.state.name}")
-            return {"session_id": live.id, "state": live.state.name, "nodes": len(live.nodes)}
+            from testbed.firewall_topology import PLAN_KEY
+            if definition.metadata.get(PLAN_KEY) and live.metadata.get(PLAN_KEY) != definition.metadata[PLAN_KEY]:
+                raise RuntimeError("CORE did not retain the canonical firewall plan.")
+            statuses = []
+            if live.metadata.get(PLAN_KEY):
+                from firewall.runtime import install
+                plan = json.loads(live.metadata[PLAN_KEY])
+                statuses = [install(c, live, plan, token, firewall_record)]
+                state = json.loads(STATE.read_text()); state["firewall_status"] = statuses
+                temporary = STATE.with_suffix(".tmp"); temporary.write_text(json.dumps(state)); temporary.replace(STATE)
+            return {"session_id": live.id, "generation_id": token, "state": live.state.name, "nodes": len(live.nodes), "firewalls": statuses}
         except Exception as exc:
             try:
                 if not c.delete_session(created.id):

@@ -1,0 +1,14 @@
+{
+  "case_name": "case30",
+  "nodes": [
+    {
+      "bus_id": 0,
+      "type": "pq"
+    },
+    {
+      "bus_id": 1,
+      "type": "pq"
+    }
+  ],
+  "edges": []
+}

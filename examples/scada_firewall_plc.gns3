@@ -1,0 +1,16 @@
+{
+  "name": "GNS3 SCADA Firewall PLC",
+  "project_id": "example-project",
+  "topology": {
+    "nodes": [
+      {"node_id": "scada", "name": "SCADA", "node_type": "vpcs", "ports": [{"adapter_number": 0, "port_number": 0, "name": "Ethernet0"}]},
+      {"node_id": "fw1", "name": "FW-1", "node_type": "qemu", "ports": [{"adapter_number": 0, "port_number": 0, "name": "inside"}, {"adapter_number": 1, "port_number": 0, "name": "field"}]},
+      {"node_id": "plc8", "name": "PLC8", "node_type": "docker", "ip": "10.0.0.8"},
+      {"node_id": "unknown", "name": "Custom appliance", "node_type": "future-appliance"}
+    ],
+    "links": [
+      {"link_id": "link1", "nodes": [{"node_id": "scada", "adapter_number": 0, "port_number": 0}, {"node_id": "fw1", "adapter_number": 0, "port_number": 0}]},
+      {"link_id": "link2", "nodes": [{"node_id": "fw1", "adapter_number": 1, "port_number": 0}, {"node_id": "plc8", "adapter_number": 0, "port_number": 0}]}
+    ]
+  }
+}

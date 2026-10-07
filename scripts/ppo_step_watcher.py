@@ -290,8 +290,16 @@ def main():
                     "value_magnitude": value_magnitude,
                 })
 
+                feedback = None
+                physical_before = None
+                physical_error = None
                 try:
                     started_event = record_attack_started(pending, generation)
+                    try:
+                        from testbed.physical_feedback import prepare_step
+                        feedback, physical_before = prepare_step(pending)
+                    except Exception as exc:
+                        physical_error = str(exc)
                     result = execute_single_attack(
                         technique_id,
                         detection_mode="hybrid",
@@ -349,6 +357,22 @@ def main():
                     print(f"[watcher] EXECUTION ERROR: {exc}")
                     write_heartbeat("ERROR", {"error": str(exc)})
 
+                try:
+                    if feedback is not None:
+                        from testbed.physical_feedback import finish_step
+                        result["physical_impact"] = finish_step(feedback, physical_before, pending)
+                    else:
+                        from testbed.topology import get_topology
+                        topology = get_topology()
+                        result["physical_impact"] = {"physical_model_available": topology.physical_available,
+                            "power_flow_success": False if topology.physical_available else None,
+                            "topology_revision": topology.revision, "error": physical_error or "Physical feedback unavailable.",
+                            "voltage_before": {}, "voltage_after": {}, "voltage_delta": {}, "min_voltage_before": None,
+                            "min_voltage_after": None, "affected_buses": [], "physical_state_change": []}
+                except Exception as exc:
+                    result["physical_impact"] = {"physical_model_available": feedback.topology.physical_available if feedback is not None else None,
+                        "power_flow_success": False, "topology_revision": feedback.topology.revision if feedback is not None else None,
+                        "error": str(exc), "voltage_after": {}}
                 try:
                     record_network_events(pending, result)
                 except Exception as exc:

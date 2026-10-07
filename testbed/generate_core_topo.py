@@ -75,12 +75,27 @@ def generate_core_xml(case: int = 14, output_path: str = "core_topology.xml", us
 
     if os.name != "posix":
         raise RuntimeError("Generate CORE scenarios inside WSL2 so service paths are Linux paths.")
-    topo = topology if topology is not None else load_case(case)
+    from testbed.topology import get_topology
+    topo = topology if topology is not None else get_topology()
+    if topo.exchange and any(d["type"] == "firewall" for d in topo.exchange["network"]["devices"]):
+        from testbed.firewall_topology import build_plan, scenario
+        root = scenario(build_plan(topo.exchange, topo.revision))
+        out_file = Path(output_path).resolve(); out_file.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=out_file.parent, suffix=".xml", delete=False) as temporary:
+            temporary.write(ET.tostring(root, encoding="unicode")); temporary_path = Path(temporary.name)
+        try:
+            validate_xml(temporary_path); temporary_path.replace(out_file)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return str(out_file)
+    if not topo.core_compatible:
+        raise ValueError(topo.capability_status()["reason"])
     if topology is not None:
         if not isinstance(topology, Topology):
             raise ValueError("CORE generation requires the canonical Topology model.")
         # Apply the same CORE constraints to JSON, CSV and directly constructed models.
-        Topology.from_custom_dict({**topology.to_dict(), "case_name": "custom_validation"})
+        if topology.exchange is None:
+            Topology.from_custom_dict({**topology.to_dict(), "case_name": "custom_validation"})
     case = topo.num_buses
     audit_ip_uniqueness(case)
 

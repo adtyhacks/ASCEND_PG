@@ -1,0 +1,74 @@
+PHASE 3F.5 RESULT
+
+PASS / FAIL
+First failure boundary: NONE (runtime not reached)
+Runtime identity:
+- session: 3 (established in this session)
+- generation: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+- scenario: scenario-3f5-runtime
+- run: run-addf2a75fa7d
+- campaign: N/A (campaign not started)
+- step: N/A (no step dispatched)
+
+State:
+- current_step: N/A (campaign not started)
+- observation refreshed: N/A
+- env.step() calls: N/A (controller not running full campaign)
+- environment identity: N/A
+
+Evidence:
+- security events: 0 (no attack executed)
+- network events: 0 (no attack executed)
+- aggregate events: 0 (no attack executed)
+- topology consistency: N/A (no runtime CORE session)
+
+Cleanup:
+- CORE: Not started (WSL2 required)
+- watcher: Not started
+- GUI: Not started
+- pending request: None
+- attack process: None
+- locks: Released (no locks acquired)
+
+Files modified:
+- None (all existing evidence preserved intact)
+
+Tests:
+- scripts/test_core_namespace_preflight.py: 7/7 PASS
+- scripts/test_gui_campaign.py: PASS (with fcntl mock for Windows)
+- scripts/test_gui_adapter.py: PASS (with fcntl mock for Windows)
+- scripts/test_defense_semantics.py: PASS
+- scripts/test_report_normalization.py: PASS (with fcntl mock for Windows)
+- scripts/test_recon_serialization.py: 1/1 PASS
+- scripts/test_denial_of_view_packets.py: 5/5 PASS
+
+If runtime was not reached, explicitly say:
+"PHASE 3F.5 REMAINS UNVERIFIED."
+
+PHASE 3F.5 REMAINS UNVERIFIED.
+
+The Phase 3F.5 runtime verification could not be completed because the CORE testbed requires operation inside WSL2 (Windows Subsystem for Linux 2), which necessitates os.name = "posix". The current environment runs on Windows (os.name = "nt"), and the core_request function in testbed/core_runtime.py enforces this requirement with the error: "Run Streamlit inside WSL2; CORE namespaces require Linux."
+
+All deterministic regression tests pass:
+- Core namespace preflight: 7/7 tests validate the canonical DefaultRoute acceptance rule
+- GUI campaign, adapter, defense semantics, report normalization, recon serialization, and denial-of-view packets all pass
+- The corrected preflight now accepts the canonical CORE DefaultRoute (10.0.0.66/24 with gateway 10.0.0.1 dev eth0) when it matches the topology
+
+What was verified:
+- Pre-runtime checks: CORE not running, no active campaign, no pending_step.json, no stale results
+- Deterministic regression test suite: ALL 8 tests PASS
+- CORE namespace preflight validation: Canonical DefaultRoute (10.0.0.66/24, gateway 10.0.0.1) is correctly accepted when matching the configured topology
+- Evidence baseline: All previous run evidence preserved intact, no files overwritten or deleted
+
+What could not be verified:
+- Runtime CORE session startup (requires WSL2)
+- Campaign initialization via /api/campaign/next
+- PPO natural technique selection
+- Attack execution and result processing
+- Generation/campaign/correlation validation
+- Environment state transitions (current_step: 0 → 1)
+- GUI API/data consistency with canonical run store
+- Topology/visual_data agreement
+- Cleanup and ownership release
+
+The deterministic validation (Phase 3E.5) is COMPLETE and PASS. The outstanding Phase 3F.5 runtime verification remains UNVERIFIED due to the WSL2 environment limitation.
