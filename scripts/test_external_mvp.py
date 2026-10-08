@@ -214,6 +214,11 @@ class ExternalMvpTests(unittest.TestCase):
             self.assertEqual(before, imports.PATH.read_bytes())
             self.assertTrue(imports.decision({"firewall_id": "fw1", "traffic": {"source": "scada", "destination": "plc8", "protocol": "tcp", "destination_port": 502}})["allowed"])
 
+    def test_gns3_filename_selects_gns3_parser(self):
+        from gui import imports
+        result = imports.import_document({"format": "ascend", "filename": "fortigate-lab.GNS3", "document": self.gns3, "save": False})
+        self.assertEqual(result["document"]["metadata"]["source"], "gns3")
+
     def test_api_routes_without_server_or_runtime(self):
         from gui.server import GuiHandler
         from gui import imports

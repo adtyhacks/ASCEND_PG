@@ -17,6 +17,7 @@ let runtimeActionMessage = '', pendingRuntimePath = null;
 let topologyControlPending = false;
 let selectedTopologyDefinition = null;
 let validatedCustomDefinition = null;
+let customFirewallExtras = {};
 let topologySetupReady = false;
 const WATCHER_READINESS_REFRESH_LIMIT = 30;
 let watcherReadiness = null;
@@ -81,7 +82,7 @@ function updateControlStates() {
   byId('defense-target').disabled = !coreReady;
   byId('topology-selector').disabled = !runtimeFresh || running || latestSystem?.runtime_marker || runtimeControlPending || topologyControlPending;
   for (const id of ['custom-topology-json', 'custom-topology-save', 'custom-topology-copy']) byId(id).disabled = byId('topology-selector').disabled;
-  for (const id of ['custom-builder-name','custom-builder-add-node','custom-builder-add-edge','custom-builder-validate']) if (byId(id)) byId(id).disabled = byId('topology-selector').disabled;
+  for (const id of ['custom-builder-name','custom-builder-add-node','custom-builder-add-edge','custom-builder-add-firewall','custom-builder-validate']) if (byId(id)) byId(id).disabled = byId('topology-selector').disabled;
   setElementVisibility(byId('runtime-next-bar'), running && watcher?.state === 'IDLE');
 }
 function renderRuntimeState(system) {
@@ -342,24 +343,35 @@ function renderBaselineTelemetry(telemetry = []) {
 }
 function resetCustomWorkflow(definition = null) {
   validatedCustomDefinition = null;
+  customFirewallExtras = {};
   const file = byId('custom-topology-file'); if (file) file.value = '';
   setElementVisibility(byId('custom-topology-preview'), false);
   setElementVisibility(byId('custom-topology-error'), false);
   if (byId('custom-topology-error')) byId('custom-topology-error').textContent = '';
-  const raw = definition || {case_name:'custom_grid',nodes:[],edges:[]};
+  const raw = definition || {case_name:'custom_grid',nodes:[],edges:[],firewalls:[]};
   if (byId('custom-topology-json')) byId('custom-topology-json').value = JSON.stringify(raw, null, 2);
   if (definition) renderTopologyBuilder(raw);
   else {
     if (byId('custom-builder-name')) byId('custom-builder-name').value = 'custom_grid';
     if (byId('custom-builder-nodes')) byId('custom-builder-nodes').innerHTML = '';
     if (byId('custom-builder-edges')) byId('custom-builder-edges').innerHTML = '';
+    if (byId('custom-builder-firewalls')) byId('custom-builder-firewalls').innerHTML = '';
   }
 }
+function customFirewallMarkup(policy = {}, index = 0) {
+  const interfaces = Array.isArray(policy.interfaces) ? policy.interfaces : [];
+  const rules = Array.isArray(policy.rules) ? policy.rules : [];
+  const interfaceRows = interfaces.map((item, position) => `<div class="builder-row builder-firewall-interface" data-index="${position}"><span class="builder-index">Interface ${position + 1}</span><label>ID<input data-field="id" value="${escapeHtml(item.id || `eth${position}`)}"></label><label>Name<input data-field="name" value="${escapeHtml(item.name || item.id || `eth${position}`)}"></label><label>Address / CIDR<input data-field="ip" placeholder="10.0.0.1/24" value="${escapeHtml(item.ip || '')}"></label><label>Zone<input data-field="zone" placeholder="inside" value="${escapeHtml(item.zone || '')}"></label><button type="button" class="builder-remove" data-remove-firewall-interface="${position}">Remove</button></div>`).join('');
+  const ruleRows = rules.map((rule, position) => `<div class="builder-row builder-firewall-rule" data-index="${position}"><span class="builder-index">Rule ${position + 1}</span><label>ID<input data-field="rule_id" value="${escapeHtml(rule.rule_id || `rule-${position + 1}`)}"></label><label>Priority<input type="number" min="0" step="1" data-field="priority" value="${rule.priority ?? position}"></label><label>Source<input data-field="source" placeholder="any, device, CIDR, zone:name" value="${escapeHtml(rule.source || 'any')}"></label><label>Destination<input data-field="destination" placeholder="any, device, CIDR, zone:name" value="${escapeHtml(rule.destination || 'any')}"></label><label>Protocol<select data-field="protocol"><option value="any" ${rule.protocol === 'any' ? 'selected' : ''}>ANY</option><option value="tcp" ${rule.protocol === 'tcp' ? 'selected' : ''}>TCP</option><option value="udp" ${rule.protocol === 'udp' ? 'selected' : ''}>UDP</option><option value="icmp" ${rule.protocol === 'icmp' ? 'selected' : ''}>ICMP</option></select></label><label>Source port<input data-field="source_port" placeholder="any" value="${escapeHtml(rule.source_port ?? 'any')}"></label><label>Destination port<input data-field="destination_port" placeholder="any" value="${escapeHtml(rule.destination_port ?? 'any')}"></label><label>Action<select data-field="action"><option value="allow" ${rule.action === 'allow' ? 'selected' : ''}>ALLOW</option><option value="deny" ${rule.action === 'deny' ? 'selected' : ''}>DENY</option></select></label><button type="button" class="builder-remove" data-remove-firewall-rule="${position}">Remove</button></div>`).join('');
+  return `<article class="builder-firewall" data-index="${index}"><div class="builder-row builder-firewall-identity"><span class="builder-index">Firewall ${index + 1}</span><label>Device ID<input data-field="id" value="${escapeHtml(policy.id || `fw${index + 1}`)}"></label><label>Name / hostname<input data-field="name" value="${escapeHtml(policy.name || policy.hostname || `FW-${index + 1}`)}"></label><label>Default policy<select data-field="default_action"><option value="deny" ${(policy.default_action || policy.default_policy || 'deny') === 'deny' ? 'selected' : ''}>DENY</option><option value="allow" ${(policy.default_action || policy.default_policy) === 'allow' ? 'selected' : ''}>ALLOW</option></select></label><button type="button" class="builder-remove" data-remove-firewall="${index}">Remove firewall</button></div><div class="builder-heading compact"><h5>Interfaces and zones</h5><button type="button" class="button button-outline" data-add-firewall-interface>Add interface</button></div><div class="builder-firewall-interfaces">${interfaceRows}</div><div class="builder-heading compact"><h5>Ordered rules</h5><button type="button" class="button button-outline" data-add-firewall-rule>Add rule</button></div><div class="builder-firewall-rules">${ruleRows}</div></article>`;
+}
 function renderTopologyBuilder(definition = {}) {
-  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [], edges = Array.isArray(definition.edges) ? definition.edges : [];
+  const nodes = Array.isArray(definition.nodes) ? definition.nodes : [], edges = Array.isArray(definition.edges) ? definition.edges : [], firewalls = Array.isArray(definition.firewalls) ? definition.firewalls : [];
+  customFirewallExtras = Object.fromEntries(firewalls.map(policy => [policy.id, {address_objects:policy.address_objects || [],services:policy.services || []}]));
   byId('custom-builder-name').value = definition.case_name || 'custom_grid';
   byId('custom-builder-nodes').innerHTML = nodes.map((node, index) => `<div class="builder-row builder-node" data-index="${index}"><span class="builder-index">Bus ${index}</span><label>Name<input data-field="name" value="${escapeHtml(node.name || `Bus ${index + 1}`)}"></label><label>Role<select data-field="type"><option value="slack" ${node.type === 'slack' ? 'selected' : ''}>Slack</option><option value="pv" ${node.type === 'pv' ? 'selected' : ''}>Generator (PV)</option><option value="pq" ${node.type === 'pq' ? 'selected' : ''}>Load (PQ)</option></select></label><label>Nominal kV<input type="number" step="0.1" min="0.1" data-field="vn_kv" value="${node.vn_kv ?? 110}"></label><label>Voltage p.u.<input type="number" step="0.001" min="0.1" data-field="voltage" value="${node.voltage ?? 1}"></label><label>Generation MW<input type="number" step="0.1" min="0" data-field="pg" value="${node.pg ?? 0}"></label><label>Load MW<input type="number" step="0.1" min="0" data-field="pl" value="${node.pl ?? 0}"></label><label>Load Mvar<input type="number" step="0.1" min="0" data-field="ql" value="${node.ql ?? 0}"></label><button type="button" class="builder-remove" data-remove-node="${index}" aria-label="Remove bus ${index}">Remove</button></div>`).join('');
   byId('custom-builder-edges').innerHTML = edges.map((edge, index) => `<div class="builder-row builder-edge" data-index="${index}"><span class="builder-index">Line ${index + 1}</span><label>From bus<input type="number" min="0" step="1" data-field="from" value="${edge.from ?? 0}"></label><label>To bus<input type="number" min="0" step="1" data-field="to" value="${edge.to ?? Math.min(1, Math.max(0,nodes.length-1))}"></label><label>Length km<input type="number" min="0.001" step="0.1" data-field="length_km" value="${edge.length_km ?? 1}"></label><label>Resistance Ω/km<input type="number" min="0.0001" step="0.01" data-field="r_ohm_per_km" value="${edge.r_ohm_per_km ?? 0.1}"></label><label>Reactance Ω/km<input type="number" min="0.0001" step="0.01" data-field="x_ohm_per_km" value="${edge.x_ohm_per_km ?? 0.1}"></label><label>Capacitance nF/km<input type="number" min="0" step="0.1" data-field="c_nf_per_km" value="${edge.c_nf_per_km ?? 0}"></label><label>Max current kA<input type="number" min="0.001" step="0.01" data-field="max_i_ka" value="${edge.max_i_ka ?? 0.4}"></label><button type="button" class="builder-remove" data-remove-edge="${index}" aria-label="Remove line ${index + 1}">Remove</button></div>`).join('');
+  if (byId('custom-builder-firewalls')) byId('custom-builder-firewalls').innerHTML = firewalls.map(customFirewallMarkup).join('');
 }
 function topologyBuilderDefinition() {
   const number = value => Number(value);
@@ -371,7 +383,23 @@ function topologyBuilderDefinition() {
     const field = name => row.querySelector(`[data-field="${name}"]`).value;
     return {from:number(field('from')),to:number(field('to')),length_km:number(field('length_km')),r_ohm_per_km:number(field('r_ohm_per_km')),x_ohm_per_km:number(field('x_ohm_per_km')),c_nf_per_km:number(field('c_nf_per_km')),max_i_ka:number(field('max_i_ka'))};
   });
-  return {case_name:byId('custom-builder-name').value.trim(),nodes,edges};
+  const port = value => value.trim().toLowerCase() === 'any' || value.trim() === '' ? 'any' : Number(value);
+  const firewalls = byId('custom-builder-firewalls') ? [...byId('custom-builder-firewalls').querySelectorAll('.builder-firewall')].map(card => {
+    const interfaces = [...card.querySelectorAll('.builder-firewall-interface')].map(row => {
+      const field = name => row.querySelector(`[data-field="${name}"]`).value.trim();
+      const item = {id:field('id'),name:field('name')}; if (field('ip')) item.ip = field('ip'); if (field('zone')) item.zone = field('zone'); return item;
+    });
+    const zones = [...new Set(interfaces.map(item => item.zone).filter(Boolean))].map(id => ({id,interfaces:interfaces.filter(item=>item.zone===id).map(item=>item.id)}));
+    const rules = [...card.querySelectorAll('.builder-firewall-rule')].map((row, order) => {
+      const field = name => row.querySelector(`[data-field="${name}"]`).value;
+      return {rule_id:field('rule_id').trim(),priority:Number(field('priority')),order,source:field('source').trim(),destination:field('destination').trim(),protocol:field('protocol'),source_port:port(field('source_port')),destination_port:port(field('destination_port')),action:field('action')};
+    });
+    const identity = card.querySelector('.builder-firewall-identity');
+    const id = identity.querySelector('[data-field="id"]').value.trim();
+    const retained = customFirewallExtras[id] || {};
+    return {id,name:identity.querySelector('[data-field="name"]').value.trim(),interfaces,zones,address_objects:retained.address_objects || [],services:retained.services || [],rules,default_action:identity.querySelector('[data-field="default_action"]').value};
+  }) : [];
+  return {case_name:byId('custom-builder-name').value.trim(),nodes,edges,firewalls};
 }
 async function validateAndPreviewCustom(definition) {
   const validated = await postApi('/api/topology/validate', {definition});
@@ -465,7 +493,7 @@ function renderNetworkConfiguration(config, topology) {
     if (byId('custom-preview-case')) byId('custom-preview-case').textContent = def.case_name;
     if (byId('custom-preview-buses')) byId('custom-preview-buses').textContent = (def.nodes || []).length;
     if (byId('custom-preview-edges')) byId('custom-preview-edges').textContent = (def.edges || []).length;
-    if (byId('custom-preview-communication')) byId('custom-preview-communication').textContent = `${(def.nodes || []).length + 4} hosts/devices · ${(def.nodes || []).length + 3} CORE links`;
+    if (byId('custom-preview-communication')) byId('custom-preview-communication').textContent = `${(def.nodes || []).length + 4 + (def.firewalls || []).length} hosts/devices · ${(def.nodes || []).length + 3} CORE links · ${(def.firewalls || []).length} firewalls`;
     if (byId('custom-preview-badge')) byId('custom-preview-badge').textContent = 'Valid';
     setElementVisibility(byId('custom-topology-preview'), true);
     if (byId('custom-topology-json')) byId('custom-topology-json').value = JSON.stringify(def, null, 2);
@@ -669,7 +697,7 @@ async function selectTopology() {
 function copySelectedTopology() {
   if (!selectedTopologyDefinition) return;
   const definition = {case_name: selectedTopologyDefinition.case_name.startsWith('custom_') ? selectedTopologyDefinition.case_name : 'custom_grid',
-    nodes: selectedTopologyDefinition.nodes, edges: selectedTopologyDefinition.edges};
+    nodes: selectedTopologyDefinition.nodes, edges: selectedTopologyDefinition.edges, firewalls:selectedTopologyDefinition.firewalls || []};
   byId('custom-topology-json').value = JSON.stringify(definition, null, 2);
   if (byId('custom-preview-case')) byId('custom-preview-case').textContent = definition.case_name;
   if (byId('custom-preview-buses')) byId('custom-preview-buses').textContent = (definition.nodes || []).length;
@@ -753,6 +781,31 @@ function bindControls() {
     const definition = topologyBuilderDefinition();
     definition.edges.push({from:0,to:Math.min(1,Math.max(0,definition.nodes.length-1)),length_km:1,r_ohm_per_km:0.1,x_ohm_per_km:0.1,c_nf_per_km:0,max_i_ka:0.4});
     renderTopologyBuilder(definition); validatedCustomDefinition = null;
+  });
+  byId('custom-builder-add-firewall').addEventListener('click', () => {
+    const definition = topologyBuilderDefinition(), index = definition.firewalls.length;
+    definition.firewalls.push({id:`fw${index + 1}`,name:`FW-${index + 1}`,interfaces:[],zones:[],address_objects:[],services:[],rules:[],default_action:'deny'});
+    renderTopologyBuilder(definition); validatedCustomDefinition = null;
+  });
+  byId('custom-builder-firewalls').addEventListener('click', event => {
+    const definition = topologyBuilderDefinition();
+    const card = event.target.closest('.builder-firewall'); if (!card) return;
+    const index = Number(card.dataset.index);
+    if (event.target.closest('[data-remove-firewall]')) definition.firewalls.splice(index, 1);
+    else if (event.target.closest('[data-add-firewall-interface]')) {
+      const position = definition.firewalls[index].interfaces.length;
+      definition.firewalls[index].interfaces.push({id:`eth${position}`,name:`eth${position}`});
+    } else if (event.target.closest('[data-add-firewall-rule]')) {
+      const position = definition.firewalls[index].rules.length;
+      definition.firewalls[index].rules.push({rule_id:`rule-${position + 1}`,priority:position,source:'any',destination:'any',protocol:'any',source_port:'any',destination_port:'any',action:'deny'});
+    } else {
+      const interfaceButton = event.target.closest('[data-remove-firewall-interface]');
+      const ruleButton = event.target.closest('[data-remove-firewall-rule]');
+      if (interfaceButton) definition.firewalls[index].interfaces.splice(Number(interfaceButton.dataset.removeFirewallInterface),1);
+      else if (ruleButton) definition.firewalls[index].rules.splice(Number(ruleButton.dataset.removeFirewallRule),1);
+      else return;
+    }
+    renderTopologyBuilder(definition); validatedCustomDefinition = null; setElementVisibility(byId('custom-topology-preview'),false);
   });
   for (const [id, attribute] of [['custom-builder-nodes','removeNode'],['custom-builder-edges','removeEdge']]) byId(id).addEventListener('click', event => {
     const button = event.target.closest(`[data-${attribute.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase())}]`); if (!button) return;

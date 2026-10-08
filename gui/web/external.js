@@ -80,10 +80,15 @@
     if(context.source === 'external') { el('topology-selector').value = 'external'; showPreview({...context,revision:context.preview_revision,warnings:[]}); el('external-status').textContent = `Active imported topology: ${context.document.name}. ${capability?.reason || 'Compatibility must be checked.'}`; }
   };
   el('external-firewall').addEventListener('change', () => { sequence++; el('external-decision').textContent = ''; showRules(); });
+  el('external-file').addEventListener('change', () => {
+    const file = el('external-file').files[0];
+    if (file && String(file.name || '').toLowerCase().endsWith('.gns3')) el('external-format').value = 'gns3';
+  });
   el('external-import').addEventListener('click',async () => {
     const file = el('external-file').files[0]; if(!file) { el('external-status').textContent = 'Select a file first.'; return; } if(file.size > 1900000) { el('external-status').textContent = 'File exceeds the 1.9 MB limit.'; return; }
     preview = null; clearFirewall(); el('firewall-context').textContent = 'Validate and use this preview to load its firewall context.'; el('external-use').disabled = true; el('external-preview').hidden = true; el('external-import').disabled = true;
-    try { const result = await postApi('/api/topology/import',{format:el('external-format').value,document:JSON.parse(await file.text())}); if(!panel.hidden) showPreview(result); } catch(e) { el('external-status').textContent = `Import rejected: ${e.message}. Active topology unchanged.`; } finally { el('external-import').disabled = false; }
+    const format = String(file.name || '').toLowerCase().endsWith('.gns3') ? 'gns3' : el('external-format').value;
+    try { const result = await postApi('/api/topology/import',{format,filename:file.name || '',document:JSON.parse(await file.text())}); if(!panel.hidden) showPreview(result); } catch(e) { el('external-status').textContent = `Import rejected: ${e.message}. Active topology unchanged.`; } finally { el('external-import').disabled = false; }
   });
   el('external-use').addEventListener('click',async () => { if(!preview) return; el('external-use').disabled = true; try { const context = await postApi('/api/topology/use-imported',{revision:preview.revision}); mode(true); bindActive(context); el('topology-selector').value = 'external'; topologySetupReady = context.runtime_supported; updateControlStates(); el('external-status').textContent = `Active imported topology: ${context.document.name}. ${context.capabilities?.reason || 'Check projection compatibility.'}`; } catch(e) { el('external-status').textContent = `Selection failed: ${e.message}`; el('external-use').disabled = false; } });
   el('external-evaluate').addEventListener('click',async () => {

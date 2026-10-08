@@ -1,6 +1,7 @@
 """Import supplied configuration only; never read paths or contact appliances."""
 from copy import deepcopy
 from ipaddress import ip_interface, ip_network
+from firewall.model import normalize_policy
 
 
 def _list(value, label):
@@ -12,25 +13,14 @@ def _list(value, label):
 def _structured(value):
     if not isinstance(value, dict) or "rules" not in value:
         raise ValueError("firewall_configuration must be an object with an explicit rules list.")
-    result = {key: _list(value.get(key, []), key) for key in
-              ("interfaces", "zones", "address_objects", "services", "rules")}
-    for index, rule in enumerate(result["rules"]):
-        rule.setdefault("rule_id", f"rule-{index + 1}")
-        rule.setdefault("priority", index)
-        rule["order"] = index
-        rule["original_source_metadata"] = deepcopy(value["rules"][index])
-        for key in ("action", "protocol"):
-            if isinstance(rule.get(key), str): rule[key] = rule[key].lower()
-        # Missing match fields are not converted into permissive wildcards.
-        for key in ("source_port", "destination_port"):
-            if key not in rule:
-                raise ValueError(f"Rule {rule['rule_id']}: explicit {key} required in GNS3 structured configuration.")
-    default = value.get("default_action", value.get("default_policy"))
-    if isinstance(default, str): default = default.lower()
-    result.update(hostname=value.get("hostname", value.get("name")), default_action=default,
-                  default_policy=default, import_complete=True, evaluation_supported=True)
+    for key in ("interfaces", "zones", "address_objects", "services", "rules"):
+        _list(value.get(key, []), key)
+    result = normalize_policy(value, firewall_id="pending", name=value.get("hostname") or value.get("name") or "pending", require_explicit_ports=True)
+    result.pop("id", None); result.pop("type", None); result.pop("name", None)
+    if not value.get("hostname") and not value.get("name"):
+        result["hostname"] = None
     # References are retained, not expanded into invented rules.
-    if default is None or any(r.get("service") or any(str(r.get(k, "")).startswith("object:") for k in ("source", "destination")) for r in result["rules"]):
+    if result["default_action"] is None or any(r.get("service") or any(str(r.get(k, "")).startswith("object:") for k in ("source", "destination")) for r in result["rules"]):
         result["evaluation_supported"] = False
     return result
 

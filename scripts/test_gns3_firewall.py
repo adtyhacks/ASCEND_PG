@@ -3,7 +3,7 @@ from copy import deepcopy
 import unittest
 
 from scripts import test_external_mvp
-from testbed.external_topology import parse_gns3, classify_gns3
+from testbed.external_topology import parse_native, parse_gns3, classify_gns3
 from firewall.model import evaluate
 
 
@@ -167,6 +167,64 @@ access-group INSIDE in interface inside
         self.assertEqual(upgraded["firewalls"][0]["rules"], original["firewalls"][0]["rules"])
         self.assertEqual(old["firewalls"], [])
         self.assertEqual(normalize_saved_gns3(original)["firewalls"], original["firewalls"])
+
+    def test_custom_topology_uses_same_normalized_firewall_model(self):
+        definition = deepcopy(self.base)
+        definition["case_name"] = "custom_firewall"
+        definition["firewalls"] = [{
+            "id": "fw-custom", "name": "Custom Firewall",
+            "interfaces": [{"id": "inside", "name": "eth0", "ip": "10.0.0.254/24", "zone": "operations"}],
+            "zones": [{"id": "operations", "interfaces": ["inside"]}],
+            "address_objects": [], "services": [], "default_policy": "DENY",
+            "rules": [
+                {"rule_id": "deny-first", "priority": 5, "source": "scada", "destination": "plc2", "protocol": "TCP", "source_port": "any", "destination_port": 502, "action": "DENY"},
+                {"rule_id": "allow-second", "priority": 5, "source": "any", "destination": "any", "protocol": "UDP", "source_port": 1200, "destination_port": 1201, "action": "ALLOW"},
+            ],
+        }]
+        document = parse_native(definition)
+        device = next(item for item in document["network"]["devices"] if item["id"] == "fw-custom")
+        policy = document["firewalls"][0]
+        self.assertEqual(device["type"], "firewall")
+        self.assertEqual(device["interfaces"], policy["interfaces"])
+        self.assertEqual(policy["configuration_origin"], "custom")
+        self.assertEqual(policy["default_action"], "deny")
+        self.assertEqual([rule["order"] for rule in policy["rules"]], [0, 1])
+        self.assertEqual([rule["action"] for rule in policy["rules"]], ["deny", "allow"])
+        self.assertEqual((policy["rules"][0]["source"], policy["rules"][0]["destination"], policy["rules"][0]["protocol"], policy["rules"][0]["destination_port"]), ("scada", "plc2", "tcp", 502))
+        from testbed.topology import Topology
+        restored = Topology.from_dict(Topology.from_exchange(document).to_dict())
+        self.assertEqual(restored.exchange["firewalls"], document["firewalls"])
+        self.assertFalse(evaluate(policy, {"source": "scada", "destination": "plc2", "protocol": "tcp", "source_port": 3333, "destination_port": 502})["allowed"])
+
+    def test_custom_firewall_does_not_invent_missing_rule_ports(self):
+        definition = deepcopy(self.base)
+        definition["firewalls"] = [{"id": "fw-custom", "interfaces": [], "zones": [], "default_action": "deny",
+                                    "rules": [{"source": "any", "destination": "any", "protocol": "tcp", "action": "deny"}]}]
+        with self.assertRaisesRegex(ValueError, "explicit source_port"):
+            parse_native(definition)
+
+    def test_custom_firewall_save_reload_preserves_authoring_definition(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from gui import adapter
+        from testbed import topology
+        definition = deepcopy(self.base)
+        definition["case_name"] = "custom_saved_firewall"
+        definition["firewalls"] = [{"id": "fw-admin", "name": "Admin Firewall", "interfaces": [], "zones": [],
+                                    "address_objects": [], "services": [], "default_action": "allow", "rules": []}]
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(adapter, "DATA", Path(directory)), \
+             patch.object(topology, "SELECTION_PATH", Path(directory) / "selection.json"), \
+             patch.object(topology, "_current_topology", None), \
+             patch.object(topology, "_selection_fingerprint", None):
+            saved = adapter.save_custom_topology(definition)
+            self.assertEqual(saved["configuration"]["definition"], definition)
+            self.assertEqual(saved["configuration"]["node_types"]["firewall"], 1)
+            reloaded = adapter.select_topology("custom_saved_firewall")
+            self.assertEqual(reloaded["configuration"]["definition"], definition)
+            self.assertEqual(reloaded["configuration"]["node_types"]["firewall"], 1)
+            self.assertEqual(topology.get_topology().exchange["firewalls"][0]["configuration_origin"], "custom")
 
 
 if __name__ == "__main__": unittest.main()

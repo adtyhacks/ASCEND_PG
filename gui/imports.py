@@ -66,7 +66,7 @@ def policies(document):
         policy.setdefault("configuration_available", device["id"] in explicit)
         policy.setdefault("interfaces", deepcopy(device.get("interfaces", [])))
         policy["name"] = device.get("name", device["id"])
-        policy["configuration_origin"] = "imported" if policy["configuration_available"] else "configuration_unavailable"
+        policy.setdefault("configuration_origin", "imported" if policy["configuration_available"] else "configuration_unavailable")
         result.append(policy)
     return result
 
@@ -99,6 +99,11 @@ def preview(document):
 
 def import_document(data):
     kind = data.get("format")
+    filename = data.get("filename")
+    if filename is not None and not isinstance(filename, str):
+        raise ValueError("filename must be a string when provided.")
+    if isinstance(filename, str) and filename.lower().endswith(".gns3"):
+        kind = "gns3"
     if kind not in ("ascend", "gns3"):
         raise ValueError("format must be ascend or gns3.")
     if type(data.get("save", True)) is not bool:

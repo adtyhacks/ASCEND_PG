@@ -104,6 +104,7 @@ class Topology:
         self.num_buses = len(nodes)
         self.case_name = case_name
         self.exchange = None
+        self.custom_definition = None
         self.source = "ieee" if case_name in {"case14", "case30"} else "custom"
         self.power_model_json = None
 
@@ -187,7 +188,10 @@ class Topology:
     def to_dict(self) -> dict:
         """Serialize topology to a dict (for JSON storage)."""
         if self.exchange is not None:
-            return {"canonical_schema": "ascend.canonical/v1", "case_name": self.case_name, "source": self.source, "exchange": deepcopy(self.exchange)}
+            result = {"canonical_schema": "ascend.canonical/v1", "case_name": self.case_name, "source": self.source, "exchange": deepcopy(self.exchange)}
+            if self.custom_definition is not None:
+                result["custom_definition"] = deepcopy(self.custom_definition)
+            return result
         return {
             "canonical_schema": "ascend.canonical/v1", "source": self.source, "power_model_json": self.power_model_json,
             "case_name": self.case_name,
@@ -253,7 +257,12 @@ class Topology:
     def from_dict(cls, data: dict) -> "Topology":
         """Load topology from a serialized dict."""
         if not isinstance(data, dict): raise ValueError("Topology must be an object.")
-        if "exchange" in data: return cls.from_exchange(data["exchange"])
+        if "exchange" in data:
+            result = cls.from_exchange(data["exchange"])
+            result.case_name = data.get("case_name", result.case_name)
+            result.source = data.get("source", result.source)
+            result.custom_definition = deepcopy(data.get("custom_definition"))
+            return result
         case_name = data.get("case_name", "custom")
         if case_name in {"case14", "case30"} and not data.get("power_model_json") and "canonical_schema" not in data:
             # Legacy preset selections stored a case name alongside a lossy bus
@@ -359,8 +368,11 @@ class Topology:
                           "pg": sum(g.get("p_mw", 0) for g in gens), "qg": sum(g.get("q_mvar", 0) for g in gens), "pl": sum(l.get("p_mw", 0) for l in loads), "ql": sum(l.get("q_mvar", 0) for l in loads),
                           "ip": device.get("ip"), "plc_type": device.get("plc_type", "generic_modbus"), **({"plc": device["plc"]} if "plc" in device else {})})
         edges = [{"from": ids[line["from_bus"]], "to": ids[line["to_bus"]], **{k: v for k, v in line.items() if k in {"length_km", "r_ohm_per_km", "x_ohm_per_km", "c_nf_per_km", "max_i_ka"}}} for line in document["power_grid"].get("lines", [])]
-        result = cls(nodes, edges, "imported_" + str(document.get("name", "network")))
-        result.exchange = document; result.source = "gns3" if document.get("metadata", {}).get("source") == "gns3" else "ascend"
+        source = document.get("metadata", {}).get("source")
+        case_name = str(document.get("name", "network")) if source == "custom" else "imported_" + str(document.get("name", "network"))
+        result = cls(nodes, edges, case_name)
+        result.exchange = document
+        result.source = source if source in {"gns3", "custom"} else "ascend"
         if result.physical_available:
             cls.from_custom_dict({"case_name": "custom_import_validation", "nodes": [{**n, "ip": get_plc_ip(i), **({"plc": {**n["plc"], "id": f"plc{i+1}", "bus_id": i, "ip": get_plc_ip(i)}} if n.get("plc") else {})} for i, n in enumerate(nodes)], "edges": edges})
         return result

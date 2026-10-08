@@ -860,7 +860,7 @@ async function testCustomTopologyEditorAndGuards() {
   const posted = env.requests.find(r=>r.method==='POST' && r.url==='/api/topology/custom');
   assert.deepEqual(JSON.parse(posted.options.body), {definition});
   await env.click('custom-topology-copy');
-  assert.deepEqual(JSON.parse(env.element('custom-topology-json').value), definition);
+  assert.deepEqual(JSON.parse(env.element('custom-topology-json').value), {...definition,firewalls:[]});
   env.element('custom-topology-json').value = 'invalid JSON';
   await env.click('custom-topology-save');
   assert.match(env.element('topology-selection-status').textContent, /Custom topology failed/);

@@ -106,6 +106,16 @@ in memory without rewriting evidence files.
 
 The firewall selector includes only normalized firewall devices. Endpoint selectors
 use actual active devices, excluding infrastructure switch/firewall/IDS/IPS devices.
+
+## Custom topology policies use the same model
+
+The custom topology builder stores optional `firewalls` beside its electrical
+`nodes` and `edges`. Each entry contains the firewall device identity, interfaces,
+zones, address objects, services, ordered rules and default action. Validation
+promotes that definition into the same `ascend.exchange/v1` firewall collection
+used by GNS3 imports; the GUI evaluator and CORE compiler therefore receive one
+policy shape. Custom rules require explicit source and destination ports (`"any"`
+is explicit), and no rules are generated when the collection is empty.
 No endpoints are invented. The GUI shows name, Imported/Not Available, rule count,
 configured interface count and known/unknown default. Partial imports show a warning.
 Unavailable or unsupported policies disable evaluation, and the backend also rejects

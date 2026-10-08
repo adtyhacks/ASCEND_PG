@@ -275,6 +275,12 @@ tbody tr:last-child td{border-bottom:0}
 .network-preview .topology-canvas{height:clamp(400px,48vh,580px)}
 .builder-row{grid-template-columns:90px repeat(3,minmax(145px,1fr));gap:var(--space-3);padding:var(--space-4)}
 .builder-row label{min-width:0;gap:var(--space-2)}
+.firewall-builder-list{display:grid;gap:var(--space-4)}
+.builder-firewall{padding:var(--space-4);border:1px solid var(--border);border-radius:var(--panel-radius);background:var(--surface-alt)}
+.builder-firewall .builder-row{margin-top:var(--space-2);background:var(--surface)}
+.builder-heading.compact{margin-top:var(--space-4)}
+.builder-heading.compact h5{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.builder-firewall-rule{grid-template-columns:90px repeat(4,minmax(130px,1fr))}
 .topology-builder,.custom-topology-upload-zone,.custom-preview-card,.advanced-json-details{border-radius:var(--panel-radius)}
 .preview-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-3)}
 .preview-grid strong{overflow-wrap:break-word}

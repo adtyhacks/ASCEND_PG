@@ -177,7 +177,7 @@ def get_available_topologies() -> list[dict[str, str]]:
         case = str(source.get("pandapower_case", "")).lower()
         if case not in {"case14", "case30"}:
             try:
-                case = Topology.from_custom_dict(source).case_name
+                case = _custom_topology(source).case_name
             except (ValueError, TypeError):
                 continue
             if path.stem != case:
@@ -201,7 +201,7 @@ def select_topology(case_name: str) -> dict[str, Any]:
         if case in {"case14", "case30"}:
             selected = load_case(case)
         else:
-            selected = Topology.from_custom_dict(json.loads((DATA / "sample_topologies" / f"{case}.json").read_text()))
+            selected = _custom_topology(json.loads((DATA / "sample_topologies" / f"{case}.json").read_text()))
             set_topology(selected)
         _persist_topology_selection(selected)
         return {"configuration": get_network_configuration(), **_topology_view(selected, [])}
@@ -218,11 +218,23 @@ def _persist_topology_selection(selected: Topology) -> None:
     activate_topology(selected)
 
 
+def _custom_topology(definition: dict) -> Topology:
+    """Build a custom source, promoting authored firewalls into the exchange model."""
+    if not isinstance(definition, dict):
+        raise ValueError("Custom topology must be a JSON object.")
+    if "firewalls" not in definition:
+        return Topology.from_custom_dict(definition)
+    from testbed.external_topology import parse_native
+    selected = Topology.from_exchange(parse_native(definition))
+    selected.custom_definition = json.loads(json.dumps(definition))
+    return selected
+
+
 def save_custom_topology(definition: dict) -> dict[str, Any]:
     """Save/select the existing bus model, without operating CORE or a live run."""
     with TOPOLOGY_LOCK:
         _require_topology_editable()
-        selected = Topology.from_custom_dict(definition)
+        selected = _custom_topology(definition)
         selected.to_pandapower()
         view = _topology_view(selected, [])
         directory = DATA / "sample_topologies"
@@ -230,7 +242,7 @@ def save_custom_topology(definition: dict) -> dict[str, Any]:
         path = directory / f"{selected.case_name}.json"
         temporary = path.with_suffix(".tmp")
         try:
-            temporary.write_text(json.dumps(selected.to_dict(), indent=2), encoding="utf-8")
+            temporary.write_text(json.dumps(selected.custom_definition or definition, indent=2), encoding="utf-8")
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -241,7 +253,7 @@ def save_custom_topology(definition: dict) -> dict[str, Any]:
 
 def validate_custom_topology(definition: dict) -> dict[str, Any]:
     """Validate definition against existing topology schema without modifying state."""
-    selected = Topology.from_custom_dict(definition)
+    selected = _custom_topology(definition)
     selected.to_pandapower()
     snapshot = selected.canonical_snapshot()
     return {
@@ -251,7 +263,8 @@ def validate_custom_topology(definition: dict) -> dict[str, Any]:
         "num_edges": len(selected.edges),
         "communication_nodes": len(snapshot["nodes"]),
         "communication_links": sum(bool(link.get("core_link")) for link in snapshot["links"]),
-        "definition": definition,
+        "firewalls": len(selected.exchange.get("firewalls", [])) if selected.exchange else 0,
+        "definition": selected.custom_definition or definition,
     }
 
 
@@ -268,6 +281,7 @@ def get_custom_topology_template() -> dict[str, Any]:
             {"from": 0, "to": 1, "length_km": 1.0, "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.1, "c_nf_per_km": 0.0, "max_i_ka": 0.4},
             {"from": 1, "to": 2, "length_km": 1.0, "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.1, "c_nf_per_km": 0.0, "max_i_ka": 0.4},
         ],
+        "firewalls": [],
     }
 
 
@@ -280,7 +294,7 @@ def get_network_configuration() -> dict[str, Any]:
     return {"topology_version": topology.get("topology_version"), "case_name": topology.get("case_name"),
             "selected_case": topology.get("case_name"), "available_topologies": get_available_topologies(),
             "node_count": len(topology["nodes"]), "edge_count": len(topology["links"]), "node_types": types,
-            "definition": canonical_topology().to_dict() if isinstance(canonical_topology(), Topology) else None}
+            "definition": (canonical_topology().custom_definition or canonical_topology().to_dict()) if isinstance(canonical_topology(), Topology) else None}
 
 
 def _recent_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:

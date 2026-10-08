@@ -29,8 +29,12 @@ const el=id=>elements.get(id), texts=n=>[n.textContent,...n.children.flatMap(tex
   await window.syncTopologySource(); assert.equal(network.children[network.children.length-2].hidden,true); assert.equal(el('external-firewall').value,'');
   await window.showExternalImport(); assert.equal(network.children[2].hidden,true); assert.equal(el('external-preview').hidden,false);
   await el('external-import').listeners.click(); assert.match(el('external-status').textContent,/Select/);
-  el('external-file').files=[{size:50,text:async()=>'{"topology":{}}'}]; el('external-format').value='gns3'; await el('external-import').listeners.click();
+  el('external-file').files=[{name:'fortigate-lab.gns3',size:50,text:async()=>'{"topology":{}}'}]; el('external-format').value='ascend'; el('external-file').listeners.change();
+  assert.equal(el('external-format').value,'gns3','.gns3 files select the GNS3 parser rather than ASCEND exchange validation');
+  await el('external-import').listeners.click();
   assert.equal(calls[0].route,'/api/topology/import'); assert.equal(el('external-evaluate').disabled,true,'Preview must not load firewall context');
+  assert.equal(calls[0].data.format,'gns3');
+  assert.equal(calls[0].data.filename,'fortigate-lab.gns3');
   await el('external-use').listeners.click();
   assert.equal(el('external-firewall').children[1].textContent,'FW-1'); assert.equal(el('external-firewall').children.length,2);
   assert.equal(el('external-source').value,''); assert.equal(el('external-destination').value,'');

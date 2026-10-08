@@ -170,6 +170,7 @@ def parse_native(value):
     # Existing ASCEND custom electrical JSON remains importable as an exchange preview.
     if "schema" not in value and "nodes" in value and "edges" in value:
         from testbed.topology import Topology
+        from firewall.model import normalize_policy
         topo = Topology.from_custom_dict(value)
         snapshot = topo.canonical_snapshot()
         devices = [{"id": n["id"], "name": n["hostname"], "type": "switch" if n["node_type"] == "hub" else n["node_type"], "ip": n.get("ip"), "interfaces": [{"id": "eth0", "name": "eth0"}]} for n in snapshot["nodes"]]
@@ -179,13 +180,34 @@ def parse_native(value):
                 for key in ("plc_type", "attack_capabilities", "detection_capabilities"):
                     if key in node: device[key] = deepcopy(node[key])
                 if node.get("plc"): device["plc"] = {**deepcopy(node["plc"]), "bus_id": str(node["bus_id"])}
+        firewalls = []
+        for source_policy in _objects(value.get("firewalls", []), "firewalls"):
+            if source_policy.get("default_action", source_policy.get("default_policy")) is None:
+                raise ValueError(f"Custom firewall {source_policy.get('id', '<unknown>')}: default_action is required.")
+            policy = normalize_policy(
+                source_policy,
+                configuration_origin="custom",
+                original_source_metadata={"source": "custom_topology", "payload": source_policy},
+                require_explicit_ports=True,
+            )
+            # Object/service references are retained but are not expanded by the
+            # flat first-match evaluator.
+            if any(rule.get("service") or any(str(rule.get(field, "")).startswith("object:") for field in ("source", "destination")) for rule in policy["rules"]):
+                policy["evaluation_supported"] = False
+            if any(device["id"] == policy["id"] for device in devices):
+                raise ValueError(f"Firewall {policy['id']}: device ID conflicts with the generated custom network.")
+            devices.append({"id": policy["id"], "name": policy["name"], "type": "firewall",
+                            "normalized_type": "firewall", "interfaces": deepcopy(policy["interfaces"]),
+                            "metadata": {"source": "custom_topology"}})
+            firewalls.append(policy)
         value = {"schema": SCHEMA, "name": topo.case_name, "network": {"devices": devices},
                  "power_grid": {"buses": [{"id": str(n["bus_id"]), "type": n["type"], "vn_kv": n["vn_kv"], "voltage_pu": n["voltage"], "voltage_min_pu": n.get("voltage_min_pu", 0.9), "voltage_max_pu": n.get("voltage_max_pu", 1.1)} for n in topo.nodes],
                                 "lines": [{"id": f"line-{i}", "from_bus": str(a), "to_bus": str(b), **{k: v for k, v in topo.edge_models[i].items() if k not in {"from", "to"}}} for i, (a, b) in enumerate(topo.edges)],
                                 "generators": [{"id": f"generator-{n['bus_id']}", "bus": str(n["bus_id"]), "p_mw": n["pg"], "q_mvar": n["qg"]} for n in topo.nodes if n["type"] in {"pv", "slack"}],
                                 "loads": [{"id": f"load-{n['bus_id']}", "bus": str(n["bus_id"]), "p_mw": n["pl"], "q_mvar": n["ql"]} for n in topo.nodes if n["pl"] or n["ql"]]},
                  "links": [{"id": f"link-{i}", "endpoints": [{"device": e["from"], "interface": "eth0"}, {"device": e["to"], "interface": "eth0"}]} for i, e in enumerate(snapshot["links"]) if e["core_link"]],
-                 "mapping": [{"bus": str(n["bus_id"]), "device": f"plc{n['bus_id'] + 1}"} for n in topo.nodes], "firewalls": []}
+                 "mapping": [{"bus": str(n["bus_id"]), "device": f"plc{n['bus_id'] + 1}"} for n in topo.nodes], "firewalls": firewalls,
+                 "metadata": {"source": "custom", "warnings": []}}
     return validate(deepcopy(value))
 
 

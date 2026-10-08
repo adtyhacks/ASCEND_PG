@@ -1,5 +1,65 @@
-"""Deterministic first-match firewall policy with explicit default action."""
+"""Canonical firewall policy normalization and deterministic evaluation."""
+from copy import deepcopy
 from ipaddress import ip_address, ip_network, ip_interface
+
+
+def normalize_policy(value, *, firewall_id=None, name=None, configuration_origin=None,
+                     original_source_metadata=None, require_explicit_ports=True):
+    """Normalize authored/imported rules into the one ASCEND firewall model.
+
+    Callers remain responsible for deciding whether configuration is genuinely
+    available. This function never creates policy rules.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("Firewall policy must be an object.")
+    policy = deepcopy(value)
+    if firewall_id is not None:
+        policy.setdefault("id", firewall_id)
+    if not isinstance(policy.get("id"), str) or not policy["id"].strip():
+        raise ValueError("Firewall policy id must be a nonempty string.")
+    policy.setdefault("type", "firewall")
+    policy.setdefault("name", name or policy["id"])
+    policy.setdefault("hostname", policy["name"])
+    for field in ("interfaces", "zones", "address_objects", "services"):
+        policy[field] = deepcopy(policy.get(field, []))
+    rules = policy.get("rules")
+    if not isinstance(rules, list):
+        raise ValueError("Firewall rules must be a list.")
+    normalized = []
+    for index, source_rule in enumerate(rules):
+        if not isinstance(source_rule, dict):
+            raise ValueError("Each firewall rule must be an object.")
+        rule = deepcopy(source_rule)
+        rule.setdefault("rule_id", f"rule-{index + 1}")
+        rule.setdefault("priority", index)
+        rule["order"] = index
+        for field in ("action", "protocol"):
+            if isinstance(rule.get(field), str):
+                rule[field] = rule[field].lower()
+        for field in ("source_port", "destination_port"):
+            if field not in rule:
+                if require_explicit_ports:
+                    raise ValueError(f"Rule {rule['rule_id']}: explicit {field} required.")
+                rule[field] = "any"
+        rule.setdefault("original_source_metadata", deepcopy(source_rule))
+        normalized.append(rule)
+    policy["rules"] = normalized
+    default = policy.get("default_action", policy.get("default_policy"))
+    if isinstance(default, str):
+        default = default.lower()
+    policy["default_action"] = default
+    policy["default_policy"] = default
+    policy.setdefault("configuration_available", True)
+    policy.setdefault("import_complete", True)
+    policy.setdefault("evaluation_supported", True)
+    if default is None:
+        policy["evaluation_supported"] = False
+    if configuration_origin is not None:
+        policy["configuration_origin"] = configuration_origin
+    if original_source_metadata is not None:
+        policy["original_source_metadata"] = deepcopy(original_source_metadata)
+    validate_policy(policy)
+    return policy
 
 
 def validate_policy(policy):
