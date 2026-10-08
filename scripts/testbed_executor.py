@@ -522,7 +522,8 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
         return {
             "status": AttackStatus.UNSUPPORTED.value,
             "success": False,
-            "detected": False,
+            "detected": None,
+            "detection_evaluated": False,
             "evaded": False,
             "technique_id": technique_id,
             "step_name": "unknown",
@@ -560,6 +561,7 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
     ml_avail = False
     ml_err = None
     detection_method = "suricata"
+    detection_evaluated = False
 
     try:
         if detector and use_ml:
@@ -567,6 +569,7 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
                 timing["start"], timing["end"], timing["detect_sids"]
             )
             detected = verdict["combined_detected"]
+            detection_evaluated = verdict.get("detection_evaluated", detected is not None)
             alert_count = verdict["suricata_alert_count"]
             alert_signatures = verdict["suricata_signatures"]
             ml_detected = verdict["ml_detected"]
@@ -581,7 +584,9 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
                 suricata_alerts = find_alerts_for_window(
                     timing["detect_sids"], timing["start"], timing["end"]
                 )
-            detected = len(suricata_alerts) > 0
+            from defense.hybrid_detector import suricata_window_available
+            detection_evaluated = bool(suricata_alerts) or (use_suricata and bool(timing["detect_sids"]) and suricata_window_available(timing["start"], timing["end"]))
+            detected = True if suricata_alerts else False if detection_evaluated else None
             alert_count = len(suricata_alerts)
             alert_signatures = [
                 a.get("alert", {}).get("signature", "unknown") for a in suricata_alerts
@@ -602,18 +607,19 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
     if timing["status"] == AttackStatus.TIMEOUT:
         final_status = AttackStatus.TIMEOUT
         evaded = False
-        detected = False
     elif not execution_success:
         final_status = AttackStatus.FAILED
         evaded = False
-        detected = False
     elif detected:
         final_status = AttackStatus.DETECTED
         evaded = False
-    else:
+    elif detected is False:
         # TRUE EVASION: executed successfully AND 0 alerts detected
         final_status = AttackStatus.UNDETECTED
         evaded = True
+    else:
+        final_status = AttackStatus.SUCCESS
+        evaded = False
 
     from metrics.finding_evidence import retain_evidence, passive_scada, attack_log_records
     finding_evidence = retain_evidence(timing["name"], timing.get("stdout"), timing.get("stderr"),
@@ -624,6 +630,7 @@ def execute_single_attack(technique_id: str, detection_mode="hybrid",
         "finding_evidence": finding_evidence,
         "success": execution_success,
         "detected": detected,
+        "detection_evaluated": detection_evaluated,
         "evaded": evaded,
         "technique_id": technique_id,
         "step_name": timing["name"],

@@ -77,7 +77,7 @@ def main():
             html = reporting.report_path(s, r).read_text()
             assert "<script>" not in html and "&lt;script&gt;" in html and "packet_count" in html
             records = run_store.report_events(run_store.read_events(s, r, "security"))
-            assert records[0]["Severity"] == "HIGH" and records[0]["Detector Confidence"] == .91
+            assert records[0]["Severity"] is None and records[0]["Detector Confidence"] == .91
             print("GUI report integration: PASS")
     finally:
         run_store.RUNS = original

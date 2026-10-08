@@ -159,7 +159,16 @@ def perform(c, request):
             live = c.get_session(created.id)
             if live.state != w.SessionState.RUNTIME:
                 raise RuntimeError(f"Unexpected CORE state: {live.state.name}")
-            return {"session_id": live.id, "state": live.state.name, "nodes": len(live.nodes)}
+            from data.environment import rules_from_file
+            # Service validation checks its PID. A configured file alone is not active.
+            ids = next((n for n in live.nodes.values() if n.name == "ids_monitor"), None)
+            active_rules = []
+            if ids is not None:
+                code, _ = c.node_command(live.id, ids.id, "pgrep -x suricata", shell=True)
+                if code == 0:
+                    active_rules = rules_from_file(ROOT / "detection/suricata/modbus_rules.rules")
+            return {"session_id": live.id, "state": live.state.name, "nodes": len(live.nodes),
+                    "active_suricata_rules": active_rules}
         except Exception as exc:
             try:
                 if not c.delete_session(created.id):

@@ -72,6 +72,20 @@ def _find_suricata_alerts(sids, start, end):
     return matches
 
 
+def suricata_window_available(start, end):
+    """A stale/missing EVE file cannot establish a negative detection."""
+    try:
+        with SURICATA_EVE_LOG.open(encoding="utf-8") as stream:
+            for line in stream:
+                entry = json.loads(line)
+                timestamp = _parse_suricata_ts(entry["timestamp"]).timestamp()
+                if start.timestamp() <= timestamp <= end.timestamp() + DETECTION_BUFFER_SEC:
+                    return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return False
+
+
 class HybridDetector:
     """Orchestrates Suricata + ML detection layers."""
 
@@ -144,6 +158,13 @@ class HybridDetector:
             combined = False
             method = "undetected"
 
+        ml_evaluated = bool(ml_result and ml_result.get("available", not ml_error) and not ml_error)
+        suricata_evaluated = bool(suricata_alerts) or (self.use_suricata and bool(detect_sids) and suricata_window_available(step_start, step_end))
+        evaluated = ml_evaluated or suricata_evaluated
+        if not combined and not evaluated:
+            combined = None
+            method = "unavailable"
+
         return {
             "suricata_detected": suricata_detected,
             "suricata_alert_count": len(suricata_alerts),
@@ -157,5 +178,6 @@ class HybridDetector:
             "ml_available": self.is_ml_available(),
             "ml_error": ml_error,
             "combined_detected": combined,
+            "detection_evaluated": evaluated,
             "detection_method": method,
         }

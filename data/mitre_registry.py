@@ -25,12 +25,12 @@ TECHNIQUES: List[Dict[str, Any]] = [
         "index": 0,
         "id": "T0886",
         "name": "Remote Services",
-        "tactic": "Initial Access",
+        "tactic": "Initial Access, Lateral Movement",
         "stage": 0,
         "default_step": "remote_services",
         "script": "attacks/remote_services.py",
         "detect_sids": [9000026],
-        "description": "Unauthorized TCP connect to open Modbus port 502",
+        "description": "SSH access to SCADA followed by Modbus commands through the pivot",
         "mock_prob": 0.50,
     },
     {
@@ -77,7 +77,7 @@ TECHNIQUES: List[Dict[str, Any]] = [
         "index": 4,
         "id": "T0830",
         "name": "Adversary-in-the-Middle",
-        "tactic": "Lateral Movement",
+        "tactic": "Collection",
         "stage": 1,
         "default_step": "mitm_proxy",
         "script": "attacks/mitm_proxy.py",
@@ -175,7 +175,7 @@ TECHNIQUES: List[Dict[str, Any]] = [
     {
         "index": 12,
         "id": "T0836",
-        "name": "Modify Parameter (FDI)",
+        "name": "Modify Parameter",
         "tactic": "Impair Process Control",
         "stage": 2,
         "default_step": "fdi_attack",
@@ -189,7 +189,7 @@ TECHNIQUES: List[Dict[str, Any]] = [
         "index": 13,
         "id": "T0835",
         "name": "Manipulate I/O Image",
-        "tactic": "Impair Process Control",
+        "tactic": "Inhibit Response Function",
         "stage": 2,
         "default_step": "manipulate_io_image",
         "script": "attacks/manipulate_io_image.py",
@@ -212,6 +212,8 @@ TECHNIQUES: List[Dict[str, Any]] = [
     {
         "index": 15,
         "id": "T0855",
+        "replacement_id": "T1692.001",
+        "catalog_status": "Historical technique ID; replaced by Unauthorized Message: Command Message",
         "name": "Unauthorized Command Message",
         "tactic": "Impair Process Control",
         "stage": 2,
@@ -227,7 +229,7 @@ TECHNIQUES: List[Dict[str, Any]] = [
     {
         "index": 16,
         "id": "T0832",
-        "name": "Manipulation of View (Replay)",
+        "name": "Manipulation of View",
         "tactic": "Impact",
         "stage": 3,
         "default_step": "replay_attack",
@@ -262,6 +264,14 @@ for t in TECHNIQUES:
 
 def get_technique_by_id(tech_id: str) -> Optional[Dict[str, Any]]:
     return BY_ID.get(tech_id)
+
+
+def get_display_technique(tech_id):
+    """Display historical IDs faithfully; execution alias preserves RL index 3."""
+    if tech_id == "T0842":
+        return {"id": "T0842", "name": "Network Sniffing", "tactic": "Discovery",
+                "detect_sids": [], "default_step": "passive_sniffing"}
+    return get_technique_by_id(tech_id)
 
 def get_technique_by_index(idx: int) -> Optional[Dict[str, Any]]:
     return BY_INDEX.get(idx)

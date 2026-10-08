@@ -31,30 +31,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "detection"))
 
 # 18 MITRE ATT&CK for ICS techniques organized by tactical stage
-MITRE_TECHNIQUES = [
-    # Stage 0: Initial Access & Discovery
-    {"id": "T0886", "name": "Remote Services", "stage": 0, "mock_prob": 0.50},
-    {"id": "T0846", "name": "Remote System Discovery", "stage": 0, "mock_prob": 0.70},
-    {"id": "T0888", "name": "Remote System Info Discovery", "stage": 0, "mock_prob": 0.45},
-    {"id": "T0842", "name": "Network Sniffing", "stage": 0, "mock_prob": 0.25},
-    # Stage 1: Lateral Movement & Collection & C2
-    {"id": "T0830", "name": "Adversary-in-the-Middle", "stage": 1, "mock_prob": 0.55},
-    {"id": "T0801", "name": "Monitor Process State", "stage": 1, "mock_prob": 0.35},
-    {"id": "T0802", "name": "Automated Collection", "stage": 1, "mock_prob": 0.60},
-    {"id": "T0869", "name": "Standard App Layer Protocol", "stage": 1, "mock_prob": 0.40},
-    # Stage 2: Inhibit Response & Impair Process Control
-    {"id": "T0814", "name": "Denial of Service", "stage": 2, "mock_prob": 0.85},
-    {"id": "T0878", "name": "Alarm Suppression", "stage": 2, "mock_prob": 0.60},
-    {"id": "T0816", "name": "Device Restart/Shutdown", "stage": 2, "mock_prob": 0.75},
-    {"id": "T0881", "name": "Service Stop", "stage": 2, "mock_prob": 0.70},
-    {"id": "T0836", "name": "Modify Parameter (FDI)", "stage": 2, "mock_prob": 0.65},
-    {"id": "T0835", "name": "Manipulate I/O Image", "stage": 2, "mock_prob": 0.65},
-    {"id": "T0806", "name": "Brute Force I/O", "stage": 2, "mock_prob": 0.80},
-    {"id": "T0855", "name": "Command Injection", "stage": 2, "mock_prob": 0.75},
-    # Stage 3: Impact
-    {"id": "T0832", "name": "Manipulation of View (Replay)", "stage": 3, "mock_prob": 0.40},
-    {"id": "T0815", "name": "Denial of View", "stage": 3, "mock_prob": 0.70},
-]
+from data.mitre_registry import get_rl_techniques
+MITRE_TECHNIQUES = get_rl_techniques()
 
 TECHNIQUE_IDS = [t["id"] for t in MITRE_TECHNIQUES]
 NUM_TECHNIQUES = len(TECHNIQUES := MITRE_TECHNIQUES)
@@ -408,6 +386,9 @@ class AttackStrategyEnv(gym.Env):
         if status in ("FAILED", "EXECUTION_ERROR", "INVALID", "UNSUPPORTED"):
             return reward - 2.5
 
+        if detected is None:
+            return reward  # unavailable evaluation cannot establish evasion/progress
+
         if detected:
             reward -= 2.5 * max(detection_conf, 0.5)
         else:
@@ -495,30 +476,4 @@ class AttackStrategyEnv(gym.Env):
         return self._get_obs(), float(reward), terminated, truncated, info
 
 
-class PlateauTracker:
-    """
-    Tracks consecutive attack–defend cycles to detect when defense visibility plateaus
-    (i.e., when no new attack variants or stages bypass defenses over N attempts).
-    """
-
-    def __init__(self, patience: int = 5, min_evasion_gain: float = 0.02):
-        self.patience = patience
-        self.min_evasion_gain = min_evasion_gain
-        self.best_evasion_rate = 0.0
-        self.stagnant_count = 0
-        self.history = []
-
-    def update(self, episode_evasion_rate: float) -> bool:
-        """
-        Updates the tracker with the latest episode evasion rate.
-        Returns True if the detection rate has plateaued, False otherwise.
-        """
-        self.history.append(episode_evasion_rate)
-        if episode_evasion_rate > (self.best_evasion_rate + self.min_evasion_gain):
-            self.best_evasion_rate = episode_evasion_rate
-            self.stagnant_count = 0
-        else:
-            self.stagnant_count += 1
-
-        is_plateaued = self.stagnant_count >= self.patience
-        return is_plateaued
+from metrics.dvs_score import PlateauTracker

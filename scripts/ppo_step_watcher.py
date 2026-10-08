@@ -142,6 +142,7 @@ def record_attack_started(pending: Dict[str, Any], generation_id: str) -> dict:
         attack_stage=pending.get("attack_stage", 0), campaign_id=pending["campaign_id"],
         generation_id=generation_id, correlation_id=pending["correlation_id"],
         evidence={"step_name": pending["step_name"], "target_ip": pending["target_ip"],
+                  "episode_id": pending.get("episode_id"),
                   "register_address": pending.get("register_address"),
                   "value_magnitude": pending.get("value_magnitude")},
     )
@@ -325,7 +326,8 @@ def main():
                     result = {
                         "status": AttackStatus.EXECUTION_ERROR.value,
                         "success": False,
-                        "detected": False,
+                        "detected": None,
+                        "detection_evaluated": False,
                         "evaded": False,
                         "error": str(exc),
                         "technique_id": technique_id,

@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 from testbed import run_store
 from reports.pentest_report import generate_report, render_html
 from gui.identity_presentation import aliases_for, saved_run_metadata
+from data.environment import campaign_environment
 
 
 def saved_runs():
@@ -43,7 +44,8 @@ def summary(scenario_id=None, run_id=None):
     records = run_store.report_events(security)
     # Reuse the report's finding construction over ALL normalized records.
     # This builds a model in memory only: no HTML generation or evidence writes.
-    report = generate_report(records, {"run_metadata": run, "display_identity": registry.run_identity(run)})
+    report = generate_report(records, {"run_metadata": run, "display_identity": registry.run_identity(run),
+                                      "environment": campaign_environment(run)})
     findings = report["findings"]
     finding_summary = {
         "total_findings": report["risk_summary"]["total"],
@@ -77,8 +79,10 @@ def summary(scenario_id=None, run_id=None):
         } for finding in findings],
         "defense": {
             "detected": finding_summary["detected"],
+            "missed": sum(finding["detected"] is False for finding in findings),
+            "unavailable": sum(finding["detected"] is None for finding in findings),
             "total": total,
-            "detection_rate": (finding_summary["detected"] / total) if total else None,
+            "detection_rate": (finding_summary["detected"] / sum(f["detected"] is not None for f in findings)) if any(f["detected"] is not None for f in findings) else None,
             "methods": risk.get("detection_methods", {}),
         },
         "dvs": {
@@ -88,6 +92,7 @@ def summary(scenario_id=None, run_id=None):
             "campaign_available": report["dvs"].get("score") is not None,
             "campaign_score": report["dvs"].get("score"),
             "campaign_rating": report["dvs"].get("rating"),
+            "campaign_reason": report["dvs"].get("reason"),
         },
     }
     path = report_path(run["scenario_id"], run["run_id"])
@@ -117,6 +122,7 @@ def create_report(scenario_id, run_id):
             raise ValueError("Evidence identity does not match the selected run.")
     report = generate_report(records, {"scenario_id": scenario_id, "run_id": run_id,
         "run_metadata": run, "display_identity": registry.run_identity(run),
+        "environment": campaign_environment(run),
         "security_events": [registry.decorate_event(event) for event in security], "network_events": network,
         "network_evidence_note": "Run-scoped observations; only matching correlation IDs establish step association. Background telemetry is excluded."})
     html = render_html(report)

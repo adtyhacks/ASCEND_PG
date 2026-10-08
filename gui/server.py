@@ -22,7 +22,10 @@ class GuiHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
         try:
-            if parsed.path == "/api/dashboard":
+            if parsed.path == "/api/sample-environment":
+                from data.environment import sample_environment
+                payload = sample_environment()
+            elif parsed.path == "/api/dashboard":
                 payload = {"system": adapter.get_system_status(), "active_run": adapter.get_active_run()}
             elif parsed.path == "/api/active-run-integrity":
                 payload = adapter.get_displayable_active_run()

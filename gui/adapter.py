@@ -487,7 +487,8 @@ def get_live_battle_snapshot(limit: int = 100, visual_signature: str | None = No
     network_events = get_recent_network_events(run["scenario_id"], run["run_id"], limit)
     security_events = get_recent_security_events(run["scenario_id"], run["run_id"], limit)
     registry = aliases_for(saved_run_metadata(), security_events)
-    presented_security = [registry.decorate_event(event) for event in security_events]
+    from defense.detection_result import decorate_event
+    presented_security = [decorate_event(registry.decorate_event(event)) for event in security_events]
     campaign = run.get("campaign_request") or {}
     campaign_display = {
         "Assessment": registry.assessment(run.get("run_id")),

@@ -61,7 +61,7 @@ class DvsReports(unittest.TestCase):
                 self.assertIsNone(finding["finding_dvs"])
                 self.assertIsNone(finding["verified_impact"])
                 self.assertEqual(finding["id"], "ASCEND-PG-001")
-                self.assertEqual(finding["detected"], detected)
+                self.assertIs(finding["detected"], True if detected else None)
                 self.assertEqual(source, original)
 
     def test_failed_and_timeout_get_no_impact_credit(self):

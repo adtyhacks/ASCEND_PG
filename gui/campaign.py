@@ -86,13 +86,27 @@ class CampaignController:
             runtime = self._runtime()
             if str(runtime["id"]) != str(result["session_id"]):
                 raise CampaignError("core_identity_invalid", "CORE did not persist the created owned session identity.", 503)
+            # Only a started CORE service can establish a runtime rule snapshot.
+            active_rules = result.get("active_suricata_rules", [])
             updated = run_store.update_run(run["scenario_id"], run["run_id"], core_session_id=result["session_id"], generation_id=runtime.get("generation_id", runtime.get("token")), lifecycle_status="RUNNING")
+            if active_rules:
+                run_store.update_run(run["scenario_id"], run["run_id"], active_suricata_rules=active_rules)
             return {**result, "scenario_id": updated["scenario_id"], "run_id": updated["run_id"], "generation_id": updated["generation_id"]}
 
     def stop_core(self) -> dict[str, Any]:
         """Delegate ownership-scoped cleanup to the existing CORE helper."""
         with self._state_lock:
             result = self.request("stop")
+            from metrics.campaign_evaluation import persist_episode
+            for session in self._sessions.values():
+                identity = session.get("run_identity")
+                if identity and session.get("evaluation_steps"):
+                    pending = session.get("pending_action") or {}
+                    if pending.get("request", {}).get("correlation_id") != session.get("last_completed_correlation_id"):
+                        run_store.update_run(identity["scenario_id"], identity["run_id"], dvs_evaluation=None,
+                            dvs_unavailable_reason="Runtime stopped while an attack result was pending; episode statistics are incomplete.")
+                    else:
+                        persist_episode(identity, session, "runtime_stop")
             # Retain only the inference model across CORE generations.
             self._sessions.clear()
             self._full_runs.clear()
@@ -195,7 +209,8 @@ class CampaignController:
         timings["environment_reset_seconds"] = time.monotonic() - stage
         model = self._cached_ppo_model(timings)
         stage = time.monotonic()
-        session = {"env": env, "model": model, "observation": observation, "current_step": 0}
+        session = {"env": env, "model": model, "observation": observation, "current_step": 0,
+                   "episode_id": uuid.uuid4().hex, "evaluation_steps": [], "run_identity": run}
         session["initialization_timings"] = timings
         timings["final_campaign_session_initialization_seconds"] = time.monotonic() - stage
         timings["total_seconds"] = time.monotonic() - started
@@ -212,6 +227,10 @@ class CampaignController:
                 raise CampaignError("campaign_already_running", "A campaign step is already requested.")
             # No mutable campaign state is published until all initialization succeeds.
             session = self._new_session(run)
+            previous = self._sessions.get(run["run_id"])
+            if previous:
+                from metrics.campaign_evaluation import persist_episode
+                persist_episode(run, previous, "episode_reset")
             self._sessions.clear()
             self._sessions[run["run_id"]] = session
             self._initialization_timings.clear()
@@ -263,9 +282,12 @@ class CampaignController:
                 self._initialization_timings.clear()
                 self._initialization_timings[run["run_id"]] = dict(session.get("initialization_timings", {}))
             step = self._select_step(session); target_bus = step["target_bus"]
+            if session.get("evaluation_saved"):
+                raise CampaignError("episode_complete", "Start a new PPO campaign episode before requesting another step.")
             action = step.pop("_action")
             topology = self.topology(); target_ip, target_node = self._resolve_target(topology, target_bus)
             request = {**step, "target_ip": target_ip, "target_node": target_node,
+                       "episode_id": session.setdefault("episode_id", uuid.uuid4().hex),
                        "generation_id": runtime.get("generation_id", runtime.get("token")), "campaign_id": run["run_id"],
                        "run_id": run["run_id"], "scenario_id": run["scenario_id"],
                        "correlation_id": f"step-{session['current_step'] + 1}-{uuid.uuid4().hex[:12]}", "timestamp": _now(),
@@ -284,9 +306,12 @@ class CampaignController:
                 raise CampaignError("campaign_action_missing", "The completed result has no matching in-memory PPO action.")
         events = run_store.read_events(run["scenario_id"], run["run_id"], "security")
         if not any(event.get("event_type") == "attack_finished" and event.get("correlation_id") == correlation_id for event in events):
-            detected = bool(result.get("detected", False))
+            from defense.detection_result import detection_result
+            detected = detection_result(result)
             evidence = {"step_name": request["step_name"], "return_status": result.get("status", "FAILED"),
                         "detection_method": result.get("detection_method", "none"), "ml_confidence": float(result.get("ml_confidence", 0.0))}
+            evidence.update({key: result.get(key) for key in ("detected", "detection_evaluated", "ml_detected", "ml_available", "ml_error", "success", "evaded")})
+            evidence["episode_id"] = request.get("episode_id")
             evidence["finding_evidence"] = deepcopy(result.get("finding_evidence"))
             common = {"mitre_technique": request["technique_id"], "attack_stage": request.get("attack_stage", 0),
                       "campaign_id": request["campaign_id"], "generation_id": request["generation_id"],
@@ -299,7 +324,8 @@ class CampaignController:
             # env.step() would independently evaluate an attack and must not be used.
             env = session["env"]
             action = pending_action["action"]
-            detected = bool(result.get("detected", False))
+            from defense.detection_result import detection_result
+            detected = detection_result(result)
             confidence = float(result.get("ml_confidence", 0.0))
             alert_count = int(result.get("alert_count", 0))
             detector_conf = (confidence if confidence > 0 else min(1.0, 0.3 + alert_count * 0.05)
@@ -320,9 +346,13 @@ class CampaignController:
                 detected=detected, detection_conf=detector_conf,
                 tech_stage=request["attack_stage"], target_bus=request["target_bus"])
             session["reward"] = session.get("reward", 0.0) + float(reward)
+            session.setdefault("evaluation_steps", []).append({**result, "attack_stage": request["attack_stage"]})
             session["observation"] = env._get_obs()
             session["current_step"] += 1
             session["last_completed_correlation_id"] = correlation_id
+            if len(getattr(env, "_completed_stages", set())) == 4:
+                from metrics.campaign_evaluation import persist_episode
+                persist_episode(run, session, "campaign_complete")
         completed = {**request, "state": "COMPLETED", "completed_at": _now(), "latest_step_result": result,
                      "current_step": session["current_step"] if session else request.get("current_step", 0) + 1}
         run_store.update_run(run["scenario_id"], run["run_id"], campaign_request=completed)
@@ -393,6 +423,7 @@ class CampaignController:
             self._full_runs.add(run["run_id"])
 
         def worker() -> None:
+            episode_end = None
             try:
                 for _ in range(max_steps):
                     self.next_step()
@@ -401,6 +432,9 @@ class CampaignController:
                         state = self.status()
                         if state["state"] == "COMPLETED":
                             if (state.get("latest_step_result") or {}).get("success") is not True:
+                                episode_end = "execution_stop"
+                                return
+                            if self._sessions.get(run["run_id"], {}).get("evaluation_saved"):
                                 return
                             break
                         if state.get("error"):
@@ -408,8 +442,16 @@ class CampaignController:
                         time.sleep(0.5)
                     else:
                         return
+                episode_end = "step_limit"
             finally:
                 with self._state_lock:
+                    from metrics.campaign_evaluation import persist_episode
+                    session = self._sessions.get(run["run_id"])
+                    if session and episode_end:
+                        persist_episode(run, session, episode_end)
+                    elif session and not session.get("evaluation_saved"):
+                        run_store.update_run(run["scenario_id"], run["run_id"],
+                            dvs_evaluation=None, dvs_unavailable_reason="Episode interrupted before an authoritative final attack result was received.")
                     self._full_runs.discard(run["run_id"])
 
         threading.Thread(target=worker, name=f"ascend-gui-{run['run_id']}", daemon=True).start()

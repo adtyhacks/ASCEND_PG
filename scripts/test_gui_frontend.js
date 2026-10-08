@@ -212,6 +212,7 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
         telemetry: [{timestamp: '2026-01-01 00:00:02', src_bus: 12, dst_bus: 11, packet_size_bytes: 280, voltage_pu: 0.9963}]
       }
     });
+    if (url === '/api/sample-environment') return response({environment_mode:'sample',label:'SAMPLE',topology:topology.topology,pyvis_html:'<html>Sample IEEE-14</html>',topology_summary:{plcs:14,hosts:17,protocol:'Modbus/TCP (502)'},rules:[{sid:9000007,name:'Sample bundled Coil Write',technique:'T0816'}],security_events:[{event_type:'attack_finished',sample:true,mitre_technique:'T0816',technique_name:'Device Restart/Shutdown',target_node:'plc1',technical_details:{Framework:'MITRE ATT&CK for ICS','Technique ID':'T0816',Technique:'Device Restart/Shutdown',Tactic:'Inhibit Response Function','Detection Result':'Detection Not Available / Not Evaluated'}}]});
     if (url === '/api/attack-catalogue') return response(defaultAttackCatalogue);
     if (url === '/api/network-configuration') return response({node_count: 2, edge_count: 0, case_name: 'case14', selected_case: 'case14',
       available_topologies: [{case_name: 'case14', name: 'IEEE 14 Bus'}, {case_name: 'case30', name: 'IEEE 30 Bus'}],
@@ -242,6 +243,8 @@ async function harness(initial = snapshot(), {bootstrapError = null} = {}) {
   if (bootstrapError) enqueue(diagnosticsPath, null, {error: bootstrapError});
   vm.runInContext(appSource, context, {filename: 'gui/web/app.js'});
   await flush();
+  // Runtime-control tests explicitly initialize their separate diagnostics.
+  await vm.runInContext('loadStatus()', context);
   return {
     requests, enqueue, response, intervals, location,
     hasElement: id => Boolean(document.getElementById(id)),
@@ -487,62 +490,22 @@ async function testCanonicalXmlContract() {
 }
 
 async function testProfessionalOverviewUsesExistingData() {
-  const system = snapshot('RUNTIME','IDLE','generation-professional');
-  system.active_run.run.campaign_request = {state:'COMPLETED'}; // only a step completion
-  const original = JSON.stringify(system);
-  const env = await harness(system);
-  const events = [
-    {event_type:'attack_finished',target_node:'plc14',mitre_technique:'T0881',timestamp:'2026-10-06T15:11:00Z',
-      correlation_id:'hidden-correlation',evidence:{step_name:'service_stop',return_status:'FAILED'}},
-    {event_type:'detection',target_node:'plc3',mitre_technique:'T0835',timestamp:'2026-10-06T15:12:00Z',
-      evidence:{step_name:'manipulate_io_image',detection_method:'ml'}}
-  ];
-  const eventOriginal = JSON.stringify(events);
-  const reportUrl = '/api/report-summary?scenario_id=scenario-fixture&run_id=run-generation-professional';
-  env.enqueue('/api/live-battle?limit=10', {active_run:system.active_run,display_identity:system.display_identity,security_events:events});
-  env.enqueue(reportUrl, {run_id:system.active_run.run.run_id,scenario_id:'scenario-fixture',
-    finding_summary:{total_findings:19,detected:11,failed:7,timeout:1,techniques:8,targets:14},
-    assessment_overview:{severity_distribution:{Critical:0,High:8,Medium:5,Low:6,Informational:0},
-      attacks:[{finding_id:'ASCEND-PG-001',attack_step:'Attack Step 1',attack_event:'Attack Event 1',title:'Manipulate I/O Image',
-        description:'Attempts to alter information exchanged with an industrial controller.',technique_id:'T0835',target:'plc3',
-        result:'SUCCESS',detected:true,detection_method:'ml',severity:'High',finding_dvs:15}],
-      defense:{detected:11,total:19,detection_rate:11/19,methods:{ml:6,suricata:3,both:2,none:8}},
-      dvs:{finding_available:true,finding_assessed:19,finding_total:19,campaign_available:true,campaign_score:64.25,campaign_rating:'MODERATE'}}});
+  assert.ok(htmlSource.indexOf('id="overview-activity"') < htmlSource.indexOf('id="overview-results-section"'), 'sample event log is outside the hidden campaign results section');
+  const env = await harness(snapshot('RUNTIME','IDLE','generation-professional'));
+  const before = env.requests.length;
   await env.call('loadOverview');
-  assert.equal(env.element('overview-results-section').hasAttribute('hidden'),false);
-  assert.equal(env.element('overview-total-findings').textContent,19);
-  assert.equal(env.element('overview-total-detected').textContent,11);
-  assert.equal(env.element('overview-total-failed').textContent,7);
-  assert.equal(env.element('overview-total-timeout').textContent,1);
-  assert.equal(env.element('overview-finding-dvs').textContent,'Available for 19 findings');
-  assert.equal(env.element('overview-campaign-dvs').textContent,'64.3 / 100 (MODERATE)');
-  assert.equal(env.element('overview-severity-total').textContent,18);
-  assert.match(env.element('overview-severity-legend').innerHTML,/High.*11.*Medium.*4.*Low.*3/);
-  assert.match(env.element('overview-attack-catalogue').innerHTML,/Manipulate I\/O Image.*T0835.*Impair Process Control/s);
-  assert.equal(env.element('overview-defense-detected').textContent,'11 of 19');
-  assert.equal(env.element('overview-defense-rate').textContent,'57.9%');
-  assert.match(env.element('overview-defense-methods').textContent,/ML \(6\).*Network monitoring \(3\).*Combined monitoring \(2\)/);
+  const reads = env.requests.slice(before);
+  assert.ok(reads.some(r => r.url === '/api/sample-environment'));
+  assert.ok(!reads.some(r => /live-battle|topology$|report-summary|runtime/.test(r.url)));
+  assert.equal(env.element('overview-results-section').hasAttribute('hidden'),true);
   assert.equal(env.element('overview-topology-name').textContent,'IEEE-14');
-  assert.match(env.element('overview-topology-summary').textContent,/devices · .* connections/);
+  assert.match(env.element('overview-topology-summary').textContent,/SAMPLE/);
+  assert.match(env.element('sample-rules-body').innerHTML,/9000007/);
+  assert.match(env.element('sample-topology-summary').innerHTML,/14/);
   const activity = env.element('overview-activity').innerHTML;
-  for (const value of ['Detection','PLC3','T0835','Detected by ML','PLC14','Failed']) assert.ok(activity.includes(value),value);
-  assert.doesNotMatch(activity,/hidden-correlation|evidence|return_status|\{"/);
-  assert.ok(activity.indexOf('PLC3') < activity.indexOf('PLC14'),'newest activity first');
-  assert.doesNotMatch(htmlSource,/id="overview-(?:session|generation|technical-data)"/);
-  assert.doesNotMatch(htmlSource,/Bounded read model|No event history is scanned|CORE ownership marker/);
-  assert.match(cssSource,/\.technical-details strong\{[^}]*white-space:nowrap/);
-  assert.equal(JSON.stringify(system),original);
-  assert.equal(JSON.stringify(events),eventOriginal);
-  assert.equal(countRequests(env,'POST'),0);
-  assert.equal(countRequests(env,'GET','/api/campaign/status'),0,'overview must not invoke the result-consuming campaign status path');
-  const stopped = await harness(snapshot());
-  assert.equal(stopped.element('overview-results-section').hasAttribute('hidden'),true);
-  const finished = {...system.active_run,run:{...system.active_run.run,status:'COMPLETED'}};
-  assert.equal(await env.call('assessmentLabel',finished),'Assessment completed');
-  const liveReads = countRequests(stopped,'GET','/api/live-battle?limit=10');
-  for(let tick=0;tick<5;tick++) await stopped.tickIntervals();
-  assert.equal(countRequests(stopped,'GET','/api/live-battle?limit=10'),liveReads+1,'overview refreshes its existing read-only stream every five ticks');
-  assert.equal(countRequests(stopped,'POST'),0);
+  for (const text of ['SAMPLE','Technical Details','T0816','Device Restart/Shutdown','Inhibit Response Function','Detection Not Available']) assert.ok(activity.includes(text),text);
+  for(let tick=0;tick<5;tick++) await env.tickIntervals();
+  assert.equal(env.requests.length,before+1,'sample does not poll runtime');
 }
 
 async function testOverviewIntroductionAndEmptyState() {
@@ -567,16 +530,11 @@ async function testOverviewIntroductionAndEmptyState() {
 
 async function testOverviewCustomTopologyPreview() {
   const env = await harness(snapshot());
-  const custom = {topology:{case_name:'custom_laboratory_network'},
-    visual:{nodes:Array.from({length:8},(_,index)=>({id:`plc${index+1}`})),edges:Array.from({length:9},(_,index)=>({from:index,to:index+1}))},
-    visual_signature:'custom-overview',pyvis_html:'<html>Custom Laboratory Network</html>'};
-  env.enqueue('/api/topology', custom);
-  env.enqueue('/api/live-battle?limit=10', {active_run:null,display_identity:{},security_events:[]});
+  env.enqueue('/api/topology', {topology:{case_name:'custom_laboratory_network'}});
   await env.call('loadOverview');
-  assert.equal(env.element('overview-topology-name').textContent, 'Custom Laboratory Network');
-  assert.equal(env.element('overview-topology-summary').textContent, '8 devices · 9 connections');
-  assert.match(env.element('overview-topology').children[0].srcdoc, /Custom Laboratory Network/);
-  assert.equal(countRequests(env, 'POST'), 0);
+  assert.equal(env.element('overview-topology-name').textContent,'IEEE-14');
+  assert.match(env.element('overview-topology').children[0].srcdoc,/Sample IEEE-14/);
+  assert.equal(countRequests(env,'GET','/api/topology'),0);
 }
 
 async function testOtherControlGating() {
@@ -611,7 +569,7 @@ async function testObsoleteRouteFailure() {
     for (const navigateBack of [false, true]) {
       const env = await harness(snapshot());
       const pending = deferred();
-      const delayedPath = oldRoute === 'overview' ? '/api/topology' : '/api/network-configuration';
+      const delayedPath = oldRoute === 'overview' ? '/api/sample-environment' : '/api/network-configuration';
       const before = countRequests(env, 'GET', delayedPath);
       env.enqueue(delayedPath, null, {pending});
       const oldNavigation = env.navigate(`#${oldRoute}`);
@@ -854,9 +812,9 @@ async function testCampaignNetworkEvidenceIsHumanReadableAndTruthful() {
   assert.match(network, /Request traffic sent to a monitored Modbus\/TCP service/);
   assert.match(network, /Response traffic associated with the monitored Modbus\/TCP communication/);
   assert.match(network, /Assessment network activity; no specific attack attribution is established/);
-  assert.match(network, /Technical details/);
+  assert.match(network, /Technical Details/);
   assert.doesNotMatch(network.slice(0, network.indexOf('<details')), /packet-json/, 'raw JSON is absent from primary cells');
-  assert.ok(network.indexOf('request-packet-json') > network.indexOf('Technical details'), 'raw request JSON stays in the collapsed technical disclosure');
+  assert.ok(network.indexOf('request-packet-json') > network.indexOf('Technical Details'), 'raw request JSON stays in the collapsed technical disclosure');
   assert.equal(await env.call('relatedAssessmentStep', uncorrelated), 'Assessment network activity');
   assert.doesNotMatch(await env.call('networkEvidenceMeaning', uncorrelated), /attack succeeded|T0846|T0855/i);
 
@@ -1058,7 +1016,7 @@ async function testHumanReadableIdentifiersKeepRawValuesTechnical() {
   const primary = attackLog.split('<details')[0];
   for (const value of ['Attack Step 1', 'Attack Event 1', 'plc14', 'T0835']) assert.match(primary, new RegExp(value));
   assert.doesNotMatch(primary, /step-1-d229/);
-  assert.match(attackLog, /Technical details/);
+  assert.match(attackLog, /Technical Details/);
   assert.match(attackLog, /step-1-d2294dea07c1/, 'raw correlation remains available in the expanded technical event');
   assert.doesNotMatch(htmlSource, /id="overview-technical-data"/);
 }
@@ -1258,7 +1216,7 @@ const tests = [
   ['F: canonical XML markup and backend contract', testCanonicalXmlContract],
   ['F2: professional overview, canonical counts, recent activity and collapsed diagnostics', testProfessionalOverviewUsesExistingData],
   ['F3: visual introduction, verified concepts and understandable empty state', testOverviewIntroductionAndEmptyState],
-  ['F4: overview network preview uses the selected custom topology', testOverviewCustomTopologyPreview],
+  ['F4: sample preview stays independent of selected custom topology', testOverviewCustomTopologyPreview],
   ['G: existing campaign and defense prerequisite gates', testOtherControlGating],
   ['H: obsolete route failures preserve fresh runtime diagnostics', testObsoleteRouteFailure],
   ['I: accepted watcher start uses immediate authoritative readiness', testWatcherImmediateReadiness],

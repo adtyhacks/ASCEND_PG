@@ -91,7 +91,7 @@ def run_monitor(target: str, port: int, unit: int,
 
                 try:
                     result = client.read_holding_registers(
-                        chunk_start, chunk_count, slave=unit
+                        address=chunk_start, count=chunk_count, device_id=unit
                     )
                     if result.isError():
                         stats["errors"] += 1

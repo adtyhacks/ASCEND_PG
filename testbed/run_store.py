@@ -265,8 +265,14 @@ def report_events(events: list[dict]) -> list[dict]:
         detection = detections.get(key(event)) if event.get("correlation_id") else None
         detection_evidence = (detection or {}).get("evidence") or {}
         start = starts.get(key(event)) if event.get("correlation_id") else None
-        detected = bool(detection) or str(event.get("result", "")).lower() == "detected"
+        from defense.detection_result import detection_result, technical_details
+        from data.mitre_registry import get_display_technique
+        detected = True if detection else detection_result(event)
         normalized.append({"Timestamp": event["timestamp"], "MITRE ID": event.get("mitre_technique", ""), "Technique Name": evidence.get("step_name", event.get("mitre_technique", "")), "Stage": event.get("attack_stage", 0), "Target Host": event.get("target_node", ""), "Detected": detected, "Detector Confidence": detection_evidence.get("ml_confidence", evidence.get("ml_confidence")), "Detection Method": (detection or {}).get("detection_method") or detection_evidence.get("detection_method") or evidence.get("detection_method", "unknown"), "Status": "Detected" if detected else event.get("result", "Unknown"), "Severity": _canonical_attack_severity(start, event), "Correlation ID": event.get("correlation_id"), "Canonical": True, "Evidence": {"attack": event, "detection": detection}, "Source IP": evidence.get("source_ip", "N/A")})
         normalized[-1]["Attack Severity"] = normalized[-1]["Severity"]
+        tech = get_display_technique(event.get("mitre_technique")) or {}
+        normalized[-1]["Internal Identifier"] = evidence.get("step_name")
+        normalized[-1]["Technique Name"] = tech.get("name", "Unmapped technique")
+        normalized[-1]["Technical Details"] = technical_details(normalized[-1])
         normalized[-1]["Evidence"]["start"] = start
     return normalized

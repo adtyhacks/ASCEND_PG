@@ -98,3 +98,32 @@ def compute_dvs(eval_results: dict) -> dict:
     }
 
 
+
+
+class PlateauTracker:
+    """
+    Tracks consecutive attack–defend cycles to detect when defense visibility plateaus
+    (i.e., when no new attack variants or stages bypass defenses over N attempts).
+    """
+
+    def __init__(self, patience: int = 5, min_evasion_gain: float = 0.02):
+        self.patience = patience
+        self.min_evasion_gain = min_evasion_gain
+        self.best_evasion_rate = 0.0
+        self.stagnant_count = 0
+        self.history = []
+
+    def update(self, episode_evasion_rate: float) -> bool:
+        """
+        Updates the tracker with the latest episode evasion rate.
+        Returns True if the detection rate has plateaued, False otherwise.
+        """
+        self.history.append(episode_evasion_rate)
+        if episode_evasion_rate > (self.best_evasion_rate + self.min_evasion_gain):
+            self.best_evasion_rate = episode_evasion_rate
+            self.stagnant_count = 0
+        else:
+            self.stagnant_count += 1
+
+        is_plateaued = self.stagnant_count >= self.patience
+        return is_plateaued

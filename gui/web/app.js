@@ -166,7 +166,7 @@ function renderRecentSecurityActivity(events) {
     const time = new Date(event.timestamp);
     const timestamp = Number.isNaN(time.getTime()) ? 'Time unavailable' : time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const target = /^plc\d+$/i.test(event.target_node || '') ? event.target_node.toUpperCase() : event.target_node || 'Target not specified';
-    return `<article class="security-activity-item"><div><strong>${escapeHtml(names[event.event_type])}</strong><time title="${escapeHtml(event.timestamp || 'Time unavailable')}">${escapeHtml(timestamp)}</time></div><p>${escapeHtml(target)}${technique ? ' · ' + escapeHtml(technique) : ''}${step ? ' — ' + escapeHtml(step) : ''}</p><span>${escapeHtml(outcome)}</span></article>`;
+    return `<article class="security-activity-item"><div><strong>${escapeHtml(event.sample ? 'SAMPLE scenario' : names[event.event_type])}</strong><time title="${escapeHtml(event.timestamp || 'Sample scenario')}">${escapeHtml(event.sample ? 'SAMPLE' : timestamp)}</time></div><p>${escapeHtml(target)}${technique ? ' · ' + escapeHtml(technique) : ''}${step ? ' — ' + escapeHtml(step) : ''}</p><span>${escapeHtml(event.sample ? event.technical_details['Detection Result'] : outcome)}</span>${technicalDetails(event)}</article>`;
   }).join('') : '<div class="empty-state">No security activity yet.<small>Security events, attack attempts and detections will appear here when the assessment begins.</small></div>';
 }
 const severityPalette = {Critical:'#7b1e3a',High:'#c0392b',Medium:'#d88a16',Low:'#2b6f8a',Informational:'#6f6a62'};
@@ -226,38 +226,28 @@ function renderAssessmentOverview(counts, overview, assessmentName) {
 async function loadOverview() {
   const sequence = ++overviewRefreshSequence, runtimeSequence = runtimeRefreshSequence;
   const cataloguePromise = cachedAttackCatalogue ? Promise.resolve(cachedAttackCatalogue) : api('/api/attack-catalogue').catch(() => null);
-  const [data, activity, catalogue] = await Promise.all([api('/api/topology'), api('/api/live-battle?limit=10'), cataloguePromise]);
+  const [data, catalogue] = await Promise.all([api('/api/sample-environment'), cataloguePromise]);
   if (!cachedAttackCatalogue && catalogue && Array.isArray(catalogue.attacks)) {
     cachedAttackCatalogue = catalogue;
   }
   const activeCatalogue = cachedAttackCatalogue || catalogue;
-  const active = activity.active_run;
-  let counts = null, assessmentOverview = null, summaryUnavailable = false;
-  if (active?.state === 'ACTIVE') {
-    try {
-      const summary = await api(`/api/report-summary?scenario_id=${encodeURIComponent(active.run.scenario_id)}&run_id=${encodeURIComponent(active.run.run_id)}`);
-      if (summary.run_id === active.run.run_id && summary.scenario_id === active.run.scenario_id && summary.finding_summary) { counts = summary.finding_summary; assessmentOverview = summary.assessment_overview || null; }
-      else summaryUnavailable = true;
-    } catch (_) { summaryUnavailable = true; }
-  }
   if (sequence !== overviewRefreshSequence || runtimeSequence !== runtimeRefreshSequence) return;
-  const signature = data.visual_signature || JSON.stringify(data.visual);
+  const signature = 'sample-case14';
   if (signature !== overviewVisualSignature) {
     drawPyvisTopology(byId('overview-topology'), data.pyvis_html);
     overviewVisualSignature = signature;
   }
   const caseName = data.topology.case_name || 'Selected network';
   byId('overview-topology-name').textContent = caseName === 'case14' ? 'IEEE-14' : caseName === 'case30' ? 'IEEE-30' : caseName.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
-  byId('overview-topology-summary').textContent = `${data.visual.nodes.length} devices · ${data.visual.edges.length} connections`;
-  const assessmentState = assessmentLabel(active);
-  const assessment = active?.state === 'ACTIVE' ? displayName(activity.display_identity, 'assessment', 'Current assessment') : assessmentState;
+  byId('overview-topology-summary').textContent = `SAMPLE · ${data.topology.nodes.length} devices · Static demonstration, no live testbed required`;
+  setDetails(byId('sample-topology-summary'), Object.entries(data.topology_summary));
+  byId('sample-rules-body').innerHTML = data.rules.map(rule => `<tr><td>${escapeHtml(rule.sid)}</td><td>${escapeHtml(rule.name)}</td><td>${escapeHtml(rule.technique)}</td></tr>`).join('');
   if (activeCatalogue) {
     renderSeverityDistribution(activeCatalogue.severity_distribution || {});
     renderAttackCatalogue(activeCatalogue.attacks || []);
   }
-  renderAssessmentOverview(counts, assessmentOverview, assessment);
-  if (summaryUnavailable) setElementVisibility(byId('overview-results-section'), false);
-  renderRecentSecurityActivity(activity.security_events || []);
+  renderAssessmentOverview(null, null, 'Sample Environment');
+  renderRecentSecurityActivity(data.security_events || []);
 }
 async function loadNetwork() {
   const [config, topology] = await Promise.all([api('/api/network-configuration'), api('/api/topology')]);
@@ -475,6 +465,11 @@ function evidenceDetails(value, label = null, expanded = false) {
   return `<details class="evidence-details"${expanded ? ' open' : ''}><summary><span class="payload-preview">${escapeHtml(preview)}</span></summary><pre>${escapeHtml(full)}</pre></details>`;
 }
 function meaningfulEvidence(value) { return value !== null && value !== undefined && value !== '' && value !== 'N/A'; }
+function technicalDetails(row, expanded = false) {
+  const detail = row.technical_details;
+  if (!detail) return evidenceDetails(row, 'Technical Details', expanded);
+  return `<details class="evidence-details"${expanded ? ' open' : ''}><summary>Technical Details</summary><div class="details-list">${Object.entries(detail).map(([key,value]) => `<div><span>${escapeHtml(key)}</span><strong>${escapeHtml(Array.isArray(value) ? value.join(', ') : value ?? 'Unavailable')}</strong></div>`).join('')}</div>${evidenceDetails(row, 'Full event')}</details>`;
+}
 function attackEventSeverity(event, events) {
   if (!['attack_started', 'attack_finished', 'detection'].includes(event.event_type)) return event.severity;
   const identity = ['scenario_id', 'run_id', 'generation_id', 'correlation_id'];
@@ -507,7 +502,7 @@ function renderEvidenceTable(target, rows, columns, emptyMessage, headerId, stat
   } else {
     target.innerHTML = rows.map(row => {
       const key = evidenceRowIdentity(row);
-      return `<tr data-evidence-key="${escapeHtml(key)}">${visible.map(column => `<td>${column.payload ? evidenceDetails(column.value(row)) : evidenceValue(column.value(row))}</td>`).join('')}<td>${evidenceDetails(row, 'Technical details', expanded.has(key))}</td></tr>`;
+      return `<tr data-evidence-key="${escapeHtml(key)}">${visible.map(column => `<td>${column.payload ? evidenceDetails(column.value(row)) : evidenceValue(column.value(row))}</td>`).join('')}<td>${technicalDetails(row, expanded.has(key))}</td></tr>`;
     }).join('');
   }
   if (container) container.scrollTop = scrollTop;
@@ -582,7 +577,7 @@ async function loadBattle() {
     {label: 'Attack event', value: e => e.display_identity?.attack_event, optional: true},
     {label: 'Action', value: e => e.event_type}, {label: 'Target', value: e => e.target_node},
     {label: 'MITRE', value: e => e.mitre_technique}, {label: 'Result', value: e => e.result},
-    {label: 'Detection', value: e => networkField(e, 'detected', 'detection_method'), optional: true}, {label: 'Severity', value: e => attackEventSeverity(e, data.security_events)},
+    {label: 'Detection', value: e => e.technical_details?.['Detection Result'] || 'Detection Not Available / Not Evaluated'}, {label: 'Severity', value: e => attackEventSeverity(e, data.security_events)},
     {label: 'Defense', value: e => e.defense_action, optional: true}
   ], 'No canonical security events available.', 'security-events-head', {containerId: 'security-evidence-scroll'});
   updateControlStates();
@@ -636,7 +631,7 @@ async function activateRoute() {
   document.querySelectorAll('[data-page]').forEach(page => page.classList.toggle('active', page.dataset.page === route));
   document.querySelectorAll('[data-route]').forEach(link => link.classList.toggle('active', link.dataset.route === route));
   setElementVisibility(byId('runtime-refresh-status'), route !== 'overview');
-  await loadStatus();
+  if (route !== 'overview') await loadStatus();
   if (sequence !== routeRefreshSequence || route !== (location.hash.slice(1) || 'overview') || route === 'runtime') return;
   try { await loadRoute(route); }
   catch (error) { if (sequence === routeRefreshSequence) showPageRefreshError(error); }
@@ -815,7 +810,7 @@ function bindControls() {
   byId('campaign-restore').addEventListener('click', () => runControl('/api/campaign/restore', {target_node: byId('defense-target').value}, 'campaign-status-detail'));
   refreshTimer = window.setInterval(async () => {
     const route = location.hash.slice(1) || 'overview', battle = route === 'battle';
-    const overview = route === 'overview' && ++overviewRefreshTicks % 5 === 0;
+    const overview = false; // Static sample has no runtime polling dependency.
     const grid = route === 'grid' && ++overviewRefreshTicks % 5 === 0;
     const checkingWatcher = watcherReadiness?.remaining > 0;
     if ((!battle && !overview && !grid && !checkingWatcher) || pageRefreshPending || ((checkingWatcher || overview || grid) && (runtimeControlPending || runtimeRefreshPending))) return;
