@@ -14,7 +14,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import fcntl
+try:
+    import fcntl
+    LOCK_EX = fcntl.LOCK_EX
+    LOCK_SH = fcntl.LOCK_SH
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+    import msvcrt
+    LOCK_EX = 1  # placeholder – _event_lock ignores mode on Windows
+    LOCK_SH = 2
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "data" / "runs"
@@ -60,11 +68,20 @@ def _event_lock(root: Path, mode: int):
     """Serialize one run's JSONL readers and writers without touching CORE locks."""
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".events.lock").open("a+") as lock:
-        fcntl.flock(lock.fileno(), mode)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(lock.fileno(), mode)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        else:
+            # Windows fallback using msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _append_jsonl(path: Path, event: dict) -> None:
@@ -133,7 +150,7 @@ def append_event(scenario_id: str, run_id: str, *, category: str, event_type: st
     # keeps readers from seeing a write in progress and prevents writers from
     # producing an interleaved physical JSONL line.  It is unrelated to CORE's
     # lifecycle and ownership locks.
-    with _event_lock(root, fcntl.LOCK_EX):
+    with _event_lock(root, LOCK_EX):
         if category == "security" and event_type in {"attack_started", "attack_finished", "detection"}:
             path = root / "security_events.jsonl"
             previous = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()] if path.exists() else []
@@ -153,7 +170,7 @@ def append_event(scenario_id: str, run_id: str, *, category: str, event_type: st
 def read_events(scenario_id: str, run_id: str, category: str | None = None) -> list[dict]:
     root = _path(scenario_id, run_id); name = {"network": "network_events.jsonl", "security": "security_events.jsonl"}.get(category, "events.jsonl")
     path = root / name
-    with _event_lock(root, fcntl.LOCK_SH):
+    with _event_lock(root, LOCK_SH):
         if not path.exists():
             return []
         content = path.read_text(encoding="utf-8")
