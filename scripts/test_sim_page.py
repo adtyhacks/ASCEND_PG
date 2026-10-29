@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Test standalone simulation page."""
 import sys
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from testbed.grid_env import build_baseline
 from testbed.network_topology import build_ot_topology

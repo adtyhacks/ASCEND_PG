@@ -74,7 +74,7 @@ def run_manipulate_io(target: str, port: int, unit: int,
             # Alternate between True/False to create inconsistent I/O image
             value = bool((addr - start_coil) % 2)
             try:
-                result = client.write_coil(addr, value, slave=unit)
+                result = client.write_coil(address=addr, value=value, device_id=unit)
                 if result.isError():
                     print(f"[manipulate_io] Coil {addr} write error: {result}")
                     stats["errors"] += 1
@@ -92,7 +92,7 @@ def run_manipulate_io(target: str, port: int, unit: int,
         print(f"[manipulate_io] Bulk-overwriting coils {start_coil}-{end_coil}")
         try:
             values = [True] * coil_count
-            result = client.write_coils(start_coil, values, slave=unit)
+            result = client.write_coils(address=start_coil, values=values, device_id=unit)
             if result.isError():
                 print(f"[manipulate_io] Bulk coil write error: {result}")
                 stats["errors"] += 1

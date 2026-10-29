@@ -156,8 +156,8 @@ def main():
     )
     parser.add_argument("--target", required=True,
                         help="Target PLC IP to attack via pivot")
-    parser.add_argument("--scada-ip", default="10.0.0.20",
-                        help="SCADA host to pivot through (default: 10.0.0.20)")
+    parser.add_argument("--scada-ip", default="10.0.0.100",
+                        help="SCADA host to pivot through (default: 10.0.0.100)")
     parser.add_argument("-a", "--register-address", type=int, default=40000,
                         help="Modbus register address to target (default: 40000)")
     parser.add_argument("-v", "--value-magnitude", type=float, default=1.0,

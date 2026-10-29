@@ -8,6 +8,9 @@ import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
 
+from testbed.ip_config import SCADA_IP
+
+
 # Map OT device types to Packet Tracer device categories
 PT_DEVICE_MAP = {
     "scada_server":       ("Server", "Server-PT"),
@@ -56,7 +59,7 @@ def export_pkt_xml(nodes, edges, filepath):
             if bus_num.isdigit():
                 ET.SubElement(dev_el, "ip_address").text = f"10.0.0.{int(bus_num) + 1}"
         elif n["id"] == "scada_server":
-            ET.SubElement(dev_el, "ip_address").text = "10.0.0.20"
+            ET.SubElement(dev_el, "ip_address").text = SCADA_IP
         elif n["id"] == "hmi":
             ET.SubElement(dev_el, "ip_address").text = "10.0.0.11"
         elif n["id"] == "historian":

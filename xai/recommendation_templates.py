@@ -200,7 +200,10 @@ def get_technique_recommendations(technique_id: str) -> dict:
     Returns:
         dict with technique_name and list of mitigations, or empty dict if unknown
     """
-    return TECHNIQUE_MITIGATIONS.get(technique_id, {})
+    from data.mitre_registry import get_display_technique
+    advice = TECHNIQUE_MITIGATIONS.get(technique_id, {})
+    tech = get_display_technique(technique_id)
+    return {**advice, "technique_name": tech["name"]} if advice and tech else advice
 
 
 def get_dvs_recommendations(dvs_result: dict) -> list:

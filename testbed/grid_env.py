@@ -2,6 +2,7 @@
 import pandapower.networks as pn
 import pandas as pd
 import numpy as np
+from testbed.topology import run_power_flow
 
 def build_baseline(n_packets=500, seed=42, case_name="case14"):
     """
@@ -13,7 +14,7 @@ def build_baseline(n_packets=500, seed=42, case_name="case14"):
     else:
         net = pn.case14()
         
-    pp.runpp(net)
+    run_power_flow(net)
 
     grid_df = pd.DataFrame({
         "bus_id": net.res_bus.index,

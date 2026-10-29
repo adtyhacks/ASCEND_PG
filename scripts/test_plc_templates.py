@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Test PLC templates and register maps."""
 import sys
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from testbed.plc_templates import (
     PLC_TEMPLATES, build_register_map, build_device_id, get_plc_template, list_templates
