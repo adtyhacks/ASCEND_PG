@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Verify trained model works with any topology (no retraining)."""
 import sys
+from pathlib import Path
 import numpy as np
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from testbed.topology import Topology, set_topology
 from strategic.rl_env import AttackStrategyEnv
 from stable_baselines3 import PPO
 
 # Load trained model
-model = PPO.load("/home/adty17/ascend-pg-webapp/models/rl_agent.zip")
+model = PPO.load(str(REPO_ROOT / "models" / "rl_agent.zip"))
 
 def run_episode(model, env, max_steps=16):
     obs, _ = env.reset()

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Quick bug check for multi-parameter action space."""
 import sys
+from pathlib import Path
 import numpy as np
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from strategic.rl_env import AttackStrategyEnv, MITRE_TECHNIQUES, NUM_TECHNIQUES
 from stable_baselines3 import PPO
 
-model = PPO.load("/home/adty17/ascend-pg-webapp/models/rl_agent.zip")
+model = PPO.load(str(REPO_ROOT / "models" / "rl_agent.zip"))
 
 # Test 1: Basic step
 env = AttackStrategyEnv()

@@ -109,11 +109,14 @@ def main():
                     log_event({
                         "stage": "normal_traffic", "technique": "N/A",
                         "action": f"poll_{ip}", "target": ip,
+                        "observation_type": "poll_result", "registers": registers,
+                        "address": args.address, "count": args.num_registers,
                     })
                 else:
                     polls_fail += 1
-                    if cycle <= 3:
-                        log.warning("Cycle %d: FAIL polling %s", cycle, ip)
+                    log_event({"stage": "scada_observation", "technique": "N/A",
+                        "action": "poll_failed", "target": ip, "address": args.address,
+                        "count": args.num_registers})
             log.info("Cycle %d: %d ok, %d fail", cycle, polls_ok, polls_fail)
             time.sleep(args.interval)
     except KeyboardInterrupt:

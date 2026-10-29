@@ -1,7 +1,7 @@
 {
   "T0886": {
     "technique_id": "T0886",
-    "tactic": "Initial Access",
+    "tactic": "Initial Access, Lateral Movement",
     "technique_name": "Remote Services",
     "stage": 0,
     "description": "Unauthorized TCP connect to open Modbus port 502"
@@ -30,13 +30,13 @@
   "T0840": {
     "technique_id": "T0840",
     "tactic": "Discovery",
-    "technique_name": "Network Sniffing / FC Scan",
+    "technique_name": "Network Connection Enumeration",
     "stage": 0,
     "description": "Function code scanning (FC 1-127) to fingerprint supported PLC capabilities"
   },
   "T0830": {
     "technique_id": "T0830",
-    "tactic": "Lateral Movement",
+    "tactic": "Collection",
     "technique_name": "Adversary-in-the-Middle",
     "stage": 1,
     "description": "ARP cache poisoning / Transparent TCP proxy modifying Modbus FC03 responses in transit"
@@ -106,7 +106,7 @@
   },
   "T0835": {
     "technique_id": "T0835",
-    "tactic": "Impair Process Control",
+    "tactic": "Inhibit Response Function",
     "technique_name": "Manipulate I/O Image",
     "stage": 2,
     "description": "Direct coil/holding-register writes overriding safety logic"
@@ -158,69 +158,69 @@
     "tactic": "Impair Process Control",
     "technique_name": "Modify Parameter",
     "stage": 2,
-    "description": "False Data Injection — writing falsified sensor/measurement values to holding registers"
+    "description": "False Data Injection \u00e2\u20ac\u201d writing falsified sensor/measurement values to holding registers"
   },
   "NaiveResponseInjection": {
     "technique_id": "T0836",
     "tactic": "Impair Process Control",
     "technique_name": "Modify Parameter",
     "stage": 2,
-    "description": "Naive response injection — constant, clearly out-of-range values to registers"
+    "description": "Naive response injection \u00e2\u20ac\u201d constant, clearly out-of-range values to registers"
   },
   "ComplexResponseInjection": {
     "technique_id": "T0836",
     "tactic": "Impair Process Control",
     "technique_name": "Modify Parameter",
     "stage": 2,
-    "description": "Complex response injection — realistic-but-drifted values (offset/scale/ramp/random)"
+    "description": "Complex response injection \u00e2\u20ac\u201d realistic-but-drifted values (offset/scale/ramp/random)"
   },
   "CmdInjectCoil": {
     "technique_id": "T0855",
     "tactic": "Impair Process Control",
     "technique_name": "Unauthorized Command Message",
     "stage": 2,
-    "description": "Command injection via coil writes (FC05/FC15) — toggling actuators/breakers/relays"
+    "description": "Command injection via coil writes (FC05/FC15) \u00e2\u20ac\u201d toggling actuators/breakers/relays"
   },
   "CmdInjectRegister": {
     "technique_id": "T0855",
     "tactic": "Impair Process Control",
     "technique_name": "Unauthorized Command Message",
     "stage": 2,
-    "description": "Command injection via register writes (FC06/FC16) — modifying control setpoints"
+    "description": "Command injection via register writes (FC06/FC16) \u00e2\u20ac\u201d modifying control setpoints"
   },
   "MaliciousFC": {
     "technique_id": "T0855",
     "tactic": "Impair Process Control",
     "technique_name": "Unauthorized Command Message",
     "stage": 2,
-    "description": "Malicious function codes (FC07/FC08) — diagnostics restart, exception status leak, counter clear"
+    "description": "Malicious function codes (FC07/FC08) \u00e2\u20ac\u201d diagnostics restart, exception status leak, counter clear"
   },
   "DoS": {
     "technique_id": "T0814",
     "tactic": "Inhibit Response Function",
     "technique_name": "Denial of Service",
     "stage": 2,
-    "description": "Modbus request flood — raw-socket fire-and-forget Modbus read requests"
+    "description": "Modbus request flood \u00e2\u20ac\u201d raw-socket fire-and-forget Modbus read requests"
   },
   "DoS_ConnExhaust": {
     "technique_id": "T0814",
     "tactic": "Inhibit Response Function",
     "technique_name": "Denial of Service",
     "stage": 2,
-    "description": "TCP connection exhaustion — opening max connections without closing them"
+    "description": "TCP connection exhaustion \u00e2\u20ac\u201d opening max connections without closing them"
   },
   "Replay": {
     "technique_id": "T0832",
     "tactic": "Impact",
     "technique_name": "Manipulation of View",
     "stage": 3,
-    "description": "Scapy-based packet replay — capture then retransmit legitimate Modbus frames"
+    "description": "Scapy-based packet replay \u00e2\u20ac\u201d capture then retransmit legitimate Modbus frames"
   },
   "MITM": {
     "technique_id": "T0830",
     "tactic": "Lateral Movement",
     "technique_name": "Adversary-in-the-Middle",
     "stage": 1,
-    "description": "Transparent TCP proxy — intercepts and modifies Modbus FC03 responses in transit"
+    "description": "Transparent TCP proxy \u00e2\u20ac\u201d intercepts and modifies Modbus FC03 responses in transit"
   }
 }

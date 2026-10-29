@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Test fixed-size padding with different topology sizes."""
 import sys
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from testbed.topology import Topology, set_topology
 from strategic.rl_env import AttackStrategyEnv, MAX_BUSES
 
-# obs_dim = attack_state(24) + last_action_params(3) + topology(4*50) + scalars(2) = 229
-EXPECTED_OBS_DIM = 24 + 3 + 4 * MAX_BUSES + 2
+# obs_dim = attack_state(25) + last_action_params(3) + topology(4*50) + scalars(2) = 230
+EXPECTED_OBS_DIM = 25 + 3 + 4 * MAX_BUSES + 2
 
 print(f"MAX_BUSES = {MAX_BUSES}")
-print(f"Expected obs_dim = 24 + 3 + 4*{MAX_BUSES} + 2 = {EXPECTED_OBS_DIM}")
+print(f"Expected obs_dim = 25 + 3 + 4*{MAX_BUSES} + 2 = {EXPECTED_OBS_DIM}")
 
 # Test 1: IEEE-14 (14 buses)
 print("\n=== Test 1: IEEE-14 (14 buses) ===")

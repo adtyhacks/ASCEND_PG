@@ -1,0 +1,218 @@
+<?xml version="1.0" ?>
+<scenario>
+  <networks>
+    <network id="1" name="s1" icon="" canvas="1" type="HUB">
+      <position x="600.0" y="450.0" lat="47.5768" lon="-122.1289" alt="2.0"/>
+    </network>
+  </networks>
+  <devices>
+    <device id="2" name="scada" icon="" canvas="1" type="PC" image="">
+      <position x="250.0" y="250.0" lat="47.5780" lon="-122.1320" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+        <service name="AscendApplicationV1_96ddbacac0ba9081f5e3"/>
+      </services>
+    </device>
+    <device id="3" name="attacker" icon="" canvas="1" type="PC" image="">
+      <position x="250.0" y="650.0" lat="47.5750" lon="-122.1320" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="4" name="ids_monitor" icon="" canvas="1" type="PC" image="">
+      <position x="950.0" y="250.0" lat="47.5780" lon="-122.1250" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+        <service name="AscendApplicationV1_82a4525b1c2042581ece"/>
+      </services>
+    </device>
+    <device id="5" name="plc1" icon="" canvas="1" type="host" image="">
+      <position x="980.0" y="450.0" lat="47.57680" lon="-122.12510" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+        <service name="AscendApplicationV1_4a6e5d9df1128e7facfd"/>
+      </services>
+    </device>
+    <device id="6" name="plc2" icon="" canvas="1" type="host" image="">
+      <position x="600.0" y="830.0" lat="47.58060" lon="-122.12890" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+        <service name="AscendApplicationV1_40fba8700ac2bf1f73b3"/>
+      </services>
+    </device>
+    <device id="7" name="plc3" icon="" canvas="1" type="host" image="">
+      <position x="220.0" y="450.0" lat="47.57680" lon="-122.13270" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+        <service name="AscendApplicationV1_b27b5caf7dc3376682ce"/>
+      </services>
+    </device>
+    <device id="8" name="plc4" icon="" canvas="1" type="host" image="">
+      <position x="600.0" y="70.0" lat="47.57300" lon="-122.12890" alt="2.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+        <service name="AscendApplicationV1_85437774251a08a63244"/>
+      </services>
+    </device>
+  </devices>
+  <links>
+    <link node1="2" node2="1">
+      <iface1 id="0" name="eth0" mac="00:00:00:aa:00:02" ip4="10.0.0.100" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="3" node2="1">
+      <iface1 id="0" name="eth0" mac="00:00:00:aa:00:03" ip4="10.0.0.66" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="4" node2="1">
+      <iface1 id="0" name="eth0" mac="00:00:00:aa:00:04" ip4="10.0.0.99" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="5" node2="1">
+      <iface1 id="0" name="eth0" mac="00:00:00:aa:00:05" ip4="10.0.0.1" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="6" node2="1">
+      <iface1 id="0" name="eth0" mac="00:00:00:aa:00:06" ip4="10.0.0.2" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="7" node2="1">
+      <iface1 id="0" name="eth0" mac="00:00:00:aa:00:07" ip4="10.0.0.3" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+    <link node1="8" node2="1">
+      <iface1 id="0" name="eth0" mac="00:00:00:aa:00:08" ip4="10.0.0.4" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" loss="0.0" dup="0" jitter="0" unidirectional="0" buffer="0"/>
+    </link>
+  </links>
+  <service_configurations>
+    <service name="AscendApplicationV1_96ddbacac0ba9081f5e3" node="2">
+      <templates>
+        <template name="ascend-start.sh">#!/bin/sh
+set -eu
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python /mnt/c/project/ascend-pg-webapp/testbed/scada_client.py --targets 10.0.0.1 10.0.0.2 10.0.0.3 10.0.0.4 --log /mnt/c/project/ascend-pg-webapp/data/core-runtime/scada.jsonl &gt; ascend.log 2&gt;&amp;1 &amp;
+echo $! &gt; ascend.pid
+</template>
+        <template name="ascend-validate.sh">#!/bin/sh
+set -eu
+sleep 2
+kill -0 &quot;$(cat ascend.pid)&quot;
+</template>
+        <template name="ascend-stop.sh">#!/bin/sh
+if [ -f ascend.pid ]; then kill &quot;$(cat ascend.pid)&quot; 2&gt;/dev/null || true; rm -f ascend.pid; fi
+</template>
+      </templates>
+    </service>
+    <service name="AscendApplicationV1_82a4525b1c2042581ece" node="4">
+      <templates>
+        <template name="ascend-start.sh">#!/bin/sh
+set -eu
+/usr/bin/suricata -c /etc/suricata/suricata.yaml -i eth0 -l /mnt/c/project/ascend-pg-webapp/data/core-runtime/suricata -S /mnt/c/project/ascend-pg-webapp/detection/suricata/modbus_rules.rules --set runmode=single &gt; ascend.log 2&gt;&amp;1 &amp;
+echo $! &gt; ascend.pid
+</template>
+        <template name="ascend-validate.sh">#!/bin/sh
+set -eu
+sleep 2
+kill -0 &quot;$(cat ascend.pid)&quot;
+</template>
+        <template name="ascend-stop.sh">#!/bin/sh
+if [ -f ascend.pid ]; then kill &quot;$(cat ascend.pid)&quot; 2&gt;/dev/null || true; rm -f ascend.pid; fi
+</template>
+      </templates>
+    </service>
+    <service name="AscendApplicationV1_4a6e5d9df1128e7facfd" node="5">
+      <templates>
+        <template name="ascend-start.sh">#!/bin/sh
+set -eu
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python /mnt/c/project/ascend-pg-webapp/testbed/plc_server.py --ip 10.0.0.1 --bus-id 0 --case 4 --node-json '{&quot;bus_id&quot;: 0, &quot;name&quot;: &quot;Generator 1&quot;, &quot;type&quot;: &quot;slack&quot;, &quot;vn_kv&quot;: 110.0, &quot;voltage&quot;: 1.06, &quot;pg&quot;: 40.0, &quot;qg&quot;: 0.0, &quot;pl&quot;: 0.0, &quot;ql&quot;: 0.0, &quot;ip&quot;: &quot;10.0.0.1&quot;, &quot;plc_type&quot;: &quot;generic_modbus&quot;, &quot;bus_role&quot;: &quot;generator&quot;}' &gt; ascend.log 2&gt;&amp;1 &amp;
+echo $! &gt; ascend.pid
+</template>
+        <template name="ascend-validate.sh">#!/bin/sh
+set -eu
+sleep 2
+kill -0 &quot;$(cat ascend.pid)&quot;
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python -c 'import socket; socket.create_connection(('&quot;'&quot;'10.0.0.1'&quot;'&quot;', 502), 1).close()'
+</template>
+        <template name="ascend-stop.sh">#!/bin/sh
+if [ -f ascend.pid ]; then kill &quot;$(cat ascend.pid)&quot; 2&gt;/dev/null || true; rm -f ascend.pid; fi
+</template>
+      </templates>
+    </service>
+    <service name="AscendApplicationV1_40fba8700ac2bf1f73b3" node="6">
+      <templates>
+        <template name="ascend-start.sh">#!/bin/sh
+set -eu
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python /mnt/c/project/ascend-pg-webapp/testbed/plc_server.py --ip 10.0.0.2 --bus-id 1 --case 4 --node-json '{&quot;bus_id&quot;: 1, &quot;name&quot;: &quot;Load Bus 2&quot;, &quot;type&quot;: &quot;pq&quot;, &quot;vn_kv&quot;: 110.0, &quot;voltage&quot;: 1.0, &quot;pg&quot;: 0.0, &quot;qg&quot;: 0.0, &quot;pl&quot;: 25.0, &quot;ql&quot;: 5.0, &quot;ip&quot;: &quot;10.0.0.2&quot;, &quot;plc_type&quot;: &quot;generic_modbus&quot;, &quot;bus_role&quot;: &quot;load&quot;}' &gt; ascend.log 2&gt;&amp;1 &amp;
+echo $! &gt; ascend.pid
+</template>
+        <template name="ascend-validate.sh">#!/bin/sh
+set -eu
+sleep 2
+kill -0 &quot;$(cat ascend.pid)&quot;
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python -c 'import socket; socket.create_connection(('&quot;'&quot;'10.0.0.2'&quot;'&quot;', 502), 1).close()'
+</template>
+        <template name="ascend-stop.sh">#!/bin/sh
+if [ -f ascend.pid ]; then kill &quot;$(cat ascend.pid)&quot; 2&gt;/dev/null || true; rm -f ascend.pid; fi
+</template>
+      </templates>
+    </service>
+    <service name="AscendApplicationV1_b27b5caf7dc3376682ce" node="7">
+      <templates>
+        <template name="ascend-start.sh">#!/bin/sh
+set -eu
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python /mnt/c/project/ascend-pg-webapp/testbed/plc_server.py --ip 10.0.0.3 --bus-id 2 --case 4 --node-json '{&quot;bus_id&quot;: 2, &quot;name&quot;: &quot;Load Bus 3&quot;, &quot;type&quot;: &quot;pq&quot;, &quot;vn_kv&quot;: 110.0, &quot;voltage&quot;: 1.0, &quot;pg&quot;: 0.0, &quot;qg&quot;: 0.0, &quot;pl&quot;: 35.0, &quot;ql&quot;: 12.0, &quot;ip&quot;: &quot;10.0.0.3&quot;, &quot;plc_type&quot;: &quot;generic_modbus&quot;, &quot;bus_role&quot;: &quot;load&quot;}' &gt; ascend.log 2&gt;&amp;1 &amp;
+echo $! &gt; ascend.pid
+</template>
+        <template name="ascend-validate.sh">#!/bin/sh
+set -eu
+sleep 2
+kill -0 &quot;$(cat ascend.pid)&quot;
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python -c 'import socket; socket.create_connection(('&quot;'&quot;'10.0.0.3'&quot;'&quot;', 502), 1).close()'
+</template>
+        <template name="ascend-stop.sh">#!/bin/sh
+if [ -f ascend.pid ]; then kill &quot;$(cat ascend.pid)&quot; 2&gt;/dev/null || true; rm -f ascend.pid; fi
+</template>
+      </templates>
+    </service>
+    <service name="AscendApplicationV1_85437774251a08a63244" node="8">
+      <templates>
+        <template name="ascend-start.sh">#!/bin/sh
+set -eu
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python /mnt/c/project/ascend-pg-webapp/testbed/plc_server.py --ip 10.0.0.4 --bus-id 3 --case 4 --node-json '{&quot;bus_id&quot;: 3, &quot;name&quot;: &quot;Bus 4&quot;, &quot;type&quot;: &quot;pv&quot;, &quot;vn_kv&quot;: 110.0, &quot;voltage&quot;: 1.0, &quot;pg&quot;: 0.0, &quot;qg&quot;: 0.0, &quot;pl&quot;: 0.0, &quot;ql&quot;: 0.0, &quot;ip&quot;: &quot;10.0.0.4&quot;, &quot;plc_type&quot;: &quot;generic_modbus&quot;, &quot;bus_role&quot;: &quot;generator&quot;}' &gt; ascend.log 2&gt;&amp;1 &amp;
+echo $! &gt; ascend.pid
+</template>
+        <template name="ascend-validate.sh">#!/bin/sh
+set -eu
+sleep 2
+kill -0 &quot;$(cat ascend.pid)&quot;
+/mnt/c/project/ascend-pg-webapp/.venv-wsl/bin/python -c 'import socket; socket.create_connection(('&quot;'&quot;'10.0.0.4'&quot;'&quot;', 502), 1).close()'
+</template>
+        <template name="ascend-stop.sh">#!/bin/sh
+if [ -f ascend.pid ]; then kill &quot;$(cat ascend.pid)&quot; 2&gt;/dev/null || true; rm -f ascend.pid; fi
+</template>
+      </templates>
+    </service>
+  </service_configurations>
+  <session_origin lat="47.579166412353516" lon="-122.13232421875" alt="2.0" scale="150.0"/>
+  <session_options>
+    <configuration name="controlnet" value=""/>
+    <configuration name="enablerj45" value="1"/>
+    <configuration name="preservedir" value="0"/>
+    <configuration name="enablesdt" value="0"/>
+    <configuration name="ovs" value="0"/>
+  </session_options>
+  <session_metadata>
+    <configuration name="shapes" value="[]"/>
+    <configuration name="hidden" value="[]"/>
+    <configuration name="canvas" value="{&quot;gridlines&quot;: true, &quot;dimensions&quot;: [1200, 900], &quot;canvases&quot;: [{&quot;id&quot;: 1, &quot;wallpaper&quot;: null, &quot;wallpaper_style&quot;: 1, &quot;fit_image&quot;: false}]}"/>
+    <configuration name="edges" value="[]"/>
+  </session_metadata>
+  <default_services>
+    <node type="PC">
+      <service name="DefaultRoute"/>
+    </node>
+    <node type="host">
+      <service name="DefaultRoute"/>
+    </node>
+  </default_services>
+</scenario>

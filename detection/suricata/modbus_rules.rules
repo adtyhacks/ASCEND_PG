@@ -1,3 +1,5 @@
+# Rate counters use source/destination pairs: normal SCADA polls span 14/30 PLCs.
+# Aggregating every PLC under one source incorrectly classified the baseline as a flood.
 # modbus_rules.rules — ASCEND-PG v2 testbed (Suricata IDS detection layer)
 # Custom Suricata rules for detecting the testbed's recon + attack traffic.
 # Syntax verified against Suricata's documented `modbus` keyword — test with
@@ -66,12 +68,12 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG CmdInject - Diagnostics Clear Co
 # Many simultaneous TCP connections without Modbus requests trigger
 # Suricata's connection tracking limits. The modbus.flooded event
 # (sid:9000002) may also fire. Additional TCP-level detection:
-alert tcp any any -> any 502 (msg:"ASCEND-PG DoS - Rapid TCP SYN to Modbus (T0814)"; flags:S; threshold:type both, track by_src, count 20, seconds 5; classtype:attempted-dos; sid:9000010; rev:1;)
+alert tcp any any -> any 502 (msg:"ASCEND-PG DoS - Rapid TCP SYN to Modbus (T0814)"; flags:S; flow:to_server; threshold:type both, track by_both, count 20, seconds 5; classtype:attempted-dos; sid:9000010; rev:2;)
 
 # ===== DoS — Sub-Threshold Read Flood (T0814) =====
 # Detects dos_quiet: 100 FC03 reads in 5s on one connection.
 # Falls below modbus.flooded threshold (500) so uses rate-based detection.
-alert modbus any any -> any 502 (msg:"ASCEND-PG DoS - Sub-Threshold Read Flood (T0814)"; flow:to_server, established; dsize:<20; threshold:type both, track by_src, count 50, seconds 5; classtype:attempted-dos; sid:9000020; rev:1;)
+alert modbus any any -> any 502 (msg:"ASCEND-PG DoS - Sub-Threshold Read Flood (T0814)"; flow:to_server, established; dsize:<20; threshold:type both, track by_both, count 50, seconds 5; classtype:attempted-dos; sid:9000020; rev:2;)
 
 # ===== MITM — Modbus on Non-Standard Port 503 (T0830) =====
 # mitm_proxy.py listens on TCP 503 and forwards to PLC on 502.
@@ -82,7 +84,7 @@ alert tcp any any -> any 503 (msg:"ASCEND-PG MITM - Modbus on Non-Standard Port 
 # ===== Brute Force — Rapid Register Enumeration (T0806) =====
 # brute_force_io.py sends 200 FC03 reads cycling registers 0-99 in 2s.
 # Below modbus.flooded threshold; detected by rate.
-alert modbus any any -> any 502 (msg:"ASCEND-PG BruteForce - Rapid Register Enumeration (T0806)"; flow:to_server, established; dsize:<20; threshold:type both, track by_src, count 50, seconds 3; classtype:attempted-recon; sid:9000023; rev:1;)
+alert modbus any any -> any 502 (msg:"ASCEND-PG BruteForce - Rapid Register Enumeration (T0806)"; flow:to_server, established; dsize:<20; threshold:type both, track by_both, count 50, seconds 3; classtype:attempted-recon; sid:9000023; rev:2;)
 
 # ===== Denial of View — Forged FC06 Response (T0815) =====
 # denial_of_view.py sends forged FC06 writes to SCADA host.
@@ -98,12 +100,12 @@ alert modbus any any -> any 502 (msg:"ASCEND-PG Recon - Coil Read FC01 (T0801)";
 # ===== Remote Services (T0886) — SSH to OT-zone hosts =====
 # remote_services.py pivots via SSH to dual-homed SCADA host, then
 # reaches PLCs on port 502. Detect SSH connections to OT-zone hosts.
-alert tcp any any -> any 22 (msg:"ASCEND-PG Remote Services - SSH to OT Host (T0886)"; flags:S; threshold:type both, track by_src, count 3, seconds 60; classtype:attempted-lateral-movement; sid:9000026; rev:1;)
+alert tcp any any -> any 22 (msg:"ASCEND-PG Remote Services - SSH to OT Host (T0886)"; flags:S; flow:to_server; threshold:type both, track by_src, count 3, seconds 60; classtype:attempted-admin; sid:9000026; rev:2;)
 
 # ===== Automated Collection (T0802) — Broad register scan =====
 # automated_collection.py scans all PLCs reading holding/input registers
 # and coils. High-volume Modbus reads from non-SCADA source.
-alert modbus any any -> any 502 (msg:"ASCEND-PG AutoCollection - Broad Register Scan (T0802)"; flow:to_server, established; dsize:<20; threshold:type both, track by_src, count 30, seconds 5; classtype:attempted-recon; sid:9000027; rev:1;)
+alert modbus any any -> any 502 (msg:"ASCEND-PG AutoCollection - Broad Register Scan (T0802)"; flow:to_server, established; dsize:<20; threshold:type both, track by_both, count 30, seconds 5; classtype:attempted-recon; sid:9000027; rev:2;)
 
 # ===== Standard App Layer Protocol C2 (T0869) — Suspicious register writes =====
 # standard_protocol_c2.py embeds C2 commands in Modbus register values.

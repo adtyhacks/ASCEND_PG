@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Full integration test: topology + PLC server + templates + attacks."""
 import sys
+from pathlib import Path
 import numpy as np
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from testbed.topology import Topology, load_topology, set_topology
 from testbed.plc_server import build_context
@@ -39,7 +42,7 @@ env = AttackStrategyEnv(topology=topo)
 obs, _ = env.reset()
 print(f"   obs_dim={env.obs_dim}, shape={obs.shape}")
 from stable_baselines3 import PPO
-model = PPO.load("/home/adty17/ascend-pg-webapp/models/rl_agent.zip")
+model = PPO.load(str(REPO_ROOT / "models" / "rl_agent.zip"))
 for i in range(3):
     action, _ = model.predict(obs, deterministic=True)
     action = np.asarray(action, dtype=np.int64).flatten()

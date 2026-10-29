@@ -62,7 +62,7 @@ def run_restart(target: str, port: int, unit: int, coil_address: int, log_path: 
     try:
         # Write restart coil
         print(f"[device_restart] Writing restart coil at address {coil_address}")
-        result = client.write_coil(coil_address, RESTART_COIL_VALUE, slave=unit)
+        result = client.write_coil(address=coil_address, value=RESTART_COIL_VALUE, device_id=unit)
 
         if result.isError():
             print(f"[device_restart] Coil write returned error: {result}")

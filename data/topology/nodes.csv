@@ -1,15 +1,15 @@
-bus_id,name,type,voltage,ip
-0,Bus1 (Slack),slack,1.060,10.0.0.1
-1,Bus2 (PV),pv,1.045,10.0.0.2
-2,Bus3 (PV),pv,1.010,10.0.0.3
-3,Bus4 (PV),pv,1.070,10.0.0.4
-4,Bus5 (PV),pv,1.080,10.0.0.5
-5,Bus6 (PQ),pq,1.019,10.0.0.6
-6,Bus7 (PQ),pq,1.020,10.0.0.7
-7,Bus8 (PQ),pq,1.062,10.0.0.8
-8,Bus9 (PQ),pq,1.056,10.0.0.9
-9,Bus10 (PQ),pq,1.051,10.0.0.10
-10,Bus11 (PQ),pq,1.057,10.0.0.11
-11,Bus12 (PQ),pq,1.055,10.0.0.12
-12,Bus13 (PQ),pq,1.050,10.0.0.13
-13,Bus14 (PQ),pq,1.036,10.0.0.14
+bus_id,name,type,voltage,ip,plc_type,bus_role,pg,qg,pl,ql
+0,Bus1,slack,1.06,10.0.0.1,siemens_s7_1200,generator,0.0,0.0,0.0,0.0
+1,Bus2,pv,1.0450000000000002,10.0.0.2,siemens_s7_1500,generator,0.0,0.0,0.0,0.0
+2,Bus3,pv,1.0100000000000002,10.0.0.3,allen_bradley_compactlogix,generator,0.0,0.0,0.0,0.0
+3,Bus4,pq,1.0176708536979624,10.0.0.4,schneider_modicon_m340,load,0.0,0.0,0.0,0.0
+4,Bus5,pq,1.0195138598245428,10.0.0.5,generic_modbus,load,0.0,0.0,0.0,0.0
+5,Bus6,pv,1.0700000000000005,10.0.0.6,siemens_s7_1200,generator,0.0,0.0,0.0,0.0
+6,Bus7,pq,1.061519532494147,10.0.0.7,siemens_s7_1500,load,0.0,0.0,0.0,0.0
+7,Bus8,pv,1.09,10.0.0.8,allen_bradley_compactlogix,generator,0.0,0.0,0.0,0.0
+8,Bus9,pq,1.0559317206401937,10.0.0.9,schneider_modicon_m340,load,0.0,0.0,0.0,0.0
+9,Bus10,pq,1.0509846250025676,10.0.0.10,generic_modbus,load,0.0,0.0,0.0,0.0
+10,Bus11,pq,1.0569065185417772,10.0.0.11,siemens_s7_1200,load,0.0,0.0,0.0,0.0
+11,Bus12,pq,1.0551885631974163,10.0.0.12,siemens_s7_1500,load,0.0,0.0,0.0,0.0
+12,Bus13,pq,1.0503817136292168,10.0.0.13,allen_bradley_compactlogix,load,0.0,0.0,0.0,0.0
+13,Bus14,pq,1.0355299458561895,10.0.0.14,schneider_modicon_m340,load,0.0,0.0,0.0,0.0

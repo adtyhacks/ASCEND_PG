@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Test with 30-bus topology."""
 import sys
+from pathlib import Path
 import numpy as np
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
 
-from testbed.topology import Topology, set_topology
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from testbed.topology import Topology, set_topology, load_case
 from strategic.rl_env import AttackStrategyEnv
 from stable_baselines3 import PPO
 
-model = PPO.load("/home/adty17/ascend-pg-webapp/models/rl_agent.zip")
+model = PPO.load(str(REPO_ROOT / "models" / "rl_agent.zip"))
 
 # 30-bus topology: 6 generators, 24 load buses, 40 edges
 nodes = []

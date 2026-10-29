@@ -1,7 +1,5 @@
-streamlit
 pandapower
 pyvis
-pymodbus
 numpy
 pandas
 scikit-learn
@@ -18,3 +16,4 @@ weasyprint
 pymodbus==3.14.*
 fpdf2
 markdown
+scapy

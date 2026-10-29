@@ -63,17 +63,15 @@ def log_event(log_path: Path, event: dict):
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(event) + "\n")
+        f.write(json.dumps(event, default=_json_safe) + "\n")
 
 
 def nmap_sweep(subnet: str, log_path: Path) -> list:
     """Real nmap TCP sweep for port 502 across the given subnet.
     Returns list of IPs found with Modbus port open.
 
-    In Mininet, the virtual network only has 7 hosts (PLCs + SCADA +
-    attacker on .1–.7). Scanning a full /24 means nmap waits on 247
-    non-existent hosts. We auto-detect the /24 case and restrict the
-    scan to .1–.7, or use whatever range was explicitly passed in.
+    Preserve the requested subnet/range so all current CORE PLCs can be
+    discovered, including IEEE-14 and IEEE-30 nodes above .7.
     """
     print(f"[recon] nmap sweep of {subnet} for open Modbus port {MODBUS_PORT} ...")
     log_event(log_path, {
@@ -81,15 +79,7 @@ def nmap_sweep(subnet: str, log_path: Path) -> list:
         "action": "nmap_sweep_start", "subnet": subnet,
     })
 
-    # For a /24 input restrict to .1–.7 (the 7 Mininet hosts).
-    # For anything more specific (e.g. 10.0.0.1-7) use as-is.
-    if subnet.endswith("/24"):
-        base = subnet.rsplit(".", 1)[0]
-        scan_target = f"{base}.1-7"
-        print(f"[recon] /24 detected — restricting scan to {scan_target} "
-              "(Mininet has 7 hosts)")
-    else:
-        scan_target = subnet
+    scan_target = subnet
 
     result = subprocess.run(
         [

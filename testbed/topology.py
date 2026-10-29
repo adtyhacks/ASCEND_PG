@@ -1,97 +1,72 @@
 """
-ASCEND-PG — Dynamic Topology Loader
+ASCEND-PG — Dynamic Topology Loader & Single Source of Truth
 
-Parses CSV files describing custom ICS network topologies and provides
-adjacency matrices, bus metadata, and device info for all components
-(RL env, PLC server, Mininet testbed).
-
-CSV Format (two files):
-
-  nodes.csv:
-    bus_id,name,type,voltage,ip,plc_type,bus_role,pg,qg,pl,ql
-    0,Bus1,slack,1.060,10.0.0.1,siemens_s7_1200,generator,232.4,-16.9,0.0,0.0
-    1,Bus2,pv,1.045,10.0.0.2,allen_bradley_compactlogix,generator,40.0,42.4,21.7,12.7
-    ...
-
-  edges.csv:
-    from_bus,to_bus,line_name
-    0,1,L1-2
-    0,2,L1-3
-    ...
-
-Optional columns in nodes.csv:
-  - plc_type: PLC template name (default: generic_modbus)
-  - bus_role: generator, load, substation (default: from type)
-  - pg, qg, pl, ql: power flow values (optional)
+Parses CSV files or builds IEEE topologies directly from Pandapower
+(IEEE-14 and IEEE-30). Provides adjacency matrices, bus metadata,
+and device info for all components (RL env, PLC server, CORE testbed, UI, reporting).
 """
 
 import csv
 import os
+import math
+import re
+import json
+import hashlib
+import threading
 from collections import defaultdict
 from pathlib import Path
+from typing import List, Tuple, Dict, Any, Union, Optional
 
-# Defaults if no CSV provided (IEEE-14)
-DEFAULT_NODES = [
-    {"bus_id": 0, "name": "Bus1", "type": "slack", "voltage": 1.060, "ip": "10.0.0.1",
-     "plc_type": "siemens_s7_1200", "bus_role": "generator", "pg": 232.4, "qg": -16.9, "pl": 0.0, "ql": 0.0},
-    {"bus_id": 1, "name": "Bus2", "type": "PV", "voltage": 1.045, "ip": "10.0.0.2",
-     "plc_type": "siemens_s7_1500", "bus_role": "generator", "pg": 40.0, "qg": 42.4, "pl": 21.7, "ql": 12.7},
-    {"bus_id": 2, "name": "Bus3", "type": "PV", "voltage": 1.010, "ip": "10.0.0.3",
-     "plc_type": "allen_bradley_compactlogix", "bus_role": "generator", "pg": 0.0, "qg": 23.4, "pl": 94.2, "ql": 19.0},
-    {"bus_id": 3, "name": "Bus4", "type": "PV", "voltage": 1.070, "ip": "10.0.0.4",
-     "plc_type": "schneider_modicon_m340", "bus_role": "generator", "pg": 0.0, "qg": -6.3, "pl": 11.2, "ql": 7.5},
-    {"bus_id": 4, "name": "Bus5", "type": "PV", "voltage": 1.080, "ip": "10.0.0.5",
-     "plc_type": "siemens_s7_1200", "bus_role": "generator", "pg": 0.0, "qg": 17.4, "pl": 0.0, "ql": 0.0},
-    {"bus_id": 5, "name": "Bus6", "type": "PQ", "voltage": 1.019, "ip": "10.0.0.6",
-     "plc_type": "allen_bradley_compactlogix", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 47.8, "ql": -3.9},
-    {"bus_id": 6, "name": "Bus7", "type": "PQ", "voltage": 1.020, "ip": "10.0.0.7",
-     "plc_type": "schneider_modicon_m340", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 7.6, "ql": 1.6},
-    {"bus_id": 7, "name": "Bus8", "type": "PQ", "voltage": 1.062, "ip": "10.0.0.8",
-     "plc_type": "generic_modbus", "bus_role": "substation", "pg": 0.0, "qg": 0.0, "pl": 0.0, "ql": 0.0},
-    {"bus_id": 8, "name": "Bus9", "type": "PQ", "voltage": 1.056, "ip": "10.0.0.9",
-     "plc_type": "siemens_s7_1500", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 29.5, "ql": 16.6},
-    {"bus_id": 9, "name": "Bus10", "type": "PQ", "voltage": 1.051, "ip": "10.0.0.10",
-     "plc_type": "generic_modbus", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 9.0, "ql": 5.8},
-    {"bus_id": 10, "name": "Bus11", "type": "PQ", "voltage": 1.057, "ip": "10.0.0.11",
-     "plc_type": "allen_bradley_compactlogix", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 3.5, "ql": 1.8},
-    {"bus_id": 11, "name": "Bus12", "type": "PQ", "voltage": 1.055, "ip": "10.0.0.12",
-     "plc_type": "schneider_modicon_m340", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 6.1, "ql": 1.6},
-    {"bus_id": 12, "name": "Bus13", "type": "PQ", "voltage": 1.050, "ip": "10.0.0.13",
-     "plc_type": "siemens_s7_1200", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 13.5, "ql": 5.8},
-    {"bus_id": 13, "name": "Bus14", "type": "PQ", "voltage": 1.036, "ip": "10.0.0.14",
-     "plc_type": "generic_modbus", "bus_role": "load", "pg": 0.0, "qg": 0.0, "pl": 14.9, "ql": 5.0},
-]
-
-DEFAULT_EDGES = [
-    (0, 1), (0, 2), (0, 4),
-    (1, 2), (1, 3), (1, 4),
-    (2, 3),
-    (3, 6),
-    (4, 5), (4, 6), (4, 7),
-    (5, 8),
-    (6, 9),
-    (7, 8), (7, 9), (7, 10),
-    (8, 9),
-    (8, 11), (8, 12),
-    (9, 10),
-    (10, 11),
-    (11, 12),
-    (11, 13),
-]
+from testbed.ip_config import get_plc_ip, SCADA_IP, ATTACKER_IP, MONITOR_IP
 
 # Type mapping
-TYPE_MAP = {"slack": 3, "slack_bus": 3, "gen": 3, "generator": 3,
-            "pv": 1, "PV": 1, "voltage_control": 1,
-            "pq": 2, "PQ": 2, "load": 2}
+TYPE_MAP = {
+    "slack": 3, "slack_bus": 3, "gen": 3, "generator": 3,
+    "pv": 1, "PV": 1, "voltage_control": 1,
+    "pq": 2, "PQ": 2, "load": 2
+}
 
+PLC_TEMPLATES = [
+    "siemens_s7_1200", "siemens_s7_1500", "allen_bradley_compactlogix",
+    "schneider_modicon_m340", "generic_modbus"
+]
+
+# Serialize canonical selection with GUI CORE generation, not CORE ownership.
+TOPOLOGY_LOCK = threading.RLock()
+SELECTION_PATH = Path(__file__).resolve().parents[1] / "data" / "topology_selection.json"
+
+def run_power_flow(net):
+    """Run pandapower with its current pandas-3 writable-result compatibility gap."""
+    import pandas as pd
+    import pandapower as pp
+    if int(pd.__version__.split(".", 1)[0]) < 3:
+        pp.runpp(net)
+        return
+    series_values = pd.Series.values
+    frame_values = pd.DataFrame.values
+    def writable(descriptor, owner):
+        def getter(value):
+            result = descriptor.__get__(value, owner)
+            if not result.flags.writeable:
+                result.setflags(write=True)
+            return result
+        return property(getter)
+    with TOPOLOGY_LOCK:
+        try:
+            pd.Series.values = writable(series_values, pd.Series)
+            pd.DataFrame.values = writable(frame_values, pd.DataFrame)
+            pp.runpp(net)
+        finally:
+            pd.Series.values = series_values
+            pd.DataFrame.values = frame_values
 
 class Topology:
     """
-    Represents an ICS network topology parsed from CSV or defaults.
+    Represents an ICS network topology parsed from CSV, defaults, or Pandapower.
 
     Attributes:
         num_buses: Number of nodes (PLCs)
-        nodes: List of node dicts with bus_id, name, type, voltage, ip
+        nodes: List of node dicts with bus_id, name, type, voltage, ip, plc_type, bus_role
         edges: List of (from_bus, to_bus) tuples
         adj: Adjacency matrix (num_buses x num_buses)
         bus_types: List of type codes (3=slack, 1=PV, 2=PQ)
@@ -101,29 +76,42 @@ class Topology:
         ip_map: Dict mapping bus_id -> IP address
         name_map: Dict mapping bus_id -> name
         max_degree: Maximum bus degree in the topology
+        case_name: Case identifier (e.g. 'case14', 'case30', 'custom')
     """
 
-    def __init__(self, nodes: list = None, edges: list = None):
-        if nodes is None:
-            nodes = DEFAULT_NODES.copy()
-        if edges is None:
-            edges = DEFAULT_EDGES.copy()
+    def __init__(self, nodes: list = None, edges: list = None, case_name: str = "case14"):
+        if nodes is None or edges is None:
+            # Build default IEEE-14
+            default_topo = Topology.from_pandapower("case14")
+            nodes = default_topo.nodes
+            edges = default_topo.edge_models
 
         self.nodes = nodes
-        self.edges = edges
+        self.edge_models = []
+        self.edges = []
+        for edge in edges:
+            if isinstance(edge, dict):
+                model = dict(edge)
+                left, right = int(model["from"]), int(model["to"])
+            else:
+                left, right = int(edge[0]), int(edge[1])
+                model = {"from": left, "to": right}
+            self.edges.append((left, right))
+            self.edge_models.append(model)
         self.num_buses = len(nodes)
+        self.case_name = case_name
 
         # Build lookup dicts
-        self.ip_map = {}
-        self.name_map = {}
-        self.bus_types = []
-        self.voltages = []
+        self.ip_map: Dict[int, str] = {}
+        self.name_map: Dict[int, str] = {}
+        self.bus_types: List[int] = []
+        self.voltages: List[float] = []
         self.bus_id_set = set()
 
         for node in nodes:
             bid = int(node["bus_id"])
             self.bus_id_set.add(bid)
-            self.ip_map[bid] = node.get("ip", f"10.0.0.{bid + 1}")
+            self.ip_map[bid] = node.get("ip", get_plc_ip(bid))
             self.name_map[bid] = node.get("name", f"Bus{bid + 1}")
             self.bus_types.append(TYPE_MAP.get(str(node.get("type", "pq")).lower(), 2))
             self.voltages.append(float(node.get("voltage", 1.0)))
@@ -159,7 +147,6 @@ class Topology:
                     depth[neighbor] = depth[current] + 1
                     queue.append(neighbor)
 
-        # Replace inf with max depth + 1 for unreachable
         max_d = max((d for d in depth if d != float("inf")), default=0)
         return [d if d != float("inf") else max_d + 1 for d in depth]
 
@@ -181,7 +168,7 @@ class Topology:
 
     def get_ip(self, bus_id: int) -> str:
         """Get IP address for a bus."""
-        return self.ip_map.get(bus_id, f"10.0.0.{bus_id + 1}")
+        return self.ip_map.get(bus_id, get_plc_ip(bus_id))
 
     def get_bus_id_by_ip(self, ip: str) -> int:
         """Reverse lookup: IP -> bus_id."""
@@ -193,9 +180,10 @@ class Topology:
     def to_dict(self) -> dict:
         """Serialize topology to a dict (for JSON storage)."""
         return {
+            "case_name": self.case_name,
             "num_buses": self.num_buses,
             "nodes": self.nodes,
-            "edges": [{"from": e[0], "to": e[1]} for e in self.edges],
+            "edges": [dict(e) for e in self.edge_models],
             "bus_types": self.bus_types,
             "voltages": self.voltages,
             "bus_degrees": self.bus_degrees,
@@ -203,37 +191,244 @@ class Topology:
             "ip_map": {str(k): v for k, v in self.ip_map.items()},
         }
 
+    def canonical_snapshot(self) -> dict:
+        """Return the one topology projection consumed by CORE, the UI and runs.
+
+        The electrical bus data remains the source of truth.  CORE-only hosts are
+        added here because they are part of every generated CORE scenario, rather
+        than being recreated independently by a visualisation module.
+        """
+        nodes = [
+            {"id": "hub", "hostname": "s1", "node_type": "hub", "role": "network", "zone": "network", "ip": None, "interfaces": [], "services": [], "operating_system": "CORE", "core_id": 1},
+            {"id": "scada", "hostname": "scada", "node_type": "scada", "role": "operator", "zone": "operations", "ip": SCADA_IP, "interfaces": ["eth0"], "services": ["Modbus/TCP client"], "operating_system": "Linux", "core_id": 2},
+            {"id": "attacker", "hostname": "attacker", "node_type": "attacker", "role": "red-team", "zone": "external", "ip": ATTACKER_IP, "interfaces": ["eth0"], "services": [], "operating_system": "Linux", "core_id": 3, "security": {"designation": "attacker"}},
+            {"id": "ids_monitor", "hostname": "ids_monitor", "node_type": "ids", "role": "defender", "zone": "monitoring", "ip": MONITOR_IP, "interfaces": ["eth0"], "services": ["Suricata"], "operating_system": "Linux", "core_id": 4, "security": {"designation": "defender"}},
+        ]
+        links = []
+        for node in self.nodes:
+            bus_id = int(node["bus_id"])
+            node_id = f"plc{bus_id + 1}"
+            nodes.append({
+                "id": node_id, "hostname": node_id, "node_type": "plc",
+                "role": node.get("bus_role", "load"), "zone": "field",
+                "ip": self.get_ip(bus_id), "interfaces": ["eth0"],
+                "services": ["Modbus/TCP"], "operating_system": "Linux",
+                "core_id": bus_id + 5, "bus_id": bus_id,
+                "plc_type": node.get("plc_type", "generic_modbus"),
+                "security": {"designation": "asset"},
+            })
+            links.append({"from": "hub", "to": node_id, "type": "comm", "protocol": "TCP/IP", "core_link": True})
+        for device in ("scada", "attacker", "ids_monitor"):
+            links.append({"from": "hub", "to": device, "type": "comm", "protocol": "TCP/IP", "core_link": True})
+        for left, right in self.edges:
+            links.append({"from": f"plc{left + 1}", "to": f"plc{right + 1}", "type": "power_line", "protocol": "electrical", "core_link": False})
+        version_payload = json.dumps({"nodes": self.nodes, "edges": self.edge_models}, sort_keys=True, separators=(",", ":"))
+        return {"schema": "ascend.topology/v1", "case_name": self.case_name,
+                "topology_version": f"{self.case_name}:{self.num_buses}:{hashlib.sha256(version_payload.encode()).hexdigest()[:12]}",
+                "nodes": nodes, "links": links}
+
     @classmethod
     def from_dict(cls, data: dict) -> "Topology":
         """Load topology from a serialized dict."""
-        nodes = data.get("nodes", DEFAULT_NODES)
-        edges_raw = data.get("edges", DEFAULT_EDGES)
-        edges = [(e["from"], e["to"]) if isinstance(e, dict) else tuple(e) for e in edges_raw]
-        return cls(nodes=nodes, edges=edges)
+        nodes = data.get("nodes", [])
+        edges_raw = data.get("edges", [])
+        case_name = data.get("case_name", "custom")
+        return cls(nodes=nodes, edges=edges_raw, case_name=case_name)
+
+    @classmethod
+    def from_custom_dict(cls, data: dict) -> "Topology":
+        """Validate the existing bus/edge representation for the CORE GUI workflow."""
+        from testbed.ip_config import MAX_PLC_COUNT
+        if not isinstance(data, dict):
+            raise ValueError("Custom topology must be a JSON object.")
+        case = data.get("case_name", "custom_grid")
+        if not isinstance(case, str) or not re.fullmatch(r"custom_[a-z0-9_]{1,40}", case):
+            raise ValueError("case_name must start with custom_ and contain lowercase letters, digits or underscores.")
+        source = data.get("nodes")
+        if not isinstance(source, list) or not 1 <= len(source) <= MAX_PLC_COUNT:
+            raise ValueError(f"Custom topology needs 1–{MAX_PLC_COUNT} PLC buses.")
+        nodes = []
+        slack_count = 0
+        for bus_id, item in enumerate(source):
+            if not isinstance(item, dict) or type(item.get("bus_id")) is not int or item["bus_id"] != bus_id:
+                raise ValueError("Nodes must have ordered, consecutive bus_id values starting at 0.")
+            node = dict(item)
+            name = node.get("name", f"Bus{bus_id + 1}")
+            if not isinstance(name, str) or not name.strip() or len(name) > 80:
+                raise ValueError("Each bus name must be a nonempty string of at most 80 characters.")
+            kind = node.get("type", "pq")
+            if not isinstance(kind, str) or kind not in {"slack", "pv", "pq"}:
+                raise ValueError("Bus type must be slack, pv or pq.")
+            slack_count += kind == "slack"
+            ip = get_plc_ip(bus_id)
+            if node.get("ip", ip) != ip:
+                raise ValueError(f"Bus {bus_id} must use canonical address {ip}.")
+            plc_type = node.get("plc_type", "generic_modbus")
+            if not isinstance(plc_type, str) or plc_type not in PLC_TEMPLATES:
+                raise ValueError("Unknown PLC template.")
+            node.update(name=name, type=kind, ip=ip, plc_type=plc_type,
+                        bus_role=node.get("bus_role", "generator" if kind in {"slack", "pv"} else "load"))
+            for key, default in (("voltage", 1.0), ("vn_kv", 110.0), ("pg", 0.0), ("qg", 0.0), ("pl", 0.0), ("ql", 0.0)):
+                value = node.get(key, default)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (key == "voltage" and value <= 0):
+                    raise ValueError(f"{key} must be a finite number; voltage must be positive.")
+                node[key] = float(value)
+            nodes.append(node)
+        if slack_count != 1:
+            raise ValueError("Custom electrical topology must contain exactly one slack bus.")
+        source_edges = data.get("edges", [])
+        if not isinstance(source_edges, list):
+            raise ValueError("edges must be an array of bus pairs.")
+        edges, seen = [], set()
+        line_defaults = {"length_km": 1.0, "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.1,
+                         "c_nf_per_km": 0.0, "max_i_ka": 0.4}
+        for edge in source_edges:
+            pair = [edge.get("from"), edge.get("to")] if isinstance(edge, dict) else edge
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2 or any(type(i) is not int or not 0 <= i < len(nodes) for i in pair):
+                raise ValueError("Every edge must reference two existing integer bus IDs.")
+            key = tuple(sorted(pair))
+            if pair[0] == pair[1] or key in seen:
+                raise ValueError("Self-links and duplicate electrical links are not allowed.")
+            seen.add(key)
+            line = {"from": pair[0], "to": pair[1]}
+            for field, default in line_defaults.items():
+                value = edge.get(field, default) if isinstance(edge, dict) else default
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 and field != "c_nf_per_km" or value < 0:
+                    raise ValueError(f"{field} must be a finite non-negative number (and positive except capacitance).")
+                line[field] = float(value)
+            edges.append(line)
+        if len(nodes) > 1:
+            reached, pending = {0}, [0]
+            adjacency = defaultdict(set)
+            for edge in edges:
+                adjacency[edge["from"]].add(edge["to"]); adjacency[edge["to"]].add(edge["from"])
+            while pending:
+                current = pending.pop()
+                for neighbor in adjacency[current] - reached:
+                    reached.add(neighbor); pending.append(neighbor)
+            if len(reached) != len(nodes):
+                raise ValueError("Every bus must be connected to the electrical network.")
+        return cls(nodes=nodes, edges=edges, case_name=case)
+
+    def to_pandapower(self):
+        """Build the electrical simulation from this canonical topology."""
+        import pandapower as pp
+        net = pp.create_empty_network()
+        buses = {}
+        for node in self.nodes:
+            bid = int(node["bus_id"])
+            buses[bid] = pp.create_bus(net, vn_kv=float(node.get("vn_kv", 110.0)), name=node.get("name", f"Bus {bid + 1}"))
+            kind = str(node.get("type", "pq")).lower()
+            if kind == "slack":
+                pp.create_ext_grid(net, buses[bid], vm_pu=float(node.get("voltage", 1.0)), name=f"Slack {bid + 1}")
+            elif kind == "pv":
+                generation_p = float(node.get("pg", 0.0))
+                generation_q = float(node.get("qg", 0.0))
+                # A zero-output custom generator is an inactive configured
+                # component, not an unlimited voltage controller. Otherwise a
+                # setpoint difference can create enormous circulating reactive
+                # power across short, low-impedance lines.
+                if generation_p or generation_q:
+                    pp.create_gen(net, buses[bid], p_mw=generation_p,
+                                  vm_pu=float(node.get("voltage", 1.0)), name=f"Generator {bid + 1}")
+            load_p, load_q = float(node.get("pl", 0.0)), float(node.get("ql", 0.0))
+            if load_p or load_q:
+                pp.create_load(net, buses[bid], p_mw=load_p, q_mvar=load_q, name=f"Load {bid + 1}")
+        for index, line in enumerate(self.edge_models):
+            pp.create_line_from_parameters(net, buses[int(line["from"])], buses[int(line["to"])],
+                length_km=float(line.get("length_km", 1.0)), r_ohm_per_km=float(line.get("r_ohm_per_km", 0.1)),
+                x_ohm_per_km=float(line.get("x_ohm_per_km", 0.1)), c_nf_per_km=float(line.get("c_nf_per_km", 0.0)),
+                max_i_ka=float(line.get("max_i_ka", 0.4)), name=f"Line {index + 1}")
+        run_power_flow(net)
+        return net
+
+    @classmethod
+    def from_pandapower(cls, case: Union[str, int] = "case14") -> "Topology":
+        """Build Topology directly from standard Pandapower cases (case14 or case30)."""
+        import pandapower.networks as pn
+        import pandapower as pp
+
+        case_str = str(case).lower().replace("ieee", "").replace("-", "").strip()
+        if "30" in case_str:
+            net = pn.case30()
+            canonical_name = "case30"
+        else:
+            net = pn.case14()
+            canonical_name = "case14"
+
+        try:
+            run_power_flow(net)
+            solved = True
+        except Exception:
+            solved = False
+
+        slack_buses = set(net.ext_grid["bus"].tolist()) if hasattr(net, "ext_grid") else set()
+        gen_buses = set(net.gen["bus"].tolist()) if hasattr(net, "gen") else set()
+
+        nodes = []
+        for i in net.bus.index:
+            bid = int(i)
+            if bid in slack_buses:
+                btype = "slack"
+                role = "generator"
+            elif bid in gen_buses:
+                btype = "pv"
+                role = "generator"
+            else:
+                btype = "pq"
+                role = "load"
+
+            if solved and hasattr(net, "res_bus") and not net.res_bus.empty and bid in net.res_bus.index:
+                voltage = float(net.res_bus.at[bid, "vm_pu"])
+            else:
+                voltage = float(net.bus.at[bid, "vn_kv"] / net.bus.at[bid, "vn_kv"]) if net.bus.at[bid, "vn_kv"] else 1.0
+
+            plc_template = PLC_TEMPLATES[bid % len(PLC_TEMPLATES)]
+
+            nodes.append({
+                "bus_id": bid,
+                "name": f"Bus{bid + 1}",
+                "type": btype,
+                "voltage": voltage,
+                "ip": get_plc_ip(bid),
+                "plc_type": plc_template,
+                "bus_role": role,
+                "pg": 0.0,
+                "qg": 0.0,
+                "pl": 0.0,
+                "ql": 0.0,
+            })
+
+        edges = []
+        if hasattr(net, "line") and not net.line.empty:
+            for _, line in net.line.iterrows():
+                u, v = int(line["from_bus"]), int(line["to_bus"])
+                if (u, v) not in edges and (v, u) not in edges:
+                    edges.append((u, v))
+
+        if hasattr(net, "trafo") and not net.trafo.empty:
+            for _, trafo in net.trafo.iterrows():
+                u, v = int(trafo["hv_bus"]), int(trafo["lv_bus"])
+                if (u, v) not in edges and (v, u) not in edges:
+                    edges.append((u, v))
+
+        return cls(nodes=nodes, edges=edges, case_name=canonical_name)
 
 
 def load_topology_from_csv(nodes_csv: str, edges_csv: str) -> Topology:
-    """
-    Load topology from two CSV files.
-
-    nodes.csv columns: bus_id, name, type, voltage, ip
-    edges.csv columns: from_bus, to_bus, [line_name]
-
-    Returns:
-        Topology instance
-    """
+    """Load topology from two CSV files."""
     nodes = []
-    with open(nodes_csv, "r", newline="") as f:
+    with open(nodes_csv, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            # Strip whitespace from keys
             cleaned = {k.strip(): v.strip() for k, v in row.items()}
+            bid = int(cleaned.get("bus_id", "0"))
             nodes.append({
-                "bus_id": int(cleaned.get("bus_id", "0")),
-                "name": cleaned.get("name", f"Bus{cleaned.get('bus_id', '0')}"),
+                "bus_id": bid,
+                "name": cleaned.get("name", f"Bus{bid + 1}"),
                 "type": cleaned.get("type", "pq"),
                 "voltage": float(cleaned.get("voltage", 1.0)),
-                "ip": cleaned.get("ip", ""),
+                "ip": cleaned.get("ip", get_plc_ip(bid)),
                 "plc_type": cleaned.get("plc_type", "generic_modbus"),
                 "bus_role": cleaned.get("bus_role", cleaned.get("type", "pq")),
                 "pg": float(cleaned.get("pg", 0.0)),
@@ -243,7 +438,7 @@ def load_topology_from_csv(nodes_csv: str, edges_csv: str) -> Topology:
             })
 
     edges = []
-    with open(edges_csv, "r", newline="") as f:
+    with open(edges_csv, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             edges.append((
@@ -251,81 +446,102 @@ def load_topology_from_csv(nodes_csv: str, edges_csv: str) -> Topology:
                 int(row.get("to_bus", row.get("to_bus ", "0")).strip()),
             ))
 
-    return Topology(nodes=nodes, edges=edges)
+    return Topology(nodes=nodes, edges=edges, case_name="custom_csv")
 
 
 def load_topology_from_dir(path: str) -> Topology:
-    """
-    Load topology from a directory containing nodes.csv and edges.csv.
-    Falls back to IEEE-14 defaults if files don't exist.
-    """
-    path = Path(path)
-    nodes_csv = path / "nodes.csv"
-    edges_csv = path / "edges.csv"
+    """Load topology from a directory containing nodes.csv and edges.csv."""
+    p = Path(path)
+    nodes_csv = p / "nodes.csv"
+    edges_csv = p / "edges.csv"
 
     if nodes_csv.exists() and edges_csv.exists():
         return load_topology_from_csv(str(nodes_csv), str(edges_csv))
-
-    return Topology()  # IEEE-14 defaults
+    return load_case(14)
 
 
 def save_topology_csv(topo: Topology, output_dir: str):
     """Save topology to CSV files."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
-    with open(output_dir / "nodes.csv", "w", newline="") as f:
+    with open(out / "nodes.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["bus_id", "name", "type", "voltage", "ip",
                                                "plc_type", "bus_role", "pg", "qg", "pl", "ql"])
         writer.writeheader()
         for node in topo.nodes:
             writer.writerow(node)
 
-    with open(output_dir / "edges.csv", "w", newline="") as f:
+    with open(out / "edges.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["from_bus", "to_bus"])
         writer.writeheader()
         for edge in topo.edges:
             writer.writerow({"from_bus": edge[0], "to_bus": edge[1]})
 
 
-# Singleton for global access
-_current_topology: Topology = None
-
+# --- Global Singleton Management ---
+_current_topology: Optional[Topology] = None
 
 def get_topology() -> Topology:
-    """Get the current global topology."""
+    """Get the current global topology. Defaults to IEEE-14 if uninitialized."""
     global _current_topology
     if _current_topology is None:
-        _current_topology = Topology()
+        if SELECTION_PATH.exists():
+            import json
+            data = json.loads(SELECTION_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Saved topology selection must be an object.")
+            case = data.get("case_name")
+            if case in {"case14", "case30"}:
+                selected = Topology.from_custom_dict({**data, "case_name": "custom_validation"})
+                if selected.num_buses != int(case.replace("case", "")):
+                    raise ValueError("Saved preset bus count does not match its case.")
+                selected.case_name = case
+            else:
+                selected = Topology.from_custom_dict(data)
+            _current_topology = selected
+        else:
+            _current_topology = Topology.from_pandapower("case14")
     return _current_topology
 
-
 def set_topology(topo: Topology):
-    """Set the global topology."""
+    """Set the global active topology."""
     global _current_topology
     _current_topology = topo
 
+def load_case(case: Union[str, int]) -> Topology:
+    """Load a specific standard case (14 or 30) and set as global topology."""
+    topo = Topology.from_pandapower(case)
+    set_topology(topo)
+    return topo
 
-def load_topology(path: str = None) -> Topology:
+def load_topology(path: Optional[str] = None) -> Topology:
     """
-    Load topology from path or use defaults.
+    Load topology from path, case name, or defaults.
+    If path in ('14', '30', 'case14', 'case30'), loads corresponding Pandapower case.
     If path is a directory, looks for nodes.csv + edges.csv.
     If path is a JSON file, loads from dict.
     """
     global _current_topology
 
-    if path is None:
-        _current_topology = Topology()
-        return _current_topology
+    if path is None or str(path).strip() == "":
+        return get_topology()
 
-    path = Path(path)
-    if path.is_dir():
-        _current_topology = load_topology_from_dir(str(path))
-    elif path.suffix == ".json":
+    path_str = str(path).strip().lower()
+    if path_str in ("14", "30", "case14", "case30", "ieee14", "ieee30"):
+        return load_case(path_str)
+
+    p = Path(path)
+    if p.is_dir():
+        _current_topology = load_topology_from_dir(str(p))
+    elif p.suffix == ".json" and p.exists():
         import json
-        data = json.loads(path.read_text(encoding="utf-8"))
-        _current_topology = Topology.from_dict(data)
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if "pandapower_case" in data:
+            _current_topology = load_case(data["pandapower_case"])
+        else:
+            _current_topology = Topology.from_dict(data)
     else:
-        _current_topology = Topology()
+        _current_topology = load_case(14)
 
     return _current_topology

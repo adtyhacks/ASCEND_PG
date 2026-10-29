@@ -1,3 +1,6 @@
+> **Historical Mininet runbook — do not use these startup commands for CORE.**
+> The current supported workflow is documented in [CORE / WSL2 operation](core_wsl2.md).
+> The old Mininet and capture helper scripts referenced below are absent from this checkout.
 # ASCEND-PG testbed — attack/detection cycle runbook
 
 End-to-end steps to reproduce the full recon → injection → command injection →
@@ -67,9 +70,10 @@ and SCADA to be polling (step 3). If no frames are captured it logs
 
 ## 6. Watch it live
 
-    streamlit run app/Home.py      # pick "Live Battle" in the sidebar
+    .venv-wsl/bin/python -m gui.server
 
-The page polls `data/log_store.json` + `data/cycle_report.json` every 3s.
+Open `http://127.0.0.1:8765` and select Live Battle. The dedicated GUI reads
+canonical run security/network events and displays background traffic separately.
 
 ## 7. Convert PCAP to flows (CICFlowMeter — Module 5)
 

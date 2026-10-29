@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Test the pentest report generator."""
 import sys
-sys.path.insert(0, "/home/adty17/ascend-pg-webapp")
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from reports.pentest_report import generate_report, render_html, render_pdf
 print("Import OK")

@@ -1,0 +1,631 @@
+{
+  "environment_mode": "sample",
+  "label": "SAMPLE",
+  "source": "Topology.from_pandapower(case14).canonical_snapshot; static demonstration projection",
+  "topology": {
+    "schema": "ascend.topology/v1",
+    "case_name": "case14",
+    "topology_version": "case14:14:aa32528b1778",
+    "nodes": [
+      {
+        "id": "hub",
+        "hostname": "s1",
+        "node_type": "hub",
+        "role": "network",
+        "zone": "network",
+        "ip": null,
+        "interfaces": [],
+        "services": [],
+        "operating_system": "CORE",
+        "core_id": 1
+      },
+      {
+        "id": "scada",
+        "hostname": "scada",
+        "node_type": "scada",
+        "role": "operator",
+        "zone": "operations",
+        "ip": "10.0.0.100",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP client"
+        ],
+        "operating_system": "Linux",
+        "core_id": 2
+      },
+      {
+        "id": "attacker",
+        "hostname": "attacker",
+        "node_type": "attacker",
+        "role": "red-team",
+        "zone": "external",
+        "ip": "10.0.0.66",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [],
+        "operating_system": "Linux",
+        "core_id": 3,
+        "security": {
+          "designation": "attacker"
+        }
+      },
+      {
+        "id": "ids_monitor",
+        "hostname": "ids_monitor",
+        "node_type": "ids",
+        "role": "defender",
+        "zone": "monitoring",
+        "ip": "10.0.0.99",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Suricata"
+        ],
+        "operating_system": "Linux",
+        "core_id": 4,
+        "security": {
+          "designation": "defender"
+        }
+      },
+      {
+        "id": "plc1",
+        "hostname": "plc1",
+        "node_type": "plc",
+        "role": "generator",
+        "zone": "field",
+        "ip": "10.0.0.1",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 5,
+        "bus_id": 0,
+        "plc_type": "siemens_s7_1200",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc2",
+        "hostname": "plc2",
+        "node_type": "plc",
+        "role": "generator",
+        "zone": "field",
+        "ip": "10.0.0.2",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 6,
+        "bus_id": 1,
+        "plc_type": "siemens_s7_1500",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc3",
+        "hostname": "plc3",
+        "node_type": "plc",
+        "role": "generator",
+        "zone": "field",
+        "ip": "10.0.0.3",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 7,
+        "bus_id": 2,
+        "plc_type": "allen_bradley_compactlogix",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc4",
+        "hostname": "plc4",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.4",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 8,
+        "bus_id": 3,
+        "plc_type": "schneider_modicon_m340",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc5",
+        "hostname": "plc5",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.5",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 9,
+        "bus_id": 4,
+        "plc_type": "generic_modbus",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc6",
+        "hostname": "plc6",
+        "node_type": "plc",
+        "role": "generator",
+        "zone": "field",
+        "ip": "10.0.0.6",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 10,
+        "bus_id": 5,
+        "plc_type": "siemens_s7_1200",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc7",
+        "hostname": "plc7",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.7",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 11,
+        "bus_id": 6,
+        "plc_type": "siemens_s7_1500",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc8",
+        "hostname": "plc8",
+        "node_type": "plc",
+        "role": "generator",
+        "zone": "field",
+        "ip": "10.0.0.8",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 12,
+        "bus_id": 7,
+        "plc_type": "allen_bradley_compactlogix",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc9",
+        "hostname": "plc9",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.9",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 13,
+        "bus_id": 8,
+        "plc_type": "schneider_modicon_m340",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc10",
+        "hostname": "plc10",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.10",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 14,
+        "bus_id": 9,
+        "plc_type": "generic_modbus",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc11",
+        "hostname": "plc11",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.11",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 15,
+        "bus_id": 10,
+        "plc_type": "siemens_s7_1200",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc12",
+        "hostname": "plc12",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.12",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 16,
+        "bus_id": 11,
+        "plc_type": "siemens_s7_1500",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc13",
+        "hostname": "plc13",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.13",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 17,
+        "bus_id": 12,
+        "plc_type": "allen_bradley_compactlogix",
+        "security": {
+          "designation": "asset"
+        }
+      },
+      {
+        "id": "plc14",
+        "hostname": "plc14",
+        "node_type": "plc",
+        "role": "load",
+        "zone": "field",
+        "ip": "10.0.0.14",
+        "interfaces": [
+          "eth0"
+        ],
+        "services": [
+          "Modbus/TCP"
+        ],
+        "operating_system": "Linux",
+        "core_id": 18,
+        "bus_id": 13,
+        "plc_type": "schneider_modicon_m340",
+        "security": {
+          "designation": "asset"
+        }
+      }
+    ],
+    "links": [
+      {
+        "from": "hub",
+        "to": "plc1",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc2",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc3",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc4",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc5",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc6",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc7",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc8",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc9",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc10",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc11",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc12",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc13",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "plc14",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "scada",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "attacker",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "hub",
+        "to": "ids_monitor",
+        "type": "comm",
+        "protocol": "TCP/IP",
+        "core_link": true
+      },
+      {
+        "from": "plc1",
+        "to": "plc2",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc1",
+        "to": "plc5",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc2",
+        "to": "plc3",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc2",
+        "to": "plc4",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc2",
+        "to": "plc5",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc3",
+        "to": "plc4",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc4",
+        "to": "plc5",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc6",
+        "to": "plc11",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc6",
+        "to": "plc12",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc6",
+        "to": "plc13",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc9",
+        "to": "plc10",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc9",
+        "to": "plc14",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc10",
+        "to": "plc11",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc12",
+        "to": "plc13",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc13",
+        "to": "plc14",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc4",
+        "to": "plc7",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc4",
+        "to": "plc9",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc5",
+        "to": "plc6",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc7",
+        "to": "plc8",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      },
+      {
+        "from": "plc7",
+        "to": "plc9",
+        "type": "power_line",
+        "protocol": "electrical",
+        "core_link": false
+      }
+    ]
+  }
+}

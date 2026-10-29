@@ -222,3 +222,7 @@ __marimo__/
 data/log_store.json
 data/cycle_report.json
 data/raw/
+
+.venv-wsl/
+data/core-runtime/
+data/runs/
