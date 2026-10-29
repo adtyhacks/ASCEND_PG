@@ -215,7 +215,7 @@ function renderAssessmentOverview(counts, overview, assessmentName) {
   for (const [id, key] of [['overview-total-findings','total_findings'],['overview-total-detected','detected'],['overview-total-failed','failed'],['overview-total-timeout','timeout']]) byId(id).textContent = counts[key];
   const dvs = overview?.dvs || {};
   byId('overview-finding-dvs').textContent = dvs.finding_available ? `Available for ${dvs.finding_assessed} finding${dvs.finding_assessed === 1 ? '' : 's'}` : 'Pending evidence';
-  byId('overview-campaign-dvs').textContent = dvs.campaign_available && Number.isFinite(dvs.campaign_score) ? `${dvs.campaign_score.toFixed(1)} / 100${dvs.campaign_rating ? ` (${dvs.campaign_rating})` : ''}` : 'Pending completion';
+  byId('overview-campaign-dvs').textContent = dvs.campaign_available && Number.isFinite(dvs.campaign_score) ? `${dvs.campaign_score.toFixed(1)} / 100${dvs.campaign_rating ? ` (${dvs.campaign_rating})` : ''}` : `Unavailable: ${dvs.campaign_reason || 'Missing evaluation evidence'}`;
   const defense = overview?.defense || {};
   byId('overview-defense-detected').textContent = `${defense.detected} of ${defense.total}`;
   byId('overview-defense-rate').textContent = Number.isFinite(defense.detection_rate) ? `${(defense.detection_rate * 100).toFixed(1)}%` : 'Pending evidence';
@@ -583,7 +583,7 @@ async function loadBattle() {
   updateControlStates();
   const targets = data.topology.nodes.filter(node => node.id.startsWith('plc')).map(node => node.id); const selector = byId('defense-target');
   if (!selector.options.length) { selector.innerHTML = targets.map(target => `<option value="${escapeHtml(target)}">${escapeHtml(target)}</option>`).join(''); }
-  byId('campaign-status-detail').textContent = campaignStatus.error?.message || `Campaign ${campaignStatus.state}; monitoring ${campaignStatus.watcher || latestSystem?.watcher?.state || 'OFFLINE'}; step ${campaignStatus.current_step || 0}.`;
+  byId('campaign-status-detail').textContent = campaignStatus.error?.message || `Attack step ${campaignStatus.state}; monitoring ${campaignStatus.watcher || latestSystem?.watcher?.state || 'OFFLINE'}; step ${campaignStatus.current_step || 0}. Campaign completion requires undetected progression through all four stages.`;
   const runObj = data.active_run?.run || {};
   const assessmentComplete = Boolean(
     runObj.ended_at || ['COMPLETED', 'COMPLETE'].includes(runObj.status) || ['COMPLETED', 'COMPLETE'].includes(runObj.lifecycle_status)
@@ -595,7 +595,7 @@ function reportQuery() { return selectedReportRun ? `?scenario_id=${encodeURICom
 async function loadReports() {
   const data = await api('/api/report-summary' + reportQuery());
   selectedReportRun = data.run_id ? {scenario_id: data.scenario_id, run_id: data.run_id} : null;
-  byId('report-run').innerHTML = (data.runs || []).map(r => `<option value="${escapeHtml(r.run_id)}" ${r.run_id === data.run_id ? 'selected' : ''}>${escapeHtml(r.display_name || 'Assessment')} (${escapeHtml(r.campaign_state)})</option>`).join('');
+  byId('report-run').innerHTML = (data.runs || []).map(r => `<option value="${escapeHtml(r.run_id)}" ${r.run_id === data.run_id ? 'selected' : ''}>${escapeHtml(r.display_name || 'Assessment')} (attack step: ${escapeHtml(r.campaign_state)})</option>`).join('');
   byId('report-run').onchange = async () => {
     selectedReportRun = data.runs.find(r => r.run_id === byId('report-run').value);
     try { await loadReports(); } catch (error) { byId('report-status').textContent = `Report load failed: ${error.message}`; }

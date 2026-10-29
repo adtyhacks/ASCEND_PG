@@ -115,12 +115,9 @@ def evaluate_agent(model_path: str = None, num_episodes: int = 20,
         if info.get("campaign_complete", False):
             completion_count += 1
 
-        # Track max stage reached in this episode
-        stages_hit = set()
-        for step_info in chain:
-            if not step_info["detected"]:
-                stages_hit.add(step_info["stage"])
-        max_stage = max(stages_hit) if stages_hit else 0
+        # Use actual sequential progress, as the saved campaign evaluator does.
+        # An undetected attempt at a later stage is not progression to that stage.
+        max_stage = max(env._completed_stages, default=0)
         max_stages_reached.append(max_stage)
 
         plateau_tracker.update(evasion_rate)

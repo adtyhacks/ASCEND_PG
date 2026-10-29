@@ -492,7 +492,7 @@ def get_live_battle_snapshot(limit: int = 100, visual_signature: str | None = No
     campaign = run.get("campaign_request") or {}
     campaign_display = {
         "Assessment": registry.assessment(run.get("run_id")),
-        "State": campaign.get("state"),
+        "Attack step state": campaign.get("state"),
         "Runtime": registry.runtime_generation(run.get("generation_id")),
         "Attack step": registry.attack_step(campaign),
         "Attack event": registry.attack_event(campaign.get("correlation_id"), run.get("run_id")),
